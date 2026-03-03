@@ -51,6 +51,7 @@ interface AccountDetailHeaderV2Props {
     allAccounts: Account[]
     categories: Category[]
     cashbackStats: AccountSpendingStats | null
+    initialTransactions: Transaction[]
 
     selectedYear: string | null
     availableYears: string[]
@@ -92,6 +93,7 @@ export function AccountDetailHeaderV2({
     allAccounts,
     categories,
     cashbackStats,
+    initialTransactions,
 
     selectedYear,
     availableYears,
@@ -122,7 +124,7 @@ export function AccountDetailHeaderV2({
             const params = new URLSearchParams(searchParams.toString())
             if (year) params.set('year', year)
             else params.delete('year')
-            router.push(`? ${params.toString()} `, { scroll: false })
+            router.push(`?${params.toString()}`, { scroll: false })
             router.refresh()
         })
     }
@@ -167,7 +169,7 @@ export function AccountDetailHeaderV2({
                     throw new Error(`Invalid cycle date: ${selectedCycle} `)
                 }
 
-                const response = await fetch(`/ api / cashback / stats ? accountId = ${account.id}& date=${cycleDate.toISOString()} `)
+                const response = await fetch(`/api/cashback/stats?accountId=${account.id}&date=${cycleDate.toISOString()}`)
                 if (response.ok) {
                     const data = await response.json()
                     setDynamicCashbackStats(data)
@@ -188,7 +190,7 @@ export function AccountDetailHeaderV2({
         if (searchParams.has('tab')) {
             const params = new URLSearchParams(searchParams.toString());
             params.delete('tab');
-            router.replace(`? ${params.toString()} `, { scroll: false });
+            router.replace(`?${params.toString()}`, { scroll: false });
         }
     }, [searchParams, router]);
 
@@ -1009,193 +1011,229 @@ export function AccountDetailHeaderV2({
                 )
             }
 
-            {/* Section 3: Cashback Performance */}
-            {isCreditCard && dynamicCashbackStats && (
-                <TooltipProvider>
-                    <Tooltip>
-                        <TooltipTrigger asChild>
-                            <div className="flex flex-[5] min-w-[420px]">
-                                <HeaderSection
-                                    label="Cashback Performance"
-                                    borderColor="border-emerald-100"
-                                    className="w-full bg-emerald-50/10 !h-[105px] cursor-help"
-                                    hideHintInHeader
-                                >
-                                    <div className="flex flex-col h-full">
-                                        {/* Row 1: Metrics */}
-                                        <div className="grid grid-cols-4 gap-4 w-full h-[61px] items-start pt-1">
-                                            {(() => {
-                                                const yearlyRealValue = summary?.cashbackTotal || 0;
-                                                const earned = dynamicCashbackStats?.earnedSoFar || 0;
-                                                const shared = dynamicCashbackStats?.sharedAmount || 0;
-                                                const profit = dynamicCashbackStats?.netProfit || 0;
+            {/* Section 3: Cashback Performance - Only show when cycle selected */}
+            {isCreditCard && dynamicCashbackStats && selectedCycle && selectedCycle !== 'all' && (
+                <div className="flex flex-1 min-w-0 lg:flex-[5]">
+                    <HeaderSection
+                        label="Cashback Performance"
+                        borderColor="border-emerald-100"
+                        className="w-full bg-emerald-50/10"
+                        hideHintInHeader
+                    >
+                                    <div className="flex flex-col w-full h-full p-2.5 gap-2">
+                                        {/* Main Layout: Circular Progress (Left) + 2x2 Metrics Grid (Right) */}
+                                        <div className="flex items-start gap-3 w-full">
+                                            {/* Circular Progress Bar */}
+                                            <div className="flex-shrink-0">
+                                                {(() => {
+                                                    const stats = dynamicCashbackStats;
+                                                    if (!stats) return null;
 
-                                                return (
-                                                    <>
-                                                        <div className="flex flex-col group">
-                                                            <div className="flex items-center gap-1.5 mb-1">
-                                                                <BarChart3 className="h-3 w-3 text-slate-400 group-hover:text-indigo-500 transition-colors" />
-                                                                <span className="text-[10px] font-bold text-slate-400 tracking-tight uppercase">Profit</span>
+                                                    const isQualified = stats.is_min_spend_met;
+                                                    const minSpend = stats.minSpend || 0;
+                                                    const spent = stats.currentSpend || 0;
+                                                    const cap = stats.maxCashback || 0;
+                                                    const earned = stats.earnedSoFar || 0;
+
+                                                    const activeMax = stats.activeRules?.reduce((acc, r) => acc + (r.max || 0), 0) || 0;
+                                                    const effectiveCap = cap > 0 ? cap : activeMax;
+
+                                                    let progress = 0;
+                                                    let strokeColor = "#10b981";
+                                                    if (!isQualified && minSpend > 0) {
+                                                        progress = Math.min((spent / minSpend) * 100, 100);
+                                                        strokeColor = progress >= 90 ? "#10b981" : "#4f46e5";
+                                                    } else {
+                                                        progress = effectiveCap > 0 ? Math.min(100, (earned / effectiveCap) * 100) : 0;
+                                                        strokeColor = "#10b981";
+                                                    }
+
+                                                    const radius = 32;
+                                                    const circumference = 2 * Math.PI * radius;
+                                                    const strokeDashoffset = circumference - (progress / 100) * circumference;
+
+                                                    return (
+                                                        <div className="relative inline-flex items-center justify-center">
+                                                            <svg width="76" height="76" viewBox="0 0 76 76" className="transform -rotate-90">
+                                                                <circle cx="38" cy="38" r={radius} fill="none" stroke="#e2e8f0" strokeWidth="5" />
+                                                                <circle cx="38" cy="38" r={radius} fill="none" stroke={strokeColor} strokeWidth="5" strokeDasharray={circumference} strokeDashoffset={strokeDashoffset} strokeLinecap="round" className="transition-all duration-700" />
+                                                            </svg>
+                                                            <div className="absolute flex flex-col items-center justify-center">
+                                                                <span className="text-base font-black text-slate-900">{Math.round(progress)}%</span>
+                                                                <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight">{!isQualified && minSpend > 0 ? "Spend" : "Earned"}</span>
                                                             </div>
-                                                            <span className={cn(
-                                                                "text-base font-black leading-none tabular-nums tracking-tighter",
-                                                                profit > 0 ? "text-emerald-600" : profit < 0 ? "text-rose-600" : "text-slate-900"
-                                                            )}>
-                                                                {formatMoneyVND(Math.ceil(profit))}
-                                                            </span>
                                                         </div>
+                                                    );
+                                                })()}
+                                            </div>
+                                            {/* Metrics Grid - 2x2 */}
+                                            <div className="flex-1 grid grid-cols-2 gap-2">
+                                                {(() => {
+                                                    const cycleProfit = dynamicCashbackStats?.netProfit || 0;
+                                                    const categoryMap = new Map(categories.map(c => [c.id, c]));
+                                                    let cycleActualClaimed = 0;
 
-                                                        <div className="flex flex-col group">
-                                                            <div className="flex items-center gap-1.5 mb-1">
-                                                                <TrendingUp className="h-3 w-3 text-slate-400 group-hover:text-indigo-500 transition-colors" />
-                                                                <span className="text-[10px] font-bold text-slate-400 tracking-tight uppercase">Actual Claimed</span>
+                                                    const cycleStartRaw = dynamicCashbackStats?.cycle?.start;
+                                                    const cycleEndRaw = dynamicCashbackStats?.cycle?.end;
+                                                    const cycleStart = cycleStartRaw ? new Date(cycleStartRaw) : null;
+                                                    const cycleEnd = cycleEndRaw ? new Date(cycleEndRaw) : null;
+
+                                                    const hasValidCycleRange =
+                                                        !!cycleStart &&
+                                                        !!cycleEnd &&
+                                                        !isNaN(cycleStart.getTime()) &&
+                                                        !isNaN(cycleEnd.getTime());
+
+                                                    if (initialTransactions && hasValidCycleRange && cycleStart && cycleEnd) {
+                                                        const cycleEndInclusive = new Date(cycleEnd);
+                                                        cycleEndInclusive.setHours(23, 59, 59, 999);
+
+                                                        initialTransactions.forEach((tx: any) => {
+                                                            if (tx.type !== 'income' || tx.status === 'void') return;
+
+                                                            const txDate = new Date(tx.occurred_at || tx.date || tx.created_at);
+                                                            if (isNaN(txDate.getTime())) return;
+                                                            if (txDate < cycleStart || txDate > cycleEndInclusive) return;
+
+                                                            const category = tx.category_id ? categoryMap.get(tx.category_id) : null;
+                                                            const categoryName = category?.name?.toLowerCase() || '';
+                                                            if (categoryName.includes('cashback') || categoryName.includes('hoàn tiền')) {
+                                                                cycleActualClaimed += Math.abs(tx.amount || 0);
+                                                            }
+                                                        });
+                                                    }
+
+                                                    const cycleEstCashback = dynamicCashbackStats?.earnedSoFar || 0;
+                                                    const cycleShared = dynamicCashbackStats?.sharedAmount || 0;
+
+                                                    return (
+                                                        <>
+                                                            {/* Profit */}
+                                                            <Tooltip>
+                                                                <TooltipTrigger asChild>
+                                                                    <div className="flex items-center gap-1.5 min-w-0 cursor-help rounded-sm px-1 py-0.5 hover:bg-slate-50">
+                                                                        <TrendingUp className="h-3.5 w-3.5 flex-shrink-0 text-emerald-600" />
+                                                                        <span className={cn(
+                                                                            "text-xs font-black leading-none tabular-nums tracking-tight truncate",
+                                                                            cycleProfit > 0 ? "text-emerald-600" : cycleProfit < 0 ? "text-rose-600" : "text-slate-900"
+                                                                        )}>
+                                                                            Profit: {formatMoneyVND(Math.ceil(cycleProfit))}
+                                                                        </span>
+                                                                    </div>
+                                                                </TooltipTrigger>
+                                                                <TooltipContent side="top" className="max-w-xs bg-slate-900 text-white text-[11px] p-2">
+                                                                    <p className="font-semibold mb-1">Lợi nhuận = Thu cashback - Chia sẻ</p>
+                                                                    <p className="text-slate-300">Est. Cashback - Shared = Profit</p>
+                                                                </TooltipContent>
+                                                            </Tooltip>
+
+                                                            {/* Actual Claimed */}
+                                                            <Tooltip>
+                                                                <TooltipTrigger asChild>
+                                                                    <div className="flex items-center gap-1.5 min-w-0 cursor-help rounded-sm px-1 py-0.5 hover:bg-slate-50">
+                                                                        <BarChart3 className="h-3.5 w-3.5 flex-shrink-0 text-indigo-600" />
+                                                                        <span className={cn(
+                                                                            "text-xs font-black leading-none tabular-nums tracking-tight truncate",
+                                                                            cycleActualClaimed > 0 ? "text-indigo-600" : cycleActualClaimed < 0 ? "text-rose-600" : "text-slate-900"
+                                                                        )}>
+                                                                            Actual: {formatMoneyVND(Math.ceil(cycleActualClaimed))}
+                                                                        </span>
+                                                                    </div>
+                                                                </TooltipTrigger>
+                                                                <TooltipContent side="top" className="max-w-xs bg-slate-900 text-white text-[11px] p-2">
+                                                                    <p className="font-semibold mb-1">Tiền cashback thực nhận</p>
+                                                                    <p className="text-slate-300">Giao dịch income có category "Cashback" trong chu kỳ</p>
+                                                                </TooltipContent>
+                                                            </Tooltip>
+
+                                                            {/* Est. Cashback */}
+                                                            <Tooltip>
+                                                                <TooltipTrigger asChild>
+                                                                    <div className="flex items-center gap-1.5 min-w-0 cursor-help rounded-sm px-1 py-0.5 hover:bg-slate-50">
+                                                                        <PlusCircle className="h-3.5 w-3.5 flex-shrink-0 text-slate-400" />
+                                                                        <span className="text-xs font-black text-emerald-600 leading-none tabular-nums tracking-tight truncate">
+                                                                            Est: {formatMoneyVND(Math.ceil(cycleEstCashback))}
+                                                                        </span>
+                                                                    </div>
+                                                                </TooltipTrigger>
+                                                                <TooltipContent side="top" className="max-w-xs bg-slate-900 text-white text-[11px] p-2">
+                                                                    <p className="font-semibold mb-1">Dự tính cashback kiếm được</p>
+                                                                    <p className="text-slate-300">Từ các rule cashback trong chu kỳ</p>
+                                                                </TooltipContent>
+                                                            </Tooltip>
+
+                                                            {/* Cashback Shared */}
+                                                            <Tooltip>
+                                                                <TooltipTrigger asChild>
+                                                                    <div className="flex items-center gap-1.5 min-w-0 cursor-help rounded-sm px-1 py-0.5 hover:bg-slate-50">
+                                                                        <Users2 className="h-3.5 w-3.5 flex-shrink-0 text-rose-500" />
+                                                                        <span className="text-xs font-black text-rose-600 leading-none tabular-nums tracking-tight truncate">
+                                                                            Shared: {formatMoneyVND(Math.ceil(cycleShared))}
+                                                                        </span>
+                                                                    </div>
+                                                                </TooltipTrigger>
+                                                                <TooltipContent side="top" className="max-w-xs bg-slate-900 text-white text-[11px] p-2">
+                                                                    <p className="font-semibold mb-1">Cashback chia sẻ với người khác</p>
+                                                                    <p className="text-slate-300">% hoặc số tiền fixed từ rule chia sẻ</p>
+                                                                </TooltipContent>
+                                                            </Tooltip>
+
+                                                            {/* Health Badge - Merge across bottom 2 columns */}
+                                                            <div className="col-span-2 mt-1.5">
+                                                                <TooltipProvider>
+                                                                    <Tooltip delayDuration={150}>
+                                                                        <TooltipTrigger asChild>
+                                                                            {(() => {
+                                                                                const isQualified = dynamicCashbackStats.is_min_spend_met;
+                                                                                const minSpend = dynamicCashbackStats.minSpend || 0;
+                                                                                const spent = dynamicCashbackStats.currentSpend || 0;
+                                                                                const remaining = Math.ceil((minSpend || 0) - (spent || 0));
+                                                                                const progress = minSpend > 0 ? Math.min((spent / minSpend) * 100, 100) : 100;
+
+                                                                                return !isQualified && minSpend > 0 ? (
+                                                                                    <div className="flex items-center justify-center gap-2 px-3 py-1.5 bg-amber-50 border border-amber-200 rounded-lg w-full cursor-help hover:bg-amber-100 transition-colors">
+                                                                                        <Zap className="h-3.5 w-3.5 text-amber-600 fill-amber-600 flex-shrink-0" />
+                                                                                        <span className="h-2 w-2 bg-amber-500 rounded-full animate-pulse flex-shrink-0"></span>
+                                                                                        <span className="text-[10px] font-black text-amber-700 uppercase tracking-wide">Need Spend More • {Math.round(progress)}%</span>
+                                                                                        <span className="text-[10px] font-bold text-amber-600 ml-1">{formatMoneyVND(remaining)}</span>
+                                                                                    </div>
+                                                                                ) : (
+                                                                                    <div className="flex items-center justify-center gap-2 px-3 py-1.5 bg-emerald-50 border border-emerald-200 rounded-lg w-full cursor-help hover:bg-emerald-100 transition-colors">
+                                                                                        <Zap className="h-3.5 w-3.5 text-emerald-600 fill-emerald-600 flex-shrink-0" />
+                                                                                        <span className="h-2 w-2 bg-emerald-500 rounded-full flex-shrink-0"></span>
+                                                                                        <span className="text-[10px] font-black text-emerald-700 uppercase tracking-wide">Qualified • Earning</span>
+                                                                                    </div>
+                                                                                );
+                                                                            })()}
+                                                                        </TooltipTrigger>
+                                                                        <TooltipContent side="top" className="max-w-xs bg-slate-900 text-white text-[11px] p-2.5">
+                                                                            <p className="font-semibold mb-1">Cashback Health Status</p>
+                                                                            <p className="text-slate-300 text-[10px]">
+                                                                                {dynamicCashbackStats.is_min_spend_met 
+                                                                                    ? "✅ Đã đạt min spend - đang kiếm cashback"
+                                                                                    : `⚠️ Cần chi tiêu thêm ${formatMoneyVND(Math.ceil((dynamicCashbackStats.minSpend || 0) - (dynamicCashbackStats.currentSpend || 0)))} để qualify`
+                                                                                }
+                                                                            </p>
+                                                                        </TooltipContent>
+                                                                    </Tooltip>
+                                                                </TooltipProvider>
                                                             </div>
-                                                            <span className={cn(
-                                                                "text-base font-black leading-none tabular-nums tracking-tighter",
-                                                                yearlyRealValue > 0 ? "text-indigo-600" : yearlyRealValue < 0 ? "text-rose-600" : "text-slate-900"
-                                                            )}>
-                                                                {formatMoneyVND(Math.ceil(yearlyRealValue))}
-                                                            </span>
+                                                        </>
+                                                    );
+                                                })()}
+                                            </div>
+
+                                            {/* Analytics/Report Button - Compact */}
+                                            <TooltipProvider>
+                                                <Tooltip delayDuration={200}>
+                                                    <TooltipTrigger asChild>
+                                                        <div className="flex-shrink-0 flex items-center">
+                                                            <button className="p-1 hover:bg-emerald-100 rounded-md transition-colors group">
+                                                                <Zap className="h-3.5 w-3.5 text-emerald-600 group-hover:text-emerald-700 fill-emerald-600 group-hover:fill-emerald-700" />
+                                                            </button>
                                                         </div>
-
-                                                        <div className="flex flex-col group">
-                                                            <div className="flex items-center gap-1.5 mb-1">
-                                                                <PlusCircle className="h-3 w-3 text-slate-400 group-hover:text-emerald-500 transition-colors" />
-                                                                <span className="text-[10px] font-bold text-slate-400 tracking-tight uppercase">Est. Cashback</span>
-                                                            </div>
-                                                            <span className="text-base font-black text-emerald-600 leading-none tabular-nums tracking-tighter">
-                                                                {formatMoneyVND(Math.ceil(earned))}
-                                                            </span>
-                                                        </div>
-
-                                                        <div className="flex flex-col group items-end">
-                                                            <div className="flex items-center gap-1.5 mb-1">
-                                                                <Users2 className="h-3 w-3 text-slate-400 group-hover:text-amber-500 transition-colors" />
-                                                                <span className="text-[10px] font-bold text-slate-400 tracking-tight uppercase">Cashback Shared</span>
-                                                            </div>
-                                                            <span className="text-base font-black text-amber-600 leading-none tabular-nums tracking-tighter">
-                                                                {formatMoneyVND(Math.ceil(shared))}
-                                                            </span>
-                                                        </div>
-                                                    </>
-                                                );
-                                            })()}
-                                        </div>
-
-                                        {/* Row 2: Progress Bar (Smaller H) */}
-                                        <div className="w-full h-[32px] flex items-end relative pb-1">
-                                            {(() => {
-                                                const stats = dynamicCashbackStats;
-                                                if (!stats) return null;
-
-                                                const isQualified = stats.is_min_spend_met;
-                                                const minSpend = stats.minSpend || 0;
-                                                const spent = stats.currentSpend || 0;
-                                                const cap = stats.maxCashback || 0;
-                                                const earned = stats.earnedSoFar || 0;
-
-                                                const activeMax = stats.activeRules?.reduce((acc, r) => acc + (r.max || 0), 0) || 0;
-                                                const effectiveCap = cap > 0 ? cap : activeMax;
-
-                                                let progress = 0;
-                                                let barColor = "bg-emerald-600";
-                                                if (!isQualified && minSpend > 0) {
-                                                    progress = Math.min((spent / minSpend) * 100, 100);
-                                                    barColor = progress >= 90 ? "bg-emerald-500" : "bg-indigo-600";
-                                                } else {
-                                                    progress = effectiveCap > 0 ? Math.min(100, (earned / effectiveCap) * 100) : 0;
-                                                    barColor = "bg-emerald-600";
-                                                }
-
-                                                return (
-                                                    <div className="relative h-1.5 w-full bg-slate-100 rounded-full overflow-visible border border-slate-200/60 shadow-[inset_0_1px_2px_rgba(0,0,0,0.05)]">
-                                                        <div
-                                                            className={cn("h-full transition-all duration-700 rounded-full shadow-sm", barColor)}
-                                                            style={{ width: `${progress}% ` }}
-                                                        />
-                                                    </div>
-                                                );
-                                            })()}
-                                        </div>
-
-                                        {/* Row 3: Cashback Metrics Aligned Below Bar */}
-                                        <div className="flex items-center gap-2 pb-1 px-0.5 mt-auto h-[28px]">
-                                            {(() => {
-                                                const stats = dynamicCashbackStats;
-                                                if (!stats) return null;
-
-                                                const isQualified = stats.is_min_spend_met;
-                                                const minSpend = stats.minSpend || 0;
-                                                const spent = stats.currentSpend || 0;
-                                                const cap = stats.maxCashback || 0;
-                                                const earned = stats.earnedSoFar || 0;
-                                                const activeMax = stats.activeRules?.reduce((acc, r) => acc + (r.max || 0), 0) || 0;
-                                                const effectiveCap = cap > 0 ? cap : activeMax;
-
-                                                let progress = 0;
-                                                let barColor = "bg-emerald-600";
-                                                if (!isQualified && minSpend > 0) {
-                                                    progress = Math.min((spent / minSpend) * 100, 100);
-                                                    barColor = progress >= 90 ? "bg-emerald-500" : "bg-indigo-600";
-                                                } else {
-                                                    progress = effectiveCap > 0 ? Math.min(100, (earned / effectiveCap) * 100) : 0;
-                                                    barColor = "bg-emerald-600";
-                                                }
-
-                                                // STANDALONE PROGRESS BADGE
-                                                const progressBadge = (
-                                                    <div className={cn(
-                                                        "px-1.5 py-0.5 rounded border shadow-sm flex items-center h-5.5 whitespace-nowrap",
-                                                        Math.round(progress) >= 100 ? "bg-emerald-600 text-white border-emerald-700" : "bg-white text-slate-500 border-slate-200"
-                                                    )}>
-                                                        <span className="text-[9px] font-black uppercase tracking-tighter">
-                                                            {Math.round(progress) >= 100 ? "MET TARGET" : `${Math.round(progress)}% `}
-                                                        </span>
-                                                    </div>
-                                                );
-
-                                                const maxRate = stats.activeRules && stats.activeRules.length > 0
-                                                    ? Math.max(...stats.activeRules.map(r => r.rate))
-                                                    : 0.1;
-                                                const remainingBenefit = Math.max(0, effectiveCap - earned);
-                                                const canBuySpend = maxRate > 0 ? Math.ceil(remainingBenefit / (maxRate > 1 ? maxRate / 100 : maxRate)) : 0;
-
-                                                const footerBadges = !isQualified && minSpend > 0
-                                                    ? [
-                                                        { label: "Spent", value: formatMoneyVND(Math.ceil(spent)), theme: "text-slate-700 bg-slate-50 border-slate-200" },
-                                                        { label: "Target", value: formatMoneyVND(Math.ceil(minSpend)), theme: "text-indigo-700 bg-indigo-50 border-indigo-200" },
-                                                        { label: "Need", value: formatMoneyVND(Math.max(0, minSpend - spent)), theme: "text-rose-700 bg-rose-50 border-rose-200 animate-pulse" },
-                                                    ]
-                                                    : [
-                                                        { label: "Earned", value: formatMoneyVND(Math.ceil(earned)), theme: "text-emerald-700 bg-emerald-50 border-emerald-200" },
-                                                        { label: "Limit", value: effectiveCap > 0 ? formatMoneyVND(effectiveCap) : "Unlimited", theme: "text-slate-600 bg-slate-50 border-slate-200" },
-                                                        { label: "Potential", value: effectiveCap > 0 ? formatMoneyVND(canBuySpend) : "Unlimited", theme: "text-indigo-700 bg-indigo-50 border-indigo-200" },
-                                                        { label: "Period", value: stats?.cycle?.label || "N/A", theme: "text-slate-500 bg-slate-50 border-slate-200" }
-                                                    ];
-
-                                                return (
-                                                    <>
-                                                        {progressBadge}
-                                                        {footerBadges.map((badge, idx) => (
-                                                            <div key={idx} className={cn("px-2 py-1 rounded border shadow-sm flex items-center h-6 whitespace-nowrap", badge.theme)}>
-                                                                <div className="flex items-baseline gap-1.5 leading-none">
-                                                                    <span className="text-[8px] font-bold uppercase tracking-tight opacity-40">{badge.label}</span>
-                                                                    <span className="text-[10px] font-black tabular-nums tracking-tighter">{badge.value}</span>
-                                                                </div>
-                                                            </div>
-                                                        ))}
-                                                    </>
-                                                );
-                                            })()}
-                                        </div>
-
-                                        <div className="mt-auto" />
-
-                                    </div>
-                                </HeaderSection>
-                            </div>
-                        </TooltipTrigger>
-                        <TooltipContent side="bottom" className="w-[340px] p-0 overflow-hidden border-none shadow-2xl">
+                                                    </TooltipTrigger>
+                                                    <TooltipContent side="bottom" className="w-[380px] p-0 overflow-hidden border-none shadow-2xl" sideOffset={8}>
                             <div className="bg-white">
                                 {/* Tooltip Header */}
                                 <div className="bg-emerald-950 px-4 py-1.5 flex justify-between items-center">
@@ -1308,17 +1346,17 @@ export function AccountDetailHeaderV2({
                                                     </span>
                                                 </div>
                                                 <div className="flex flex-col gap-0.5">
-                                                    <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">Est. Cashback</span>
-                                                    <span className="text-sm font-black text-emerald-600 tabular-nums tracking-tight">
-                                                        {formatMoneyVND(Math.ceil(summary?.cardYearlyCashbackTotal || 0))}
+                                                    <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">Actual Claimed</span>
+                                                    <span className="text-sm font-black text-indigo-600 tabular-nums tracking-tight">
+                                                        {formatMoneyVND(Math.ceil(summary?.cashbackTotal || 0))}
                                                     </span>
                                                 </div>
                                             </div>
                                             <div className="space-y-4 text-right">
                                                 <div className="flex flex-col gap-0.5">
-                                                    <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">Actual Claimed</span>
-                                                    <span className="text-sm font-black text-indigo-600 tabular-nums tracking-tight">
-                                                        {formatMoneyVND(Math.ceil(summary?.cashbackTotal || 0))}
+                                                    <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">Est. Cashback</span>
+                                                    <span className="text-sm font-black text-emerald-600 tabular-nums tracking-tight">
+                                                        {formatMoneyVND(Math.ceil(summary?.cardYearlyCashbackTotal || 0))}
                                                     </span>
                                                 </div>
                                                 <div className="flex flex-col gap-0.5">
@@ -1354,6 +1392,10 @@ export function AccountDetailHeaderV2({
                         </TooltipContent>
                     </Tooltip>
                 </TooltipProvider>
+                        </div>
+                    </div>
+                </HeaderSection>
+            </div>
             )}
 
             {/* Tools Area */}

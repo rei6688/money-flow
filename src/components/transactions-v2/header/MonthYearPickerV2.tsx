@@ -8,7 +8,7 @@ import {
 } from '@/components/ui/popover'
 import { Button } from '@/components/ui/button'
 import { Calendar } from '@/components/ui/calendar'
-import { CalendarIcon, ChevronDown, ChevronLeft, ChevronRight, X } from 'lucide-react'
+import { CalendarIcon, ChevronDown, ChevronLeft, ChevronRight, X, Loader2 } from 'lucide-react'
 import { format, isSameMonth, startOfYear, endOfYear } from 'date-fns'
 import { DateRange } from 'react-day-picker'
 import { cn } from '@/lib/utils'
@@ -17,15 +17,19 @@ import { toast } from 'sonner'
 interface MonthYearPickerV2Props {
   date: Date
   dateRange: DateRange | undefined
-  mode: 'month' | 'range' | 'date' | 'all' | 'year'
+  mode: 'month' | 'range' | 'date' | 'all' | 'year' | 'cycle'
   // These onChange handlers will now ONLY be called when "OK" is clicked
   onDateChange: (date: Date) => void
   onRangeChange: (range: DateRange | undefined) => void
-  onModeChange: (mode: 'month' | 'range' | 'date' | 'all' | 'year') => void
+  onModeChange: (mode: 'month' | 'range' | 'date' | 'all' | 'year' | 'cycle') => void
   disabledRange?: { start: Date; end: Date } | undefined
   availableMonths?: Set<string>
   availableDateRange?: DateRange | undefined // Smart date range from filtered transactions
   accountCycleTags?: string[] // Cycle tags for auto-set (e.g., ['2025-01', '2025-02'])
+  cycles?: Array<{ label: string; value: string }> // Cycle dropdown options from account
+  selectedCycleValue?: string // Currently selected cycle
+  onCycleSelect?: (cycleValue: string) => void // Called when cycle is selected
+  isCycleLoading?: boolean // Loading state for cycles
   fullWidth?: boolean
   locked?: boolean
   disabled?: boolean // New: disable entire picker
@@ -42,6 +46,10 @@ export function MonthYearPickerV2({
   availableMonths,
   availableDateRange,
   accountCycleTags,
+  cycles,
+  selectedCycleValue,
+  onCycleSelect,
+  isCycleLoading,
   fullWidth,
   locked,
   disabled = false,
@@ -61,7 +69,7 @@ export function MonthYearPickerV2({
   }
 
   // Local state buffer
-  const [localMode, setLocalMode] = useState<'month' | 'range' | 'date' | 'all' | 'year'>(mode)
+  const [localMode, setLocalMode] = useState<'month' | 'range' | 'date' | 'all' | 'year' | 'cycle'>(mode)
   const [localDate, setLocalDate] = useState<Date>(date)
   const [localRange, setLocalRange] = useState<DateRange | undefined>(dateRange)
 
@@ -145,6 +153,10 @@ export function MonthYearPickerV2({
     if (mode === 'year') return format(date, 'yyyy')
     if (mode === 'month') return format(date, 'MMM yyyy')
     if (mode === 'date') return format(date, 'dd MMM yyyy')
+    if (mode === 'cycle') {
+      const selected = cycles?.find(c => c.value === selectedCycleValue)
+      return selected?.label || 'Select Cycle'
+    }
     if (mode === 'range') {
       if (dateRange?.from) {
         return dateRange.to
@@ -191,6 +203,18 @@ export function MonthYearPickerV2({
         <div className="flex flex-col">
           {/* Tabs */}
           <div className="p-2 border-b flex gap-1 bg-muted/40 text-[10px]">
+            {cycles && cycles.length > 0 && (
+              <Button
+                key="cycle"
+                variant={localMode === 'cycle' ? 'default' : 'ghost'}
+                size="sm"
+                onClick={() => setLocalMode('cycle')}
+                disabled={isCycleLoading}
+                className="flex-1 h-7 text-xs capitalize flex items-center justify-center gap-1"
+              >
+                {isCycleLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Cycle'}
+              </Button>
+            )}
             {(['month', 'date', 'range', 'all'] as const).map((m) => {
               const isActive = (m === 'all' && (localMode === 'all' || localMode === 'year')) || (m === localMode);
               return (
@@ -212,6 +236,46 @@ export function MonthYearPickerV2({
 
           {/* Content */}
           <div className="p-0">
+            {localMode === 'cycle' && (
+              <div className="w-[280px] p-3">
+                {isCycleLoading ? (
+                  <div className="flex flex-col items-center justify-center py-8 gap-2">
+                    <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                    <span className="text-xs text-muted-foreground">Loading cycles...</span>
+                  </div>
+                ) : cycles && cycles.length > 0 ? (
+                  <div className="space-y-1.5">
+                    {cycles.map((cycle) => (
+                      <button
+                        key={cycle.value}
+                        onClick={() => {
+                          if (onCycleSelect) {
+                            onCycleSelect(cycle.value)
+                            setOpen(false)
+                          }
+                        }}
+                        className={cn(
+                          "w-full px-3 py-2 rounded-md border text-sm transition-colors text-left",
+                          selectedCycleValue === cycle.value
+                            ? "bg-primary text-primary-foreground border-primary shadow-md"
+                            : "border-slate-200 hover:bg-accent"
+                        )}
+                      >
+                        <span className="font-medium">{cycle.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center py-8 gap-2">
+                    <svg className="h-12 w-12 text-muted-foreground/30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    <span className="text-sm font-medium text-muted-foreground">No cycles found</span>
+                    <span className="text-xs text-muted-foreground/70">Select an account with cashback config</span>
+                  </div>
+                )}
+              </div>
+            )}
             {(localMode === 'all' || localMode === 'year') && (
               <div className="p-3 w-[320px]">
                 <Button

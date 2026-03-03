@@ -189,8 +189,7 @@ export function AccountDetailTransactions({
     const setSelectedCycle = onCycleChange || (() => { })
 
     const [cycles, setCycles] = useState<Array<{ label: string; value: string }>>([])
-
-    // Handle cycle changes with URL sync (Performance Optimized)
+    const [isCyclesLoading, setIsCyclesLoading] = useState(false)
     const handleCycleChange = (cycle: string | undefined) => {
         startTransition(() => {
             setSelectedCycle(cycle)
@@ -244,15 +243,18 @@ export function AccountDetailTransactions({
     useEffect(() => {
         if (account.type !== 'credit_card') {
             setCycles([])
+            setIsCyclesLoading(false)
             return
         }
 
+        setIsCyclesLoading(true)
         fetchAccountCycleOptionsAction(account.id).then(options => {
             const cycleOptions = options.map(opt => ({
                 label: opt.label,
                 value: opt.tag
             }))
             setCycles(cycleOptions)
+            setIsCyclesLoading(false)
 
             // ALWAYS Calculate current cycle for reset purposes
             const config = parseCashbackConfig(account.cashback_config)
@@ -285,6 +287,7 @@ export function AccountDetailTransactions({
         }).catch(err => {
             console.error('Failed to fetch cycle options:', err)
             setCycles([])
+            setIsCyclesLoading(false)
         })
     }, [account.id, account.type, account.cashback_config])
 
@@ -640,10 +643,16 @@ export function AccountDetailTransactions({
                                 onModeChange={(mode) => {
                                     if (mode === 'month' || mode === 'range' || mode === 'date') {
                                         setDateMode(mode);
+                                    } else if (mode === 'cycle') {
+                                        setDateMode('range')
                                     }
                                 }}
                                 availableMonths={availableMonths}
                                 accountCycleTags={account.type === 'credit_card' ? cycles.map(c => c.value) : []}
+                                cycles={cycles}
+                                selectedCycleValue={selectedCycle}
+                                onCycleSelect={handleCycleChange}
+                                isCycleLoading={isCyclesLoading}
                                 disabled={!!selectedCycle}
                             />
                         </div>

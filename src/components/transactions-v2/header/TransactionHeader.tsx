@@ -407,12 +407,13 @@ export function TransactionHeader({
         emptyText="No categories found"
       />
 
-      <CycleFilterDropdown
+      {/* REMOVED: Cycle filter is now integrated into date picker */}
+      {/* <CycleFilterDropdown
         cycles={cycles}
         value={localCycle}
         onChange={handleCycleChange}
         disabled={cycles.length === 0}
-      />
+      /> */}
 
       <MonthYearPickerV2
         date={localDate}
@@ -424,6 +425,10 @@ export function TransactionHeader({
         disabledRange={disabledRange}
         availableMonths={availableMonths}
         availableDateRange={availableDateRange}
+        cycles={cycles}
+        selectedCycleValue={localCycle}
+        onCycleSelect={handleCycleChange}
+        isCycleLoading={false}
         locked={!!localCycle}
       />
 

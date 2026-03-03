@@ -73,6 +73,7 @@ export function AccountDetailViewV2({
 
         let cardYearlyCashbackTotal = 0;
         let cardYearlyCashbackGivenTotal = 0;
+        let yearEligibleSpendForEstimate = 0;
         let yearDebtTotal = 0;
         let debtTotal = 0;
         let expensesTotal = 0;
@@ -118,17 +119,9 @@ export function AccountDetailViewV2({
 
                 if (type === 'expense' || type === 'debt') {
                     if (type === 'expense') yearPureExpenseTotal += amount
+                    if (type === 'expense') yearEligibleSpendForEstimate += amount
 
-                    // Yearly ESTIMATED Cashback (from Transactions)
-                    const bankBack = Number(tx?.bank_back || 0)
                     const sharedAmount = Number(tx?.cashback_share_amount || 0)
-
-                    if (bankBack > 0) {
-                        cardYearlyCashbackTotal += bankBack
-                    } else if (account.type === 'credit_card') {
-                        const baseRate = (account.cb_base_rate || 0) / 100
-                        cardYearlyCashbackTotal += amount * baseRate
-                    }
 
                     if (sharedAmount > 0) {
                         cardYearlyCashbackGivenTotal += sharedAmount
@@ -157,6 +150,18 @@ export function AccountDetailViewV2({
                 }
             }
         })
+
+        if (account.type === 'credit_card') {
+            const baseRate = (account.cb_base_rate || 0) / 100
+            const estimatedCashback = yearEligibleSpendForEstimate * baseRate
+            const maxBudget = account.cb_max_budget || null
+
+            if (maxBudget !== null && maxBudget > 0) {
+                cardYearlyCashbackTotal = Math.min(estimatedCashback, maxBudget)
+            } else {
+                cardYearlyCashbackTotal = estimatedCashback
+            }
+        }
 
         const netProfitYearly = cardYearlyCashbackTotal - cardYearlyCashbackGivenTotal;
 
@@ -326,6 +331,7 @@ export function AccountDetailViewV2({
                 allAccounts={allAccounts}
                 categories={categories}
                 cashbackStats={initialCashbackStats}
+                initialTransactions={initialTransactions}
                 selectedYear={selectedYear}
                 availableYears={availableYears}
                 onYearChange={setSelectedYear}
