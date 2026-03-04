@@ -560,8 +560,8 @@ export async function getAccountSpendingStats(accountId: string, date: Date, cat
         const year = parseInt(yearStr, 10);
         const month = parseInt(monthStr, 10);
         if (!isNaN(year) && !isNaN(month)) {
-          // Use the end day of the tag month as reference to get proper cycle range
-          const refDate = new Date(year, month - 1, 25); // Use day 25 to fall within statement cycle
+          // Use first day of tag month as reference to consistently resolve statement cycle tag
+          const refDate = new Date(year, month - 1, 1);
           cycleRange = getCashbackCycleRange(config, refDate);
         } else {
           cycleRange = getCashbackCycleRange(config, date);
@@ -639,7 +639,7 @@ export async function getAccountSpendingStats(accountId: string, date: Date, cat
     `)
     .eq('account_id', accountId)
     .neq('status', 'void')
-    .in('type', ['expense', 'debt']);
+    .in('type', ['expense', 'debt', 'service']);
 
   // MF17: Robust cycle matching - try persisted_cycle_tag first, then 'tag' column, then date range
   const { data: tagTxns } = await txnsQuery.eq('persisted_cycle_tag', resolvedCycleTag);
@@ -656,7 +656,7 @@ export async function getAccountSpendingStats(accountId: string, date: Date, cat
     `)
     .eq('account_id', accountId)
     .neq('status', 'void')
-    .in('type', ['expense', 'debt'])
+    .in('type', ['expense', 'debt', 'service'])
     .eq('tag', resolvedCycleTag) as any);
 
   // Merge both result sets, deduplicating by ID
@@ -686,7 +686,7 @@ export async function getAccountSpendingStats(accountId: string, date: Date, cat
         `)
       .eq('account_id', accountId)
       .neq('status', 'void')
-      .in('type', ['expense', 'debt'])
+      .in('type', ['expense', 'debt', 'service'])
       .gte('occurred_at', cycleRange.start.toISOString())
       .lte('occurred_at', cycleRange.end.toISOString());
     rawTxns = dateTxns || [];
@@ -725,14 +725,14 @@ export async function getAccountSpendingStats(accountId: string, date: Date, cat
   let sharedSoFarFromTxns = 0;
 
   if (txnIds.length > 0) {
-    const { data: entries } = await supabase
+    const { data: entries } = await (supabase
       .from('cashback_entries')
       .select('amount, mode, transaction_id')
       .in('transaction_id', txnIds)
-      .eq('account_id', accountId);
+      .eq('account_id', accountId) as any);
 
     const entryMap = new Map<string, number>();
-    (entries || []).forEach(entry => {
+    ((entries || []) as any[]).forEach((entry: any) => {
       if (entry.transaction_id && (entry.mode === 'virtual' || entry.mode === 'real')) {
         entryMap.set(entry.transaction_id, (entryMap.get(entry.transaction_id) || 0) + (entry.amount || 0));
       }
