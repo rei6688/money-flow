@@ -186,6 +186,74 @@ export function AccountDetailHeaderV2({
         setDynamicCashbackStats(cashbackStats)
     }, [cashbackStats])
 
+    const selectedCycleMetrics = React.useMemo(() => {
+        if (!selectedCycle || selectedCycle === 'all' || !Array.isArray(initialTransactions)) {
+            return null
+        }
+
+        const categoryMap = new Map(categories.map(c => [c.id, c]))
+
+        const cycleTransactions = initialTransactions.filter((tx: any) => {
+            if (!tx || tx.status === 'void') return false
+            const txCycle = tx.persisted_cycle_tag || tx.derived_cycle_tag || (tx.tag ? String(tx.tag).slice(0, 7) : '')
+            return txCycle === selectedCycle
+        })
+
+        const cycleSpendRows = cycleTransactions.filter((tx: any) => ['expense', 'debt', 'service'].includes(tx.type))
+
+        // Calculate earned (est) from cashback_entries
+        const est = cycleSpendRows.reduce((sum: number, tx: any) => {
+            const entries = Array.isArray(tx.cashback_entries) ? tx.cashback_entries : []
+            const entryAmount = entries.reduce((s: number, e: any) => {
+                // Sum all virtual or real entries
+                if (e.mode === 'virtual' || e.mode === 'real') {
+                    return s + Math.abs(Number(e.amount || 0))
+                }
+                return s
+            }, 0)
+            return sum + entryAmount
+        }, 0)
+
+        // Calculate shared from share fields
+        const shared = cycleSpendRows.reduce((sum: number, tx: any) => {
+            const sharedFixed = Number(tx.cashback_share_fixed || 0)
+            if (sharedFixed > 0) return sum + sharedFixed
+
+            const sharePercent = Number(tx.cashback_share_percent || 0)
+            if (sharePercent > 0) {
+                // Use transaction amount as base for percentage calculation
+                const txAmount = Math.abs(Number(tx.amount || 0))
+                // Get earned for this transaction
+                const entries = Array.isArray(tx.cashback_entries) ? tx.cashback_entries : []
+                const txEarned = entries.reduce((s: number, e: any) => {
+                    if (e.mode === 'virtual' || e.mode === 'real') {
+                        return s + Math.abs(Number(e.amount || 0))
+                    }
+                    return s
+                }, 0)
+                return sum + (txEarned > 0 ? txEarned * sharePercent : 0)
+            }
+            return sum
+        }, 0)
+
+        const actual = cycleTransactions.reduce((sum: number, tx: any) => {
+            if (tx.type !== 'income') return sum
+            const category = tx.category_id ? categoryMap.get(tx.category_id) : null
+            const categoryName = category?.name?.toLowerCase() || ''
+            if (categoryName.includes('cashback') || categoryName.includes('hoàn tiền')) {
+                return sum + Math.abs(Number(tx.amount || 0))
+            }
+            return sum
+        }, 0)
+
+        return {
+            est,
+            shared,
+            profit: est - shared,
+            actual,
+        }
+    }, [selectedCycle, initialTransactions, categories])
+
     const rewardsCount = React.useMemo(() => {
         try {
             const program = normalizeCashbackConfig(account.cashback_config, account);
@@ -332,7 +400,7 @@ export function AccountDetailHeaderV2({
             />
 
             {/* Section 1: Account Identity */}
-            <HeaderSection label="Account" className="min-w-0 sm:min-w-[300px] gap-1 !h-[105px] justify-center pt-2">
+            <HeaderSection label="Account" className="min-w-0 sm:min-w-[300px] gap-1 !h-[120px] justify-center pt-2">
                 <div className="flex items-center gap-3">
                     <Link
                         href="/accounts"
@@ -604,7 +672,7 @@ export function AccountDetailHeaderV2({
                                 <HeaderSection
                                     label="Credit Health"
                                     borderColor="border-indigo-100"
-                                    className="flex-[5] min-w-[420px] bg-indigo-50/10 cursor-help !h-[105px]"
+                                    className="flex-[5] min-w-[420px] bg-indigo-50/10 cursor-help !h-[120px]"
                                 >
                                     <div className="flex flex-col h-full">
                                         {/* Row 1: Metrics (H-61px to ensure Bar Top is at 73px) */}
@@ -1020,7 +1088,7 @@ export function AccountDetailHeaderV2({
                                                     const minSpend = stats.minSpend || 0;
                                                     const spent = stats.currentSpend || 0;
                                                     const cap = stats.maxCashback || 0;
-                                                    const earned = stats.earnedSoFar || 0;
+                                                    const earned = selectedCycleMetrics?.est ?? (stats.earnedSoFar || 0);
 
                                                     const activeMax = stats.activeRules?.reduce((acc, r) => acc + (r.max || 0), 0) || 0;
                                                     const effectiveCap = cap > 0 ? cap : activeMax;
@@ -1056,42 +1124,22 @@ export function AccountDetailHeaderV2({
                                             {/* Metrics Grid - 2x2 */}
                                             <div className="flex-1 grid grid-cols-2 gap-2">
                                                 {(() => {
-                                                    const cycleProfit = dynamicCashbackStats?.netProfit || 0;
-                                                    const categoryMap = new Map(categories.map(c => [c.id, c]));
-                                                    let cycleActualClaimed = 0;
-
-                                                    const cycleStartRaw = dynamicCashbackStats?.cycle?.start;
-                                                    const cycleEndRaw = dynamicCashbackStats?.cycle?.end;
-                                                    const cycleStart = cycleStartRaw ? new Date(cycleStartRaw) : null;
-                                                    const cycleEnd = cycleEndRaw ? new Date(cycleEndRaw) : null;
-
-                                                    const hasValidCycleRange =
-                                                        !!cycleStart &&
-                                                        !!cycleEnd &&
-                                                        !isNaN(cycleStart.getTime()) &&
-                                                        !isNaN(cycleEnd.getTime());
-
-                                                    if (initialTransactions && hasValidCycleRange && cycleStart && cycleEnd) {
-                                                        const cycleEndInclusive = new Date(cycleEnd);
-                                                        cycleEndInclusive.setHours(23, 59, 59, 999);
-
-                                                        initialTransactions.forEach((tx: any) => {
-                                                            if (tx.type !== 'income' || tx.status === 'void') return;
-
-                                                            const txDate = new Date(tx.occurred_at || tx.date || tx.created_at);
-                                                            if (isNaN(txDate.getTime())) return;
-                                                            if (txDate < cycleStart || txDate > cycleEndInclusive) return;
-
-                                                            const category = tx.category_id ? categoryMap.get(tx.category_id) : null;
-                                                            const categoryName = category?.name?.toLowerCase() || '';
-                                                            if (categoryName.includes('cashback') || categoryName.includes('hoàn tiền')) {
-                                                                cycleActualClaimed += Math.abs(tx.amount || 0);
-                                                            }
-                                                        });
-                                                    }
-
+                                                    // Use API response as primary source (accurate calculation with transaction amount × rate)
                                                     const cycleEstCashback = dynamicCashbackStats?.earnedSoFar || 0;
                                                     const cycleShared = dynamicCashbackStats?.sharedAmount || 0;
+                                                    const cycleProfit = dynamicCashbackStats?.netProfit || 0;
+                                                    const cycleCurrentSpend = dynamicCashbackStats?.currentSpend || 0;
+                                                    const cycleActualClaimed = selectedCycleMetrics?.actual ?? 0;
+
+                                                    // Build detailed formula from activeRules for Est tooltip
+                                                    const ruleDetails = (dynamicCashbackStats?.activeRules || []).map((rule: any) => {
+                                                        const spent = rule.spent || 0;
+                                                        const earned = rule.earned || 0;
+                                                        const rate = rule.rate || 0;
+                                                        const formattedSpent = new Intl.NumberFormat('vi-VN').format(Math.round(spent));
+                                                        const formattedEarned = new Intl.NumberFormat('vi-VN').format(Math.round(earned));
+                                                        return `${rule.name}: ${formattedSpent} × ${rate}% = ${formattedEarned}`;
+                                                    });
 
                                                     return (
                                                         <>
@@ -1108,9 +1156,9 @@ export function AccountDetailHeaderV2({
                                                                         </span>
                                                                     </div>
                                                                 </TooltipTrigger>
-                                                                <TooltipContent side="top" className="max-w-xs bg-slate-900 text-white text-[11px] p-2">
-                                                                    <p className="font-semibold mb-1">Lợi nhuận = Thu cashback - Chia sẻ</p>
-                                                                    <p className="text-slate-300">Est. Cashback - Shared = Profit</p>
+                                                                <TooltipContent side="top" className="max-w-xs bg-slate-900 text-white text-[11px] p-2 space-y-1">
+                                                                    <p className="font-semibold">Lợi nhuận = Thu - Chia sẻ</p>
+                                                                    <p className="text-slate-300">{formatMoneyVND(Math.ceil(cycleEstCashback))} - {formatMoneyVND(Math.ceil(cycleShared))} = {formatMoneyVND(Math.ceil(cycleProfit))}</p>
                                                                 </TooltipContent>
                                                             </Tooltip>
 
@@ -1143,9 +1191,16 @@ export function AccountDetailHeaderV2({
                                                                         </span>
                                                                     </div>
                                                                 </TooltipTrigger>
-                                                                <TooltipContent side="top" className="max-w-xs bg-slate-900 text-white text-[11px] p-2">
-                                                                    <p className="font-semibold mb-1">Dự tính cashback kiếm được</p>
-                                                                    <p className="text-slate-300">Từ các rule cashback trong chu kỳ</p>
+                                                                <TooltipContent side="top" className="max-w-xs bg-slate-900 text-white text-[11px] p-2 space-y-1 max-h-40 overflow-y-auto">
+                                                                    <p className="font-semibold">Est. Cashback (Calculated)</p>
+                                                                    {ruleDetails.length > 0 ? (
+                                                                        ruleDetails.map((detail: string, idx: number) => (
+                                                                            <p key={idx} className="text-slate-300 text-[10px]">{detail}</p>
+                                                                        ))
+                                                                    ) : (
+                                                                        <p className="text-slate-300">Spend: {formatMoneyVND(Math.round(cycleCurrentSpend))}</p>
+                                                                    )}
+                                                                    <p className="text-slate-400 pt-1 border-t border-slate-700">Total: {formatMoneyVND(Math.ceil(cycleEstCashback))}</p>
                                                                 </TooltipContent>
                                                             </Tooltip>
 
@@ -1161,7 +1216,7 @@ export function AccountDetailHeaderV2({
                                                                 </TooltipTrigger>
                                                                 <TooltipContent side="top" className="max-w-xs bg-slate-900 text-white text-[11px] p-2">
                                                                     <p className="font-semibold mb-1">Cashback chia sẻ với người khác</p>
-                                                                    <p className="text-slate-300">% hoặc số tiền fixed từ rule chia sẻ</p>
+                                                                    <p className="text-slate-300">% hoặc số tiền fixed từ chia sẻ</p>
                                                                 </TooltipContent>
                                                             </Tooltip>
 

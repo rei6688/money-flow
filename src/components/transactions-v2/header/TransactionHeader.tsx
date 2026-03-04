@@ -425,6 +425,10 @@ export function TransactionHeader({
         disabledRange={disabledRange}
         availableMonths={availableMonths}
         availableDateRange={availableDateRange}
+        accountCycleTags={(() => {
+          const selected = localAccountId ? accounts.find((account) => account.id === localAccountId) : undefined
+          return selected?.type === 'credit_card' ? cycles.map(cycle => cycle.value) : undefined
+        })()}
         cycles={cycles}
         selectedCycleValue={localCycle}
         onCycleSelect={handleCycleChange}

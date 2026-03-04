@@ -72,6 +72,16 @@ export function MonthYearPickerV2({
   const [localMode, setLocalMode] = useState<'month' | 'range' | 'date' | 'all' | 'year' | 'cycle'>(mode)
   const [localDate, setLocalDate] = useState<Date>(date)
   const [localRange, setLocalRange] = useState<DateRange | undefined>(dateRange)
+  const [localCycle, setLocalCycle] = useState<string | undefined>(selectedCycleValue)
+  const [cycleSearch, setCycleSearch] = useState('')
+  const hasCycleContext = accountCycleTags !== undefined || mode === 'cycle' || selectedCycleValue !== undefined
+  const filteredCycles = useMemo(() => {
+    const q = cycleSearch.trim().toLowerCase()
+    if (!q) return cycles || []
+    return (cycles || []).filter(cycle =>
+      cycle.label.toLowerCase().includes(q) || cycle.value.toLowerCase().includes(q)
+    )
+  }, [cycles, cycleSearch])
 
   const availableYears = useMemo(() => {
     const years = new Set<number>()
@@ -114,11 +124,16 @@ export function MonthYearPickerV2({
   // Sync local state when prop changes (only if closed)
   useEffect(() => {
     if (!open) {
-      setLocalMode(mode)
+      if (hasCycleContext) {
+        setLocalMode('cycle')
+      } else {
+        setLocalMode(mode)
+      }
       setLocalDate(date)
       setLocalRange(dateRange)
+      setLocalCycle(selectedCycleValue)
     }
-  }, [open, mode, date, dateRange])
+  }, [open, mode, date, dateRange, selectedCycleValue, hasCycleContext])
 
   const handleOpenChange = (newOpen: boolean) => {
     if (locked && newOpen) {
@@ -128,13 +143,28 @@ export function MonthYearPickerV2({
     setOpen(newOpen)
     if (!newOpen) {
       // Reset local state to props on cancel/close without OK
-      setLocalMode(mode)
+      if (hasCycleContext) {
+        setLocalMode('cycle')
+      } else {
+        setLocalMode(mode)
+      }
       setLocalDate(date)
       setLocalRange(dateRange)
+      setLocalCycle(selectedCycleValue)
+      setCycleSearch('')
     }
   }
 
   const handleApply = () => {
+    if (localMode === 'cycle') {
+      onModeChange('cycle')
+      if (onCycleSelect && localCycle) {
+        onCycleSelect(localCycle)
+      }
+      setOpen(false)
+      return
+    }
+
     onModeChange(localMode)
     if (localMode === 'month' || localMode === 'date' || localMode === 'year') {
       onDateChange(localDate)
@@ -149,6 +179,10 @@ export function MonthYearPickerV2({
   }
 
   const displayText = (() => {
+    if (selectedCycleValue && selectedCycleValue !== 'all') {
+      const selected = cycles?.find(c => c.value === selectedCycleValue)
+      return selected?.label || selectedCycleValue
+    }
     if (mode === 'all') return 'All Time'
     if (mode === 'year') return format(date, 'yyyy')
     if (mode === 'month') return format(date, 'MMM yyyy')
@@ -167,6 +201,8 @@ export function MonthYearPickerV2({
     }
     return 'Select date'
   })()
+
+  const shouldShowCycleTab = hasCycleContext
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -203,7 +239,7 @@ export function MonthYearPickerV2({
         <div className="flex flex-col">
           {/* Tabs */}
           <div className="p-2 border-b flex gap-1 bg-muted/40 text-[10px]">
-            {cycles && cycles.length > 0 && (
+            {shouldShowCycleTab && (
               <Button
                 key="cycle"
                 variant={localMode === 'cycle' ? 'default' : 'ghost'}
@@ -244,19 +280,36 @@ export function MonthYearPickerV2({
                     <span className="text-xs text-muted-foreground">Loading cycles...</span>
                   </div>
                 ) : cycles && cycles.length > 0 ? (
-                  <div className="space-y-1.5">
-                    {cycles.map((cycle) => (
+                  <div className="space-y-2">
+                    <div className="relative">
+                      <input
+                        type="text"
+                        value={cycleSearch}
+                        onChange={(e) => setCycleSearch(e.target.value)}
+                        placeholder="Search cycle..."
+                        className="w-full h-8 rounded-md border border-slate-200 bg-white px-2.5 pr-8 text-xs outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20"
+                      />
+                      {cycleSearch && (
+                        <button
+                          type="button"
+                          onClick={() => setCycleSearch('')}
+                          className="absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 rounded hover:bg-slate-100"
+                        >
+                          <X className="h-3 w-3 text-slate-400" />
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="space-y-1.5 max-h-[220px] overflow-y-auto pr-1">
+                    {filteredCycles.map((cycle) => (
                       <button
                         key={cycle.value}
                         onClick={() => {
-                          if (onCycleSelect) {
-                            onCycleSelect(cycle.value)
-                            setOpen(false)
-                          }
+                          setLocalCycle(cycle.value)
                         }}
                         className={cn(
                           "w-full px-3 py-2 rounded-md border text-sm transition-colors text-left",
-                          selectedCycleValue === cycle.value
+                          localCycle === cycle.value
                             ? "bg-primary text-primary-foreground border-primary shadow-md"
                             : "border-slate-200 hover:bg-accent"
                         )}
@@ -264,6 +317,13 @@ export function MonthYearPickerV2({
                         <span className="font-medium">{cycle.label}</span>
                       </button>
                     ))}
+                    </div>
+
+                    {filteredCycles.length === 0 && (
+                      <div className="flex items-center justify-center py-4 text-xs text-muted-foreground italic">
+                        No matching cycles
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="flex flex-col items-center justify-center py-8 gap-2">
@@ -369,7 +429,7 @@ export function MonthYearPickerV2({
               size="sm"
               onClick={handleApply}
               className="h-8 px-4"
-              disabled={localMode === 'range' && (!localRange?.from || !localRange?.to)}
+              disabled={(localMode === 'range' && (!localRange?.from || !localRange?.to)) || (localMode === 'cycle' && !!cycles?.length && !localCycle)}
             >
               Apply
             </Button>
