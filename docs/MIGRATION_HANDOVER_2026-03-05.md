@@ -116,6 +116,14 @@
 ## 6) Ghi chú vận hành
 - Branch làm việc chính: `feat/pocketbase-migration`
 - Không cần giữ branch sheet-sync riêng nữa.
+- Agent tiếp theo **không code trực tiếp trên** `feat/pocketbase-migration`; bắt buộc tạo branch mới từ base này trước khi làm việc.
+- Mẫu branch đề xuất: `agent/pb-migration-<yyyymmdd>-<task>` (ví dụ: `agent/pb-migration-20260305-clasp-preflight`).
+- Luồng git chuẩn cho Agent sau:
+  1) `git checkout feat/pocketbase-migration`
+  2) `git pull --rebase origin feat/pocketbase-migration`
+  3) `git checkout -b agent/pb-migration-<yyyymmdd>-<task>`
+  4) thực hiện thay đổi + commit nhỏ theo phase
+  5) push branch mới và mở PR về `feat/pocketbase-migration`
 - Nếu gặp timeout tooling, ưu tiên:
   1) lưu docs/handover,
   2) commit state hiện tại,
