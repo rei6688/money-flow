@@ -1,89 +1,122 @@
 # PocketBase Migration Handover (2026-03-05)
 
-## 1) Scope & Goal
-- Consolidate Money Flow runtime from mixed Supabase/PocketBase toward PocketBase-first service layer.
-- Keep transaction integrity, cashback logic, cycle correctness, and People/Sheets sync behavior unchanged from business perspective.
-- Reduce lag on account details/cycle loading while preserving V2 UI behavior.
+## 1) Mục tiêu và phạm vi
+- Hợp nhất toàn bộ work-in-progress về PocketBase migration + Google Sheets sync vào **1 branch duy nhất**: `feat/pocketbase-migration`.
+- Tách và xử lý bug sheet sync riêng (đã merge ngược lại branch migrate).
+- Ưu tiên ổn định runtime cho luồng:
+  - Accounts details / Cashback performance (PocketBase service layer)
+  - People sheet sync (`#nosync`, UI refresh, sheet formatting)
 
-## 2) Migration Strategy
-1. Build PocketBase infra/service abstractions.
-2. Rewire read-heavy routes/pages first (account details + cashback analytics).
-3. Keep mutation integrity on existing flows, then migrate in controlled slices.
-4. Re-migrate PocketBase collections where schema split is required.
-5. Validate with targeted smoke checks and regression checks.
+---
 
-## 3) What has been completed
+## 2) Quá trình đã thực hiện
 
-### 3.1 PocketBase service layer (new)
-- `src/services/pocketbase/server.ts`
-  - PB auth/token cache.
-  - Common request/list/get helpers.
-  - deterministic `toPocketBaseId` mapping.
-- `src/services/pocketbase/account-details.service.ts`
-  - PB mappers for account/category/person/shop/transactions.
-  - `getPocketBaseAccountDetails`, `getPocketBaseAccounts`.
-  - snapshot stats helper + cycle options + cycle transactions.
-- `src/services/pocketbase/cashback-performance.service.ts`
-  - PB cashback yearly analytics + progress helpers.
+### 2.1 Cashback / Accounts migration (PocketBase)
+- Tạo service layer PocketBase:
+  - `src/services/pocketbase/server.ts`
+  - `src/services/pocketbase/account-details.service.ts`
+  - `src/services/pocketbase/cashback-performance.service.ts`
+- Rewire các điểm chính sang PocketBase:
+  - `src/app/accounts/[id]/page.tsx`
+  - `src/app/cashback/page.tsx`
+  - `src/actions/cashback.actions.ts`
+  - `src/app/api/cashback/stats/route.ts`
+- Dọn trace Supabase ở account detail client:
+  - `src/components/accounts/v2/AccountDetailViewV2.tsx` (bỏ realtime channel, dùng polling nhẹ)
 
-### 3.2 Route/page rewiring to PB
-- `src/app/accounts/[id]/page.tsx`
-  - switched account details data loading to PB services.
-- `src/app/cashback/page.tsx`
-  - switched cashback performance loading to PB services.
-- `src/actions/cashback.actions.ts`
-  - cycle options/transactions to PB account-details helpers.
-- `src/app/api/cashback/stats/route.ts`
-  - snapshot stats path using PB helper.
+### 2.2 Migration data model accounts (split cashback fields)
+- Cập nhật mapper trong `scripts/pocketbase/migrate.mjs` để tách từ `cashback_config` sang cột riêng:
+  - `cb_type`, `cb_base_rate`, `cb_max_budget`, `cb_is_unlimited`, `cb_rules_json`, `cb_min_spend`, `cb_cycle_type`
+- Re-migrate phase accounts đã chạy thành công:
+  - xóa + tạo lại 93 records accounts.
 
-### 3.3 Supabase trace cleanup on account detail path
-- `src/components/accounts/v2/AccountDetailViewV2.tsx`
-  - removed Supabase realtime channel usage.
-  - replaced with lightweight periodic refresh polling.
+### 2.3 Google Sheets sync fixes (đã merge vào branch migrate)
+- Server-side filter thống nhất `#nosync/#deprecated`:
+  - `src/services/sheet.service.ts`
+  - Fix root cause: `syncAllTransactions` trước đó chưa filter.
+- UI refresh sau sync:
+  - `src/components/people/v2/people-directory-v2.tsx`
+  - `src/components/people/sheet-sync-controls.tsx`
+- Apps Script people-sync:
+  - `integrations/google-sheets/people-sync/Code.js`
+  - Thêm guard `shouldExcludeFromSheet(...)`
+  - Chuyển conditional format cho `Type=Out/In` chỉ còn cột **B** (không tô full A:J/K)
+  - Bump script header/version note lên `7.9`.
 
-### 3.4 Accounts re-migration (split cashback fields)
-- `scripts/pocketbase/migrate.mjs`
-  - added split mapping from `cashback_config` into dedicated columns:
-    - `cb_type`, `cb_base_rate`, `cb_max_budget`, `cb_is_unlimited`, `cb_rules_json`, `cb_min_spend`, `cb_cycle_type`.
-  - preserved legacy JSON + extra account fields.
-- Re-migration executed:
-  - `--phase=accounts --cleanup=phase`
-  - result: deleted 93, created 93.
+---
 
-### 3.5 People/Google Sheets fixes (separate sheet-sync branch work, now ready to merge)
-- `src/services/sheet.service.ts`
-  - fixed `syncAllTransactions()` to exclude `#nosync/#deprecated` rows (root cause of “Sync all still pushes nosync”).
-  - unified exclusion logic for single/cycle/all sync paths.
-- `src/components/people/v2/people-directory-v2.tsx`
-  - added `router.refresh()` after sync-all and per-person sync.
-- `src/components/people/sheet-sync-controls.tsx`
-  - added `router.refresh()` after sync-all.
-- `integrations/google-sheets/people-sync/Code.js`
-  - added `shouldExcludeFromSheet` guard in Apps Script sync handlers.
-  - changed conditional formatting scope to Type column only (`B2:B1000`) instead of full row range.
-  - version note bumped to 7.9.
+## 3) Trạng thái hiện tại (Progress)
 
-## 4) Current issues to watch (People & Sheet)
-1. Auth/permission confusion on `clasp push` can still happen if script ownership/sharing differs from logged account.
-2. Existing old conditional-format rules in some sheets may remain from legacy tabs; script now replaces legacy type-row rules, but old manual custom rules can still coexist.
-3. Runtime has mixed backend in non-migrated areas (sheet data currently still reads Supabase service client).
-4. Local workspace has heavy `.next/dev/*` tracked changes during dev sessions.
+### Completed
+- [x] Hợp nhất sheet-sync work vào migration branch.
+- [x] Lọc `#nosync` nhất quán cho single/cycle/all sync.
+- [x] Fix highlight đỏ chỉ cột Type (B) trên people sheet.
+- [x] Cập nhật docs handover migration.
 
-## 5) Pending migration tasks for next Agent
-1. Move remaining account details dependent reads/mutations still touching Supabase into PB-safe equivalents where required.
-2. Migrate People sheet data source from Supabase to PocketBase (with deterministic ID resolution, owner-account mapping parity).
-3. Add explicit PB fallback/error UX around sheet sync actions to avoid silent mismatch.
-4. Validate end-to-end authenticated smoke for:
-   - `/accounts/[id]`, `/cashback`, `/people/[id]`.
-5. Reduce noisy generated artifacts from commit surface (especially `.next/dev/*`) via cleanup policy if team agrees.
+### In Progress / Partial
+- [~] PocketBase migration chưa hoàn tất toàn bộ hệ thống (nhiều service/action khác vẫn dùng Supabase).
+- [~] Smoke test authenticated E2E trên app route private chưa fully automated (chủ yếu manual/smoke route).
 
-## 6) Suggested verification checklist
-- Account details page opens with correct stats/cycle values.
-- Cashback page numbers match expected cycle snapshots.
-- `Sync all` does not send rows with `#nosync`.
-- On sheet, `Type=Out` highlights only Type column (B), not full row.
-- Accounts PB collection has split cashback fields populated.
+### Pending
+- [ ] Chuẩn hóa auth của `clasp` để tránh lẫn account khi push Apps Script (preflight guard trong `push-sheet.mjs`).
+- [ ] Hoàn thiện PocketBase-first cho các luồng people/actions còn dùng Supabase.
+- [ ] Tổng hợp test matrix regression đầy đủ trước production deploy.
 
-## 7) Branching note
-- This handover expects a single working branch after merge: `feat/pocketbase-migration`.
-- Temporary sheet-sync branch can be deleted after merge.
+---
+
+## 4) Issues hiện tại (People + migration dở dang)
+
+### People / Sheet sync
+1. **Push script timeout/permission confusion**
+   - Có khả năng lẫn auth profile giữa global/local `.clasprc.json`.
+   - Cần preflight check account email trước khi `clasp push`.
+
+2. **Google Sheet script deployment drift**
+   - Nếu update `integrations/google-sheets/people-sync/Code.js` mà chưa push đúng script ID thì web behavior không đổi.
+
+3. **UI state consistency**
+   - Đã thêm `router.refresh()` sau sync, nhưng vẫn cần verify thêm với data lớn và concurrent edits.
+
+### PocketBase migration
+1. **Mixed backend state**
+   - Một số route/service mới dùng PocketBase, nhưng nhiều luồng khác vẫn Supabase.
+   - Cần chiến lược “PB-first + fallback” hoặc cutover theo module để tránh inconsistency.
+
+2. **Data parity validation**
+   - Sau re-migrate accounts, cần checklist đối soát field-level (đặc biệt cashback fields split).
+
+3. **Realtime replacement strategy**
+   - Realtime Supabase đã được tháo ở account details; hiện dùng polling.
+   - Cần đánh giá lại long-term (WebSocket/PocketBase realtime/poll interval).
+
+---
+
+## 5) Kế hoạch chuẩn bị cho Agent tiếp theo
+
+### Phase A - Stabilize tools (nhanh)
+- Thêm preflight auth check cho `people-sync/batch-sync push-sheet.mjs`:
+  - xác nhận account `clasp` hiện hành,
+  - fail sớm nếu mismatch,
+  - hướng dẫn relogin 1 account duy nhất.
+
+### Phase B - Migration consistency
+- Rà các action/service còn Supabase trong flows liên quan Accounts/Cashback/People.
+- Chọn thứ tự cutover theo module, không làm big-bang.
+
+### Phase C - Verification
+- Smoke test chuẩn theo checklist:
+  - People sync all/current cycle
+  - `#nosync` exclusion
+  - Type coloring cột B
+  - Accounts details / Cashback pages
+- Chạy lint/build trước khi merge PR.
+
+---
+
+## 6) Ghi chú vận hành
+- Branch làm việc chính: `feat/pocketbase-migration`
+- Không cần giữ branch sheet-sync riêng nữa.
+- Nếu gặp timeout tooling, ưu tiên:
+  1) lưu docs/handover,
+  2) commit state hiện tại,
+  3) chuyển bước còn lại cho agent sau bằng checklist rõ ràng.
