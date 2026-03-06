@@ -550,6 +550,7 @@ export async function createTransaction(
   input: CreateTransactionInput,
 ): Promise<string | null> {
   try {
+    console.log('[DB:SB] transactions.create', { type: input.type, amount: input.amount })
     const normalized = await normalizeInput(input);
     const supabase = createClient();
 
@@ -717,6 +718,7 @@ export async function updateTransaction(
   id: string,
   input: CreateTransactionInput,
 ): Promise<boolean> {
+  console.log('[DB:SB] transactions.update', { id })
   const supabase = createClient();
 
   // Fetch existing transaction INCLUDING person_id for sheet sync
@@ -1050,8 +1052,8 @@ export async function updateTransaction(
 }
 
 export async function deleteTransaction(id: string): Promise<boolean> {
+  console.log('[DB:SB] transactions.delete', { id })
   const supabase = createClient();
-  // Fetch existing transaction INCLUDING person_id for sheet sync and installment_plan_id for auto-settle
   const { data: existing, error: fetchError } = await supabase
     .from("transactions")
     .select("account_id, target_account_id, person_id, installment_plan_id, metadata, status")
@@ -1177,6 +1179,7 @@ export async function deleteTransaction(id: string): Promise<boolean> {
 }
 
 export async function voidTransaction(id: string): Promise<boolean> {
+  console.log('[DB:SB] transactions.void', { id })
   const supabase = createClient();
   const { data: existing } = await supabase
     .from("transactions")
