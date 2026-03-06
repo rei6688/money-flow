@@ -4,7 +4,7 @@ import { Account, Category, Person, Shop, TransactionWithDetails } from '@/types
 import { AccountSpendingStats } from '@/types/cashback.types'
 import { getCashbackCycleRange, formatIsoCycleTag, parseCashbackConfig } from '@/lib/cashback'
 import { getCreditCardAvailableBalance, getCreditCardUsage } from '@/lib/account-balance'
-import { pocketbaseGetById, pocketbaseList, toPocketBaseId } from './server'
+import { pocketbaseGetById, pocketbaseList, pocketbaseRequest, toPocketBaseId } from './server'
 
 type PocketBaseRecord = Record<string, any>
 
@@ -159,18 +159,532 @@ async function listAllRecords(collection: string, params: Record<string, string 
 }
 
 export async function getPocketBaseCategories(): Promise<Category[]> {
+  console.log('[DB:PB] categories.list')
   const records = await listAllRecords('categories', { sort: 'name' })
-  return records.map(mapCategory)
+  const items = records.map(mapCategory)
+  console.log('[DB:PB] categories.list →', items.length, 'records')
+  return items
+}
+
+export async function createPocketBaseCategory(
+  supabaseId: string,
+  data: {
+    name: string
+    type: Category['type']
+    icon?: string | null
+    image_url?: string | null
+    kind?: Category['kind'] | null
+    mcc_codes?: string[] | null
+  }
+): Promise<boolean> {
+  const pbId = toPocketBaseId(supabaseId)
+  console.log('[DB:PB] categories.create', { pbId, name: data.name })
+  try {
+    await pocketbaseRequest<PocketBaseRecord>('/api/collections/categories/records', {
+      method: 'POST',
+      body: {
+        id: pbId,
+        name: data.name,
+        type: data.type,
+        icon: data.icon ?? null,
+        image_url: data.image_url ?? null,
+        kind: data.kind ?? null,
+        mcc_codes: data.mcc_codes ?? null,
+        is_archived: false,
+      },
+    })
+    return true
+  } catch (err) {
+    console.error('[DB:PB] categories.create failed:', err)
+    return false
+  }
+}
+
+export async function updatePocketBaseCategory(
+  supabaseId: string,
+  data: Partial<{
+    name: string
+    type: Category['type']
+    icon: string | null
+    image_url: string | null
+    kind: Category['kind'] | null
+    mcc_codes: string[] | null
+  }>
+): Promise<boolean> {
+  const pbId = toPocketBaseId(supabaseId)
+  console.log('[DB:PB] categories.update', { pbId })
+  try {
+    await pocketbaseRequest<PocketBaseRecord>(`/api/collections/categories/records/${pbId}`, {
+      method: 'PATCH',
+      body: data,
+    })
+    return true
+  } catch (err) {
+    console.error('[DB:PB] categories.update failed:', err)
+    return false
+  }
+}
+
+export async function togglePocketBaseCategoryArchive(
+  supabaseId: string,
+  isArchived: boolean
+): Promise<boolean> {
+  const pbId = toPocketBaseId(supabaseId)
+  console.log('[DB:PB] categories.toggleArchive', { pbId, isArchived })
+  try {
+    await pocketbaseRequest(`/api/collections/categories/records/${pbId}`, {
+      method: 'PATCH',
+      body: { is_archived: isArchived },
+    })
+    return true
+  } catch (err) {
+    console.error('[DB:PB] categories.toggleArchive failed:', err)
+    return false
+  }
+}
+
+export async function deletePocketBaseCategory(supabaseId: string): Promise<boolean> {
+  const pbId = toPocketBaseId(supabaseId)
+  console.log('[DB:PB] categories.delete', { pbId })
+  try {
+    await pocketbaseRequest(`/api/collections/categories/records/${pbId}`, {
+      method: 'DELETE',
+    })
+    return true
+  } catch (err) {
+    console.error('[DB:PB] categories.delete failed:', err)
+    return false
+  }
+}
+
+export async function togglePocketBaseCategoriesArchiveBulk(
+  supabaseIds: string[],
+  isArchived: boolean
+): Promise<void> {
+  console.log('[DB:PB] categories.toggleArchiveBulk', { count: supabaseIds.length, isArchived })
+  await Promise.allSettled(
+    supabaseIds.map((sbId) =>
+      pocketbaseRequest(`/api/collections/categories/records/${toPocketBaseId(sbId)}`, {
+        method: 'PATCH',
+        body: { is_archived: isArchived },
+      }).catch((err) => console.error('[DB:PB] categories.toggleArchiveBulk item failed:', sbId, err))
+    )
+  )
+}
+
+export async function deletePocketBaseCategoriesBulk(supabaseIds: string[]): Promise<void> {
+  console.log('[DB:PB] categories.deleteBulk', { count: supabaseIds.length })
+  await Promise.allSettled(
+    supabaseIds.map((sbId) =>
+      pocketbaseRequest(`/api/collections/categories/records/${toPocketBaseId(sbId)}`, {
+        method: 'DELETE',
+      }).catch((err) => console.error('[DB:PB] categories.deleteBulk item failed:', sbId, err))
+    )
+  )
 }
 
 export async function getPocketBasePeople(): Promise<Person[]> {
+  console.log('[DB:PB] people.list')
   const records = await listAllRecords('people', { sort: 'name' })
-  return records.map(mapPerson)
+  const items = records.map(mapPerson)
+  console.log('[DB:PB] people.list →', items.length, 'records')
+  return items
 }
 
 export async function getPocketBaseShops(): Promise<Shop[]> {
+  console.log('[DB:PB] shops.list')
   const records = await listAllRecords('shops', { sort: 'name' })
-  return records.map(mapShop)
+  const items = records.map(mapShop)
+  console.log('[DB:PB] shops.list →', items.length, 'records')
+  return items
+}
+
+export async function createPocketBaseShop(
+  supabaseId: string,
+  data: {
+    name: string
+    image_url?: string | null
+    default_category_id?: string | null
+  }
+): Promise<boolean> {
+  const pbId = toPocketBaseId(supabaseId)
+  const pbCategoryId = data.default_category_id ? toPocketBaseId(data.default_category_id) : null
+  console.log('[DB:PB] shops.create', { pbId, name: data.name })
+  try {
+    await pocketbaseRequest<Record<string, unknown>>('/api/collections/shops/records', {
+      method: 'POST',
+      body: {
+        id: pbId,
+        name: data.name,
+        image_url: data.image_url ?? null,
+        default_category_id: pbCategoryId,
+        is_archived: false,
+      },
+    })
+    return true
+  } catch (err) {
+    console.error('[DB:PB] shops.create failed:', err)
+    return false
+  }
+}
+
+export async function updatePocketBaseShop(
+  supabaseId: string,
+  data: Partial<{
+    name: string
+    image_url: string | null
+    default_category_id: string | null
+  }>
+): Promise<boolean> {
+  const pbId = toPocketBaseId(supabaseId)
+  const body: Record<string, unknown> = {}
+  if (typeof data.name !== 'undefined') body.name = data.name
+  if (typeof data.image_url !== 'undefined') body.image_url = data.image_url
+  if (typeof data.default_category_id !== 'undefined') {
+    body.default_category_id = data.default_category_id ? toPocketBaseId(data.default_category_id) : null
+  }
+  if (!Object.keys(body).length) return true
+  console.log('[DB:PB] shops.update', { pbId })
+  try {
+    await pocketbaseRequest<Record<string, unknown>>(`/api/collections/shops/records/${pbId}`, {
+      method: 'PATCH',
+      body,
+    })
+    return true
+  } catch (err) {
+    console.error('[DB:PB] shops.update failed:', err)
+    return false
+  }
+}
+
+export async function togglePocketBaseShopArchive(
+  supabaseId: string,
+  isArchived: boolean
+): Promise<boolean> {
+  const pbId = toPocketBaseId(supabaseId)
+  console.log('[DB:PB] shops.toggleArchive', { pbId, isArchived })
+  try {
+    await pocketbaseRequest(`/api/collections/shops/records/${pbId}`, {
+      method: 'PATCH',
+      body: { is_archived: isArchived },
+    })
+    return true
+  } catch (err) {
+    console.error('[DB:PB] shops.toggleArchive failed:', err)
+    return false
+  }
+}
+
+export async function deletePocketBaseShop(supabaseId: string): Promise<boolean> {
+  const pbId = toPocketBaseId(supabaseId)
+  console.log('[DB:PB] shops.delete', { pbId })
+  try {
+    await pocketbaseRequest(`/api/collections/shops/records/${pbId}`, {
+      method: 'DELETE',
+    })
+    return true
+  } catch (err) {
+    console.error('[DB:PB] shops.delete failed:', err)
+    return false
+  }
+}
+
+export async function togglePocketBaseShopsArchiveBulk(
+  supabaseIds: string[],
+  isArchived: boolean
+): Promise<void> {
+  console.log('[DB:PB] shops.toggleArchiveBulk', { count: supabaseIds.length, isArchived })
+  await Promise.allSettled(
+    supabaseIds.map((sbId) =>
+      pocketbaseRequest(`/api/collections/shops/records/${toPocketBaseId(sbId)}`, {
+        method: 'PATCH',
+        body: { is_archived: isArchived },
+      }).catch((err) => console.error('[DB:PB] shops.toggleArchiveBulk item failed:', sbId, err))
+    )
+  )
+}
+
+export async function deletePocketBaseShopsBulk(supabaseIds: string[]): Promise<void> {
+  console.log('[DB:PB] shops.deleteBulk', { count: supabaseIds.length })
+  await Promise.allSettled(
+    supabaseIds.map((sbId) =>
+      pocketbaseRequest(`/api/collections/shops/records/${toPocketBaseId(sbId)}`, {
+        method: 'DELETE',
+      }).catch((err) => console.error('[DB:PB] shops.deleteBulk item failed:', sbId, err))
+    )
+  )
+}
+
+// ─── People write functions (Phase 3) ────────────────────────────────────────
+
+export async function createPocketBasePerson(
+  supabaseId: string,
+  data: {
+    name: string
+    image_url?: string | null
+    sheet_link?: string | null
+    google_sheet_url?: string | null
+    is_owner?: boolean | null
+    is_archived?: boolean | null
+    is_group?: boolean | null
+    group_parent_id?: string | null
+    sheet_full_img?: string | null
+    sheet_show_bank_account?: boolean
+    sheet_bank_info?: string | null
+    sheet_linked_bank_id?: string | null
+    sheet_show_qr_image?: boolean
+  }
+): Promise<boolean> {
+  const pbId = toPocketBaseId(supabaseId)
+  console.log('[DB:PB] people.create', { pbId, name: data.name })
+  try {
+    await pocketbaseRequest<Record<string, unknown>>('/api/collections/people/records', {
+      method: 'POST',
+      body: {
+        id: pbId,
+        slug: supabaseId,
+        name: data.name,
+        image_url: data.image_url ?? null,
+        sheet_link: data.sheet_link ?? null,
+        google_sheet_url: data.google_sheet_url ?? null,
+        is_owner: data.is_owner ?? null,
+        is_archived: data.is_archived ?? null,
+        is_group: data.is_group ?? null,
+        group_parent_id: data.group_parent_id ? toPocketBaseId(data.group_parent_id) : null,
+        sheet_full_img: data.sheet_full_img ?? null,
+        sheet_show_bank_account: data.sheet_show_bank_account ?? false,
+        sheet_bank_info: data.sheet_bank_info ?? null,
+        sheet_linked_bank_id: data.sheet_linked_bank_id ?? null,
+        sheet_show_qr_image: data.sheet_show_qr_image ?? false,
+      },
+    })
+    return true
+  } catch (err) {
+    console.error('[DB:PB] people.create failed:', err)
+    return false
+  }
+}
+
+export async function updatePocketBasePerson(
+  supabaseId: string,
+  data: Partial<{
+    name: string
+    image_url: string | null
+    sheet_link: string | null
+    google_sheet_url: string | null
+    is_owner: boolean | null
+    is_archived: boolean | null
+    is_group: boolean | null
+    group_parent_id: string | null
+    sheet_full_img: string | null
+    sheet_show_bank_account: boolean
+    sheet_bank_info: string | null
+    sheet_linked_bank_id: string | null
+    sheet_show_qr_image: boolean
+  }>
+): Promise<boolean> {
+  const pbId = toPocketBaseId(supabaseId)
+  console.log('[DB:PB] people.update', { pbId })
+  const body: Record<string, unknown> = { ...data }
+  if ('group_parent_id' in body && body.group_parent_id) {
+    body.group_parent_id = toPocketBaseId(body.group_parent_id as string)
+  }
+  try {
+    await pocketbaseRequest<Record<string, unknown>>(`/api/collections/people/records/${pbId}`, {
+      method: 'PATCH',
+      body,
+    })
+    return true
+  } catch (err) {
+    console.error('[DB:PB] people.update failed:', err)
+    return false
+  }
+}
+
+// ─── Account write functions (Phase 4) ───────────────────────────────────────
+
+export async function createPocketBaseAccount(
+  supabaseAccountId: string,
+  data: {
+    name: string
+    type: string
+    currency?: string
+    owner_id?: string | null
+    credit_limit?: number | null
+    current_balance?: number
+    total_in?: number
+    total_out?: number
+    is_active?: boolean
+    image_url?: string | null
+    account_number?: string | null
+    receiver_name?: string | null
+    parent_account_id?: string | null
+    secured_by_account_id?: string | null
+    annual_fee?: number | null
+    annual_fee_waiver_target?: number | null
+    holder_type?: string
+    holder_person_id?: string | null
+    statement_day?: number | null
+    due_date?: number | null
+    cb_type?: string
+    cb_base_rate?: number
+    cb_max_budget?: number | null
+    cb_is_unlimited?: boolean
+    cb_rules_json?: unknown
+    cb_min_spend?: number | null
+    cb_cycle_type?: string
+  }
+): Promise<boolean> {
+  const pbId = toPocketBaseId(supabaseAccountId)
+  const pbOwnerId = data.owner_id ? toPocketBaseId(data.owner_id) : null
+  const pbParentId = data.parent_account_id ? toPocketBaseId(data.parent_account_id) : null
+  const pbSecuredById = data.secured_by_account_id ? toPocketBaseId(data.secured_by_account_id) : null
+  const pbHolderPersonId = data.holder_person_id ? toPocketBaseId(data.holder_person_id) : null
+  console.log('[DB:PB] accounts.create', { pbId, name: data.name, type: data.type })
+  try {
+    await pocketbaseRequest<Record<string, unknown>>('/api/collections/accounts/records', {
+      method: 'POST',
+      body: {
+        id: pbId,
+        slug: supabaseAccountId,
+        name: data.name,
+        type: data.type,
+        currency: data.currency ?? 'VND',
+        owner_id: pbOwnerId,
+        credit_limit: data.credit_limit ?? null,
+        current_balance: data.current_balance ?? 0,
+        total_in: data.total_in ?? 0,
+        total_out: data.total_out ?? 0,
+        is_active: data.is_active ?? true,
+        image_url: data.image_url ?? null,
+        account_number: data.account_number ?? null,
+        receiver_name: data.receiver_name ?? null,
+        parent_account_id: pbParentId,
+        secured_by_account_id: pbSecuredById,
+        annual_fee: data.annual_fee ?? null,
+        annual_fee_waiver_target: data.annual_fee_waiver_target ?? null,
+        holder_type: data.holder_type ?? 'me',
+        holder_person_id: pbHolderPersonId,
+        statement_day: data.statement_day ?? null,
+        due_date: data.due_date ?? null,
+        cb_type: data.cb_type ?? 'none',
+        cb_base_rate: data.cb_base_rate ?? 0,
+        cb_max_budget: data.cb_max_budget ?? null,
+        cb_is_unlimited: data.cb_is_unlimited ?? false,
+        cb_rules_json: data.cb_rules_json ?? null,
+        cb_min_spend: data.cb_min_spend ?? null,
+        cb_cycle_type: data.cb_cycle_type ?? 'calendar_month',
+      },
+    })
+    return true
+  } catch (err) {
+    console.error('[DB:PB] accounts.create failed:', err)
+    return false
+  }
+}
+
+export async function updatePocketBaseAccountInfo(
+  supabaseAccountId: string,
+  data: Partial<{
+    name: string
+    type: string
+    currency: string
+    credit_limit: number | null
+    is_active: boolean
+    image_url: string | null
+    account_number: string | null
+    receiver_name: string | null
+    parent_account_id: string | null
+    secured_by_account_id: string | null
+    annual_fee: number | null
+    annual_fee_waiver_target: number | null
+    holder_type: string
+    holder_person_id: string | null
+    statement_day: number | null
+    due_date: number | null
+  }>
+): Promise<boolean> {
+  const pbId = toPocketBaseId(supabaseAccountId)
+  console.log('[DB:PB] accounts.updateInfo', { pbId })
+  const body: Record<string, unknown> = { ...data }
+  if ('parent_account_id' in body && body.parent_account_id) {
+    body.parent_account_id = toPocketBaseId(body.parent_account_id as string)
+  } else if ('parent_account_id' in body) {
+    body.parent_account_id = null
+  }
+  if ('secured_by_account_id' in body && body.secured_by_account_id) {
+    body.secured_by_account_id = toPocketBaseId(body.secured_by_account_id as string)
+  } else if ('secured_by_account_id' in body) {
+    body.secured_by_account_id = null
+  }
+  if ('holder_person_id' in body && body.holder_person_id) {
+    body.holder_person_id = toPocketBaseId(body.holder_person_id as string)
+  } else if ('holder_person_id' in body) {
+    body.holder_person_id = null
+  }
+  try {
+    await pocketbaseRequest<Record<string, unknown>>(`/api/collections/accounts/records/${pbId}`, {
+      method: 'PATCH',
+      body,
+    })
+    return true
+  } catch (err) {
+    console.error('[DB:PB] accounts.updateInfo failed:', err)
+    return false
+  }
+}
+
+export async function updatePocketBaseAccountConfig(
+  supabaseAccountId: string,
+  data: Partial<{
+    cb_type: string
+    cb_base_rate: number
+    cb_max_budget: number | null
+    cb_is_unlimited: boolean
+    cb_rules_json: unknown
+    cb_min_spend: number | null
+    cb_cycle_type: string
+    cashback_config: unknown
+    cashback_config_version: number
+    statement_day: number | null
+    due_date: number | null
+    name: string
+    credit_limit: number | null
+    type: string
+    secured_by_account_id: string | null
+    is_active: boolean | null
+    image_url: string | null
+    annual_fee: number | null
+    annual_fee_waiver_target: number | null
+    parent_account_id: string | null
+    account_number: string | null
+    receiver_name: string | null
+    holder_type: string
+    holder_person_id: string | null
+  }>
+): Promise<boolean> {
+  const pbId = toPocketBaseId(supabaseAccountId)
+  console.log('[DB:PB] accounts.updateConfig', { pbId })
+  const body: Record<string, unknown> = { ...data }
+  if ('secured_by_account_id' in body && body.secured_by_account_id) {
+    body.secured_by_account_id = toPocketBaseId(body.secured_by_account_id as string)
+  }
+  if ('parent_account_id' in body && body.parent_account_id) {
+    body.parent_account_id = toPocketBaseId(body.parent_account_id as string)
+  }
+  if ('holder_person_id' in body && body.holder_person_id) {
+    body.holder_person_id = toPocketBaseId(body.holder_person_id as string)
+  }
+  try {
+    await pocketbaseRequest<Record<string, unknown>>(`/api/collections/accounts/records/${pbId}`, {
+      method: 'PATCH',
+      body,
+    })
+    return true
+  } catch (err) {
+    console.error('[DB:PB] accounts.updateConfig failed:', err)
+    return false
+  }
 }
 
 export async function getPocketBaseAccounts(): Promise<Account[]> {
