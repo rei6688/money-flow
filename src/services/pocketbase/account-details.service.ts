@@ -902,3 +902,92 @@ export async function getPocketBaseCycleTransactions(sourceAccountId: string, cy
 
   return records.map((item) => mapTransaction(item, sourceAccountId))
 }
+
+// ============================================================
+// PHASE 5 — Transaction write functions (dual-write secondary)
+// ============================================================
+
+type TransactionWriteData = {
+  occurred_at: string
+  note?: string | null
+  type: string
+  account_id: string
+  amount: number
+  tag?: string | null
+  category_id?: string | null
+  person_id?: string | null
+  target_account_id?: string | null
+  shop_id?: string | null
+  status?: string
+  persisted_cycle_tag?: string | null
+  cashback_share_percent?: number | null
+  cashback_share_fixed?: number | null
+  cashback_mode?: string | null
+  linked_transaction_id?: string | null
+  metadata?: unknown
+}
+
+export async function createPocketBaseTransaction(supabaseId: string, data: TransactionWriteData): Promise<void> {
+  console.log('[DB:PB] transactions.create', { id: supabaseId, type: data.type, amount: data.amount })
+  const pbId = toPocketBaseId(supabaseId)
+  await pocketbaseRequest(`/api/collections/transactions/records`, {
+    method: 'POST',
+    body: {
+      id: pbId,
+      slug: supabaseId,
+      occurred_at: data.occurred_at,
+      note: data.note ?? null,
+      type: data.type,
+      account_id: toPocketBaseId(data.account_id),
+      amount: data.amount,
+      tag: data.tag ?? null,
+      category_id: data.category_id ? toPocketBaseId(data.category_id) : null,
+      person_id: data.person_id ? toPocketBaseId(data.person_id) : null,
+      target_account_id: data.target_account_id ? toPocketBaseId(data.target_account_id) : null,
+      shop_id: data.shop_id ? toPocketBaseId(data.shop_id) : null,
+      status: data.status ?? 'posted',
+      persisted_cycle_tag: data.persisted_cycle_tag ?? null,
+      cashback_share_percent: data.cashback_share_percent ?? null,
+      cashback_share_fixed: data.cashback_share_fixed ?? null,
+      cashback_mode: data.cashback_mode ?? null,
+      linked_transaction_id: data.linked_transaction_id ? toPocketBaseId(data.linked_transaction_id) : null,
+      metadata: data.metadata ?? null,
+    },
+  })
+}
+
+export async function updatePocketBaseTransaction(supabaseId: string, data: Partial<TransactionWriteData>): Promise<void> {
+  console.log('[DB:PB] transactions.update', { id: supabaseId })
+  const pbId = toPocketBaseId(supabaseId)
+  const payload: Record<string, unknown> = {}
+  if (data.occurred_at !== undefined) payload.occurred_at = data.occurred_at
+  if (data.note !== undefined) payload.note = data.note
+  if (data.type !== undefined) payload.type = data.type
+  if (data.account_id !== undefined) payload.account_id = toPocketBaseId(data.account_id)
+  if (data.amount !== undefined) payload.amount = data.amount
+  if (data.tag !== undefined) payload.tag = data.tag
+  if (data.category_id !== undefined) payload.category_id = data.category_id ? toPocketBaseId(data.category_id) : null
+  if (data.person_id !== undefined) payload.person_id = data.person_id ? toPocketBaseId(data.person_id) : null
+  if (data.target_account_id !== undefined) payload.target_account_id = data.target_account_id ? toPocketBaseId(data.target_account_id) : null
+  if (data.shop_id !== undefined) payload.shop_id = data.shop_id ? toPocketBaseId(data.shop_id) : null
+  if (data.status !== undefined) payload.status = data.status
+  if (data.persisted_cycle_tag !== undefined) payload.persisted_cycle_tag = data.persisted_cycle_tag
+  if (data.cashback_share_percent !== undefined) payload.cashback_share_percent = data.cashback_share_percent
+  if (data.cashback_share_fixed !== undefined) payload.cashback_share_fixed = data.cashback_share_fixed
+  if (data.cashback_mode !== undefined) payload.cashback_mode = data.cashback_mode
+  if (data.metadata !== undefined) payload.metadata = data.metadata
+  if (Object.keys(payload).length === 0) return
+  await pocketbaseRequest(`/api/collections/transactions/records/${pbId}`, {
+    method: 'PATCH',
+    body: payload,
+  })
+}
+
+export async function voidPocketBaseTransaction(supabaseId: string): Promise<void> {
+  console.log('[DB:PB] transactions.void', { id: supabaseId })
+  const pbId = toPocketBaseId(supabaseId)
+  await pocketbaseRequest(`/api/collections/transactions/records/${pbId}`, {
+    method: 'PATCH',
+    body: { status: 'void' },
+  })
+}

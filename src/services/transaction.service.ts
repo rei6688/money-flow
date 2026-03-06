@@ -19,6 +19,11 @@ import {
   getCashbackCycleRange,
   getCashbackCycleTag,
 } from "@/lib/cashback";
+import {
+  createPocketBaseTransaction,
+  updatePocketBaseTransaction,
+  voidPocketBaseTransaction,
+} from './pocketbase/account-details.service';
 
 type TransactionStatus =
   | "posted"
@@ -582,6 +587,29 @@ export async function createTransaction(
 
     const transactionId = (data as { id?: string }).id ?? null;
 
+    // PB secondary write (fire-and-forget)
+    if (transactionId) {
+      void createPocketBaseTransaction(transactionId, {
+        occurred_at: normalized.occurred_at,
+        note: normalized.note,
+        type: normalized.type,
+        account_id: normalized.account_id,
+        amount: normalized.amount,
+        tag: normalized.tag,
+        category_id: normalized.category_id,
+        person_id: normalized.person_id,
+        target_account_id: normalized.target_account_id,
+        shop_id: normalized.shop_id,
+        status: normalized.status,
+        persisted_cycle_tag: normalized.persisted_cycle_tag,
+        cashback_share_percent: normalized.cashback_share_percent,
+        cashback_share_fixed: normalized.cashback_share_fixed,
+        cashback_mode: normalized.cashback_mode,
+        linked_transaction_id: normalized.linked_transaction_id,
+        metadata: normalized.metadata,
+      }).catch((err) => console.error('[DB:PB] transactions.create secondary failed:', err))
+    }
+
     const affectedAccounts = new Set<string>();
     affectedAccounts.add(normalized.account_id);
     if (normalized.target_account_id)
@@ -802,6 +830,26 @@ export async function updateTransaction(
     return false;
   }
   console.log(`[Service] Transaction ${id} updated successfully in DB.`);
+
+  // PB secondary write (fire-and-forget)
+  void updatePocketBaseTransaction(id, {
+    occurred_at: normalized.occurred_at,
+    note: normalized.note,
+    type: normalized.type,
+    account_id: normalized.account_id,
+    amount: normalized.amount,
+    tag: normalized.tag,
+    category_id: normalized.category_id,
+    person_id: normalized.person_id,
+    target_account_id: normalized.target_account_id,
+    shop_id: normalized.shop_id,
+    status: normalized.status,
+    persisted_cycle_tag: normalized.persisted_cycle_tag,
+    cashback_share_percent: normalized.cashback_share_percent,
+    cashback_share_fixed: normalized.cashback_share_fixed,
+    cashback_mode: normalized.cashback_mode,
+    metadata: normalized.metadata,
+  }).catch((err) => console.error('[DB:PB] transactions.update secondary failed:', err))
 
   const affectedAccounts = new Set<string>();
   if ((existing as any).account_id)
@@ -1274,6 +1322,9 @@ export async function voidTransaction(id: string): Promise<boolean> {
     console.error("Failed to void transaction:", error);
     return false;
   }
+
+  // PB secondary write (fire-and-forget)
+  void voidPocketBaseTransaction(id).catch((err) => console.error('[DB:PB] transactions.void secondary failed:', err))
 
   const affected = new Set<string>();
   if ((existing as any)?.account_id) affected.add((existing as any).account_id);
