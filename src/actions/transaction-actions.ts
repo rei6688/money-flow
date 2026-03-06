@@ -9,6 +9,10 @@ import { loadShopInfo, ShopRow, parseMetadata, mapUnifiedTransaction } from '@/l
 import { TransactionWithDetails } from '@/types/moneyflow.types';
 import { upsertTransactionCashback } from '@/services/cashback.service';
 import { normalizeMonthTag } from '@/lib/month-tag'
+import {
+  createPocketBaseTransaction,
+  voidPocketBaseTransaction,
+} from '@/services/pocketbase/account-details.service';
 
 export type CreateTransactionInput = {
   occurred_at: string;
@@ -240,6 +244,27 @@ export async function createTransaction(input: CreateTransactionInput): Promise<
     return null;
   }
 
+  // PB secondary write (fire-and-forget)
+  console.log('[DB:SB] transactions.create', { id: txn.id, type: txn.type, amount: txn.amount })
+  void createPocketBaseTransaction(txn.id, {
+    occurred_at: txn.occurred_at,
+    note: txn.note,
+    type: txn.type,
+    account_id: txn.account_id,
+    amount: txn.amount,
+    tag: txn.tag,
+    category_id: txn.category_id,
+    person_id: txn.person_id,
+    target_account_id: txn.target_account_id,
+    shop_id: txn.shop_id,
+    status: txn.status,
+    persisted_cycle_tag: txn.persisted_cycle_tag,
+    cashback_share_percent: txn.cashback_share_percent,
+    cashback_share_fixed: txn.cashback_share_fixed,
+    cashback_mode: txn.cashback_mode,
+    linked_transaction_id: txn.linked_transaction_id,
+  }).catch((err) => console.error('[DB:PB] transactions.create secondary failed:', err))
+
   const shopInfo = await loadShopInfo(supabase, input.shop_id)
 
   // Sheet Sync Logic
@@ -364,6 +389,10 @@ export async function voidTransactionAction(id: string): Promise<boolean> {
     console.error('Failed to void transaction:', updateError);
     return false;
   }
+
+  // PB secondary write (fire-and-forget)
+  console.log('[DB:SB] transactions.void', { id })
+  void voidPocketBaseTransaction(id).catch((err) => console.error('[DB:PB] transactions.void secondary failed:', err))
 
   // 3b. Revert Batch Item if linked
   try {
