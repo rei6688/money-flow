@@ -263,7 +263,6 @@ export async function createTransaction(input: CreateTransactionInput): Promise<
     cashback_share_percent: txn.cashback_share_percent,
     cashback_share_fixed: txn.cashback_share_fixed,
     cashback_mode: txn.cashback_mode,
-    linked_transaction_id: txn.linked_transaction_id,
   }).catch((err) => console.error('[DB:PB] transactions.create secondary failed:', err))
 
   const shopInfo = await loadShopInfo(supabase, input.shop_id)

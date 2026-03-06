@@ -605,7 +605,6 @@ export async function createTransaction(
         cashback_share_percent: normalized.cashback_share_percent,
         cashback_share_fixed: normalized.cashback_share_fixed,
         cashback_mode: normalized.cashback_mode,
-        linked_transaction_id: normalized.linked_transaction_id,
         metadata: normalized.metadata,
       }).catch((err) => console.error('[DB:PB] transactions.create secondary failed:', err))
     }

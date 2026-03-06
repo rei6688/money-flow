@@ -923,18 +923,21 @@ type TransactionWriteData = {
   cashback_share_percent?: number | null
   cashback_share_fixed?: number | null
   cashback_mode?: string | null
-  linked_transaction_id?: string | null
   metadata?: unknown
 }
 
 export async function createPocketBaseTransaction(supabaseId: string, data: TransactionWriteData): Promise<void> {
   console.log('[DB:PB] transactions.create', { id: supabaseId, type: data.type, amount: data.amount })
   const pbId = toPocketBaseId(supabaseId)
+  // Merge source_id into metadata so mapTransaction can reverse-lookup the SB UUID via record.metadata.source_id
+  const mergedMetadata = {
+    ...(data.metadata && typeof data.metadata === 'object' ? (data.metadata as Record<string, unknown>) : {}),
+    source_id: supabaseId,
+  }
   await pocketbaseRequest(`/api/collections/transactions/records`, {
     method: 'POST',
     body: {
       id: pbId,
-      slug: supabaseId,
       occurred_at: data.occurred_at,
       note: data.note ?? null,
       type: data.type,
@@ -950,8 +953,7 @@ export async function createPocketBaseTransaction(supabaseId: string, data: Tran
       cashback_share_percent: data.cashback_share_percent ?? null,
       cashback_share_fixed: data.cashback_share_fixed ?? null,
       cashback_mode: data.cashback_mode ?? null,
-      linked_transaction_id: data.linked_transaction_id ? toPocketBaseId(data.linked_transaction_id) : null,
-      metadata: data.metadata ?? null,
+      metadata: mergedMetadata,
     },
   })
 }
