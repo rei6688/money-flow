@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { Json } from '@/types/database.types'
 import { Account, AccountRelationships, AccountStats, TransactionWithDetails, AccountRow } from '@/types/moneyflow.types'
 import {
   updatePocketBaseAccountConfig,
@@ -20,7 +21,11 @@ import { computeAccountTotals, getCreditCardAvailableBalance, getCreditCardUsage
 import {
   mapUnifiedTransaction
 } from '@/lib/transaction-mapper'
-import { Database, Json } from '@/types/database.types'
+import {
+  getPocketBaseAccounts,
+  getPocketBaseAccountDetails,
+  loadPocketBaseTransactionsForAccount
+} from './pocketbase/account-details.service'
 
 
 
@@ -275,6 +280,17 @@ async function getStatsForAccount(supabase: ReturnType<typeof createClient>, acc
 
 
 export async function getAccounts(supabaseClient?: SupabaseClient): Promise<Account[]> {
+  console.log('[DB:PB] accounts.list')
+  try {
+    const pbAccounts = await getPocketBaseAccounts()
+    if (pbAccounts && pbAccounts.length > 0) {
+      return pbAccounts
+    }
+  } catch (err) {
+    console.error('[DB:PB] accounts.list failed:', err)
+  }
+
+  console.log('[DB:SB] accounts.select')
   const supabase = supabaseClient ?? createClient()
   console.log('[DB:SB] accounts.getAll')
 
@@ -284,9 +300,7 @@ export async function getAccounts(supabaseClient?: SupabaseClient): Promise<Acco
   // Remove default sorting to handle custom sort logic
 
   if (error) {
-    console.error('Error fetching accounts:', error)
-    if (error.message) console.error('Error message:', error.message)
-    if (error.code) console.error('Error code:', error.code)
+    console.error('[DB:SB] Error fetching accounts:', error)
     return []
   }
 
@@ -430,11 +444,20 @@ export async function getAccountDetails(id: string): Promise<Account | null> {
   }
   console.log('[DB:SB] accounts.getDetails', { id })
 
+  console.log(`[DB:PB] accounts.get ${id}`)
+  try {
+    const pbAccount = await getPocketBaseAccountDetails(id)
+    if (pbAccount) return pbAccount
+  } catch (err) {
+    console.error(`[DB:PB] accounts.get ${id} failed:`, err)
+  }
+
   const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
   if (!isUuid) {
     return null
   }
 
+  console.log(`[DB:SB] accounts.select.id ${id}`)
   const supabase = createClient()
 
   const { data, error } = await supabase
@@ -448,7 +471,7 @@ export async function getAccountDetails(id: string): Promise<Account | null> {
     if (error?.code && error.code === 'PGRST116') {
       return null
     }
-    console.error('Error fetching account details:', {
+    console.error('[DB:SB] Error fetching account details:', {
       accountId: id,
       message: error?.message ?? 'unknown error',
       code: error?.code,
@@ -507,6 +530,15 @@ async function fetchTransactions(
   accountId: string,
   limit: number,
 ): Promise<TransactionWithDetails[]> {
+  console.log(`[DB:PB] transactions.list account_id=${accountId} limit=${limit}`)
+  try {
+    const pbTxns = await loadPocketBaseTransactionsForAccount(accountId, limit)
+    if (pbTxns && pbTxns.length > 0) return pbTxns
+  } catch (err) {
+    console.error(`[DB:PB] transactions.list account_id=${accountId} failed:`, err)
+  }
+
+  console.log(`[DB:SB] transactions.select account_id=${accountId} limit=${limit}`)
   const supabase = createClient()
 
   const { data, error } = await supabase
@@ -540,7 +572,7 @@ async function fetchTransactions(
     .limit(limit)
 
   if (error) {
-    console.error('Error fetching transactions for account:', {
+    console.error('[DB:SB] Error fetching transactions for account:', {
       accountId,
       message: error?.message ?? 'unknown error',
       code: error?.code,

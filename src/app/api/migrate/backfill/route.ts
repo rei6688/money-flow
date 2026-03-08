@@ -66,12 +66,14 @@ async function backfillAccounts(): Promise<BackfillResult> {
   const supabase = createClient()
 
   // Fetch all accounts; nulls-first so parent accounts are processed before children
-  const { data: accounts, error } = await supabase
+  const { data: accountsRaw, error } = await supabase
     .from('accounts')
     .select('*')
     .order('parent_account_id', { ascending: true, nullsFirst: true })
 
-  if (error || !accounts) {
+  const accounts = (accountsRaw ?? []) as Array<Record<string, any>>
+
+  if (error) {
     return { created: 0, updated: 0, failed: 1, errors: [`fetch: ${error?.message}`] }
   }
 
@@ -165,7 +167,7 @@ async function backfillTransactions(): Promise<BackfillResult> {
 
   let page = 0
   while (true) {
-    const { data: transactions, error } = await supabase
+    const { data: transactionsRaw, error } = await supabase
       .from('transactions')
       .select(
         'id, occurred_at, note, type, account_id, target_account_id, category_id, person_id, shop_id, amount, status, tag, persisted_cycle_tag, cashback_share_percent, cashback_share_fixed, cashback_mode, metadata',
@@ -173,11 +175,13 @@ async function backfillTransactions(): Promise<BackfillResult> {
       .order('occurred_at', { ascending: true })
       .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1)
 
+    const transactions = (transactionsRaw ?? []) as Array<Record<string, any>>
+
     if (error) {
       errors.push(`page ${page}: ${error.message}`)
       break
     }
-    if (!transactions || transactions.length === 0) break
+    if (transactions.length === 0) break
 
     await runBatched(transactions, 10, async (txn) => {
       const pbId = toPocketBaseId(txn.id)
