@@ -3,12 +3,17 @@
 import { createClient } from '@/lib/supabase/server'
 import { Database } from '@/types/database.types'
 import { revalidatePath } from 'next/cache'
+import { executeWithFallback } from '@/lib/pocketbase/fallback-helpers'
+import { getPocketBaseShops } from '@/services/pocketbase/shop.service'
 
 type ShopRow = Database['public']['Tables']['shops']['Row']
 type ShopInsert = Database['public']['Tables']['shops']['Insert']
 type ShopUpdate = Database['public']['Tables']['shops']['Update']
 
-export async function getShops(): Promise<ShopRow[]> {
+/**
+ * Helper to fetch shops from Supabase
+ */
+async function getSupabaseShops(): Promise<ShopRow[]> {
   const supabase = createClient()
   const { data, error } = await supabase
     .from('shops')
@@ -16,11 +21,28 @@ export async function getShops(): Promise<ShopRow[]> {
     .order('name', { ascending: true })
 
   if (error) {
-    console.error('Failed to fetch shops:', error)
+    console.error('[source:SB] Failed to fetch shops:', error)
     return []
   }
 
   return (data ?? []) as ShopRow[]
+}
+
+/**
+ * Fetch shops with PB-first, SB-fallback pattern
+ * Phase 1: New implementation
+ */
+export async function getShops(): Promise<ShopRow[]> {
+  try {
+    return await executeWithFallback(
+      () => getPocketBaseShops(),
+      () => getSupabaseShops(),
+      'shops.list'
+    )
+  } catch (error) {
+    console.error('[source:fallback] shops.list exhausted all sources', error)
+    return []
+  }
 }
 
 export async function getShopById(id: string): Promise<ShopRow | null> {

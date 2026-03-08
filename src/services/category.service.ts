@@ -3,6 +3,8 @@
 import { createClient } from '@/lib/supabase/server'
 import { Category } from '@/types/moneyflow.types'
 import { revalidatePath } from 'next/cache'
+import { executeWithFallback } from '@/lib/pocketbase/fallback-helpers'
+import { getPocketBaseCategories } from '@/services/pocketbase/category.service'
 
 type CategoryRow = {
   id: string
@@ -16,7 +18,10 @@ type CategoryRow = {
   is_archived?: boolean | null
 }
 
-export async function getCategories(): Promise<Category[]> {
+/**
+ * Helper to fetch categories from Supabase
+ */
+async function getSupabaseCategories(): Promise<Category[]> {
   const supabase = createClient()
 
   const { data, error } = await supabase
@@ -25,12 +30,11 @@ export async function getCategories(): Promise<Category[]> {
     .order('name', { ascending: true })
 
   if (error) {
-    console.error('Error fetching categories:', {
+    console.error('[source:SB] Error fetching categories:', {
       message: error.message,
       code: error.code,
       details: error.details,
       hint: error.hint,
-      fullError: error
     })
     return []
   }
@@ -48,6 +52,23 @@ export async function getCategories(): Promise<Category[]> {
     mcc_codes: item.mcc_codes,
     is_archived: item.is_archived,
   }))
+}
+
+/**
+ * Fetch categories with PB-first, SB-fallback pattern
+ * Phase 1: New implementation
+ */
+export async function getCategories(): Promise<Category[]> {
+  try {
+    return await executeWithFallback(
+      () => getPocketBaseCategories(),
+      () => getSupabaseCategories(),
+      'categories.list'
+    )
+  } catch (error) {
+    console.error('[source:fallback] categories.list exhausted all sources', error)
+    return []
+  }
 }
 
 export async function createCategory(category: Omit<Category, 'id'>): Promise<Category | null> {
