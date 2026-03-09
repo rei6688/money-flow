@@ -105,6 +105,46 @@ function toAccountType(value: string | null | undefined): Account['type'] {
   return 'bank'
 }
 
+/**
+ * Augments cb_rules_json so that each policy's cat_ids includes both the
+ * original Supabase UUID and the corresponding PocketBase ID (SHA-256 hash).
+ * This allows resolveCashbackPolicy to match category IDs regardless of
+ * whether the transaction stores a UUID (Supabase) or PB ID (PocketBase).
+ */
+function augmentCbRulesJsonWithPbIds(cbRulesJson: unknown): unknown {
+  if (!cbRulesJson || typeof cbRulesJson !== 'object') return cbRulesJson
+  const rules = cbRulesJson as Record<string, unknown>
+  const rawTiers = rules['tiers']
+  if (!Array.isArray(rawTiers)) return cbRulesJson
+
+  return {
+    ...rules,
+    tiers: rawTiers.map((tier: unknown) => {
+      if (!tier || typeof tier !== 'object') return tier
+      const t = tier as Record<string, unknown>
+      const policies = Array.isArray(t['policies']) ? t['policies'] : []
+      return {
+        ...t,
+        policies: policies.map((policy: unknown) => {
+          if (!policy || typeof policy !== 'object') return policy
+          const p = policy as Record<string, unknown>
+          const catIds: string[] = Array.isArray(p['cat_ids']) ? (p['cat_ids'] as string[]) : []
+          const augmented = [...catIds]
+          for (const id of catIds) {
+            if (id && id.includes('-')) {
+              const pbId = toPocketBaseId(id)
+              if (!augmented.includes(pbId)) {
+                augmented.push(pbId)
+              }
+            }
+          }
+          return { ...p, cat_ids: augmented }
+        }),
+      }
+    }),
+  }
+}
+
 function mapAccount(record: PocketBaseRecord): Account {
   return {
     id: record.id,
@@ -130,7 +170,7 @@ function mapAccount(record: PocketBaseRecord): Account {
     cb_base_rate: Number(record.cb_base_rate || 0),
     cb_max_budget: record.cb_max_budget ?? null,
     cb_is_unlimited: Boolean(record.cb_is_unlimited),
-    cb_rules_json: record.cb_rules_json ?? null,
+    cb_rules_json: record.cb_rules_json ? augmentCbRulesJsonWithPbIds(record.cb_rules_json) as any : null,
     cb_min_spend: record.cb_min_spend ?? null,
     cb_cycle_type: record.cb_cycle_type || 'calendar_month',
     statement_day: record.statement_day ?? null,

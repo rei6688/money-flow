@@ -580,38 +580,80 @@ async function cleanupLegacyTransactions(): Promise<BackfillResult> {
 }
 
 // ---------------------------------------------------------------------------
+// Clear all PB transaction records (for fresh re-migration)
+// ---------------------------------------------------------------------------
+
+async function clearAllTransactions(): Promise<{ deleted: number; errors: string[] }> {
+  let deleted = 0
+  const errors: string[] = []
+  let page = 1
+  while (true) {
+    const response = await pocketbaseRequest<{ items?: { id: string }[]; totalPages?: number }>(
+      `/api/collections/${PB_TRANSACTIONS_COLLECTION}/records?page=${page}&perPage=500&fields=id`,
+      { method: 'GET' },
+    )
+    const items = response.items ?? []
+    if (items.length === 0) break
+    await runBatched(items, 20, async (item) => {
+      try {
+        await pocketbaseRequest(`/api/collections/${PB_TRANSACTIONS_COLLECTION}/records/${item.id}`, { method: 'DELETE' })
+        deleted++
+      } catch (err) {
+        errors.push(`[clear:${item.id}] ${String(err)}`)
+      }
+    })
+    const totalPages = response.totalPages ?? 1
+    if (page >= totalPages || items.length === 0) break
+    page++
+  }
+  return { deleted, errors }
+}
+
+// ---------------------------------------------------------------------------
 // Route handler
 // ---------------------------------------------------------------------------
 
+/**
+ * Migration / backfill endpoint.
+ *
+ * Query parameters:
+ *   collection=all|accounts|transactions   (default: all)
+ *   cleanupLegacy=true                     - also patch legacy PB txns that have no source_id
+ *   clearTransactions=true                 - DELETE all PB transactions first, then re-import fresh
+ *                                            WARNING: destructive — use only for clean re-migration
+ *
+ * Example: GET /api/migrate/backfill?collection=transactions&clearTransactions=true
+ */
 export async function GET(request: NextRequest) {
   const collection = request.nextUrl.searchParams.get('collection') ?? 'all'
   const cleanupLegacy = ['1', 'true', 'yes'].includes((request.nextUrl.searchParams.get('cleanupLegacy') ?? '').toLowerCase())
-  const results: Record<string, BackfillResult> = {}
+  const clearTransactions = ['1', 'true', 'yes'].includes((request.nextUrl.searchParams.get('clearTransactions') ?? '').toLowerCase())
+  const results: Record<string, BackfillResult | { deleted: number; errors: string[] }> = {}
+
+  // Optional: clear all PB transactions before re-importing (fresh migration)
+  if (clearTransactions && (collection === 'all' || collection === 'transactions')) {
+    console.log('[Backfill] Clearing all PB transactions for fresh re-migration...')
+    results.transactions_cleared = await clearAllTransactions()
+    console.log('[Backfill] Cleared:', (results.transactions_cleared as { deleted: number }).deleted, 'transactions deleted')
+  }
 
   // Always run accounts before transactions so FK relations resolve
   if (collection === 'all' || collection === 'accounts') {
     console.log('[Backfill] Starting accounts...')
     results.accounts = await backfillAccounts()
-    console.log('[Backfill] Accounts done:', results.accounts.created, 'created,', results.accounts.updated, 'updated,', results.accounts.failed, 'failed')
+    console.log('[Backfill] Accounts done:', (results.accounts as BackfillResult).created, 'created,', (results.accounts as BackfillResult).updated, 'updated,', (results.accounts as BackfillResult).failed, 'failed')
   }
 
   if (collection === 'all' || collection === 'transactions') {
     console.log('[Backfill] Starting transactions...')
     results.transactions = await backfillTransactions()
-    console.log('[Backfill] Transactions done:', results.transactions.created, 'created,', results.transactions.updated, 'updated,', results.transactions.failed, 'failed')
+    console.log('[Backfill] Transactions done:', (results.transactions as BackfillResult).created, 'created,', (results.transactions as BackfillResult).updated, 'updated,', (results.transactions as BackfillResult).failed, 'failed')
 
     if (cleanupLegacy) {
       console.log('[Backfill] Starting legacy transaction cleanup...')
       results.transactions_cleanup_legacy = await cleanupLegacyTransactions()
-      console.log(
-        '[Backfill] Legacy cleanup done:',
-        results.transactions_cleanup_legacy.created,
-        'created,',
-        results.transactions_cleanup_legacy.updated,
-        'updated,',
-        results.transactions_cleanup_legacy.failed,
-        'failed',
-      )
+      const r = results.transactions_cleanup_legacy as BackfillResult
+      console.log('[Backfill] Legacy cleanup done:', r.created, 'created,', r.updated, 'updated,', r.failed, 'failed')
     }
   }
 
