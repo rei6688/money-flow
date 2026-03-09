@@ -203,6 +203,7 @@ function parseCycleTagFromTransaction(record: PocketBaseRecord): string | null {
 }
 
 function mapTransaction(record: PocketBaseRecord, currentAccountSourceId: string): TransactionWithDetails {
+  const metadata = record.metadata && typeof record.metadata === 'object' ? record.metadata : null
   const expandedAccount = record.expand?.account_id
   const expandedTargetAccount = record.expand?.target_account_id || record.expand?.to_account_id
   const expandedCategory = record.expand?.category_id
@@ -238,13 +239,13 @@ function mapTransaction(record: PocketBaseRecord, currentAccountSourceId: string
     person_image_url: expandedPerson?.image_url || null,
     persisted_cycle_tag: parseCycleTagFromTransaction(record),
     tag: record.tag || null,
-    cashback_mode: record.cashback_mode || null,
-    cashback_share_percent: record.cashback_share_percent ?? null,
-    cashback_share_fixed: record.cashback_share_fixed ?? null,
+    cashback_mode: record.cashback_mode || metadata?.cashback_mode || null,
+    cashback_share_percent: record.cashback_share_percent ?? metadata?.cashback_share_percent ?? null,
+    cashback_share_fixed: record.cashback_share_fixed ?? metadata?.cashback_share_fixed ?? null,
     cashback_share_amount: record.cashback_amount ?? null,
     is_installment: Boolean(record.is_installment || false),
     parent_transaction_id: record.parent_transaction_id || null,
-    metadata: record.metadata || null,
+    metadata,
   } as TransactionWithDetails
 }
 

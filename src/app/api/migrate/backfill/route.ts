@@ -154,6 +154,28 @@ async function loadPocketBaseLookupRows(collection: string, fields: string): Pro
   return rows
 }
 
+async function purgeCollectionRecords(collection: string): Promise<{ deleted: number; failed: number; errors: string[] }> {
+  const errors: string[] = []
+  let deleted = 0
+  let failed = 0
+
+  const rows = await loadPocketBaseLookupRows(collection, 'id')
+
+  await runBatched(rows, 20, async (row) => {
+    try {
+      await pocketbaseRequest(`/api/collections/${collection}/records/${row.id}`, {
+        method: 'DELETE',
+      })
+      deleted += 1
+    } catch (err) {
+      failed += 1
+      errors.push(`[purge:${collection}:${row.id}] ${String(err)}`)
+    }
+  })
+
+  return { deleted, failed, errors }
+}
+
 async function buildIdBridgeMaps() {
   const supabase = createClient()
 
@@ -450,6 +472,7 @@ async function backfillTransactions(): Promise<BackfillResult> {
           metadata: {
             ...existingMeta,
             source_id: txn.id,
+            source_category_id: txn.category_id ?? null,
             status: txn.status ?? 'posted',
             tag: txn.tag ?? null,
             persisted_cycle_tag: txn.persisted_cycle_tag ?? null,
@@ -586,6 +609,7 @@ async function cleanupLegacyTransactions(): Promise<BackfillResult> {
 export async function GET(request: NextRequest) {
   const collection = request.nextUrl.searchParams.get('collection') ?? 'all'
   const cleanupLegacy = ['1', 'true', 'yes'].includes((request.nextUrl.searchParams.get('cleanupLegacy') ?? '').toLowerCase())
+  const fresh = ['1', 'true', 'yes'].includes((request.nextUrl.searchParams.get('fresh') ?? '').toLowerCase())
   const results: Record<string, BackfillResult> = {}
 
   // Always run accounts before transactions so FK relations resolve
@@ -596,6 +620,16 @@ export async function GET(request: NextRequest) {
   }
 
   if (collection === 'all' || collection === 'transactions') {
+    if (fresh) {
+      const purge = await purgeCollectionRecords(PB_TRANSACTIONS_COLLECTION)
+      results.transactions_purge = {
+        created: 0,
+        updated: purge.deleted,
+        failed: purge.failed,
+        errors: purge.errors,
+      }
+    }
+
     console.log('[Backfill] Starting transactions...')
     results.transactions = await backfillTransactions()
     console.log('[Backfill] Transactions done:', results.transactions.created, 'created,', results.transactions.updated, 'updated,', results.transactions.failed, 'failed')

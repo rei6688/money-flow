@@ -258,17 +258,19 @@ export function AccountDetailHeaderV2({
             if (amountAbs <= 0) return
 
             // Check for explicit cashback_share_fixed first (lending/debt transactions)
-            const shareFixed = Number(tx?.cashback_share_fixed ?? 0)
+            const shareFixed = Number(tx?.cashback_share_fixed ?? tx?.metadata?.cashback_share_fixed ?? 0)
             if (shareFixed > 0) {
                 est += shareFixed
                 estDetailLines.push(`${numberFormatter.format(shareFixed)} (fixed)`)
                 return
             }
 
+            const policyCategoryId = tx?.metadata?.source_category_id ?? tx?.category_source_id ?? tx?.category_id
+
             const policy = account.type === 'credit_card'
                 ? resolveCashbackPolicy({
                     account: account as any,
-                    categoryId: tx?.category_id,
+                    categoryId: policyCategoryId,
                     amount: amountAbs,
                     categoryName: tx?.category_name,
                     cycleTotals: { spent: 0 },
@@ -296,7 +298,7 @@ export function AccountDetailHeaderV2({
             const amountAbs = Math.abs(Number(tx?.amount ?? 0))
             const shareRateRaw = Number(tx?.cashback_share_percent ?? 0)
             const shareRate = shareRateRaw > 1 ? shareRateRaw / 100 : shareRateRaw
-            const shareFixed = Number(tx?.cashback_share_fixed ?? 0)
+            const shareFixed = Number(tx?.cashback_share_fixed ?? tx?.metadata?.cashback_share_fixed ?? 0)
             const resolvedShared = Number(sharedAmountRaw ?? ((amountAbs * shareRate) + shareFixed))
 
             if (resolvedShared > 0) {
