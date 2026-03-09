@@ -13,10 +13,28 @@ const CATEGORIES_COLLECTION_ID = 'pvl_cat_001'
  * Map PocketBase category record to Category type
  */
 function mapPBCategory(record: any) {
+  const imageUrl = typeof record.image_url === 'string' && record.image_url.startsWith('http')
+    ? record.image_url
+    : undefined
+
+  const normalizedType =
+    record.type === 'income' ||
+    record.type === 'expense' ||
+    record.type === 'transfer' ||
+    record.type === 'investment'
+      ? record.type
+      : 'expense'
+
+  const normalizedKind = record.kind === 'internal' || record.kind === 'external' ? record.kind : null
+
   return {
     id: record.id,
     name: record.name,
+    type: normalizedType,
     icon: record.icon || undefined,
+    image_url: imageUrl,
+    kind: normalizedKind,
+    mcc_codes: Array.isArray(record.mcc_codes) ? record.mcc_codes : undefined,
     parent_id: record.parent_id || undefined,
     is_archived: record.is_archived ?? false,
   }
@@ -29,16 +47,34 @@ export async function getPocketBaseCategories(): Promise<any[]> {
   logSource('PB', 'categories.select')
 
   try {
-    const response = await fetch(
-      `https://api-db.reiwarden.io.vn/api/collections/${CATEGORIES_COLLECTION_ID}/records?perPage=500&sort=-created`,
-      {
+    const candidateUrls = [
+      `https://api-db.reiwarden.io.vn/api/collections/${CATEGORIES_COLLECTION_ID}/records?perPage=200`,
+      'https://api-db.reiwarden.io.vn/api/collections/categories/records?perPage=200',
+    ]
+
+    let response: Response | null = null
+    let lastErrorText = ''
+
+    for (const url of candidateUrls) {
+      const currentResponse = await fetch(url, {
         method: 'GET',
         headers: { 'Content-Type': 'application/json' },
-      }
-    )
+      })
 
-    if (!response.ok) {
-      throw new Error(`PB request failed [${response.status}]: ${await response.text()}`)
+      if (currentResponse.ok) {
+        response = currentResponse
+        break
+      }
+
+      lastErrorText = await currentResponse.text()
+      logSource('PB', 'categories.select attempt failed', {
+        url,
+        status: currentResponse.status,
+      })
+    }
+
+    if (!response) {
+      throw new Error(`PB request failed after retries: ${lastErrorText}`)
     }
 
     const data = await response.json()

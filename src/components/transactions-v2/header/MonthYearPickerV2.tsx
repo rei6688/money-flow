@@ -83,6 +83,20 @@ export function MonthYearPickerV2({
     )
   }, [cycles, cycleSearch])
 
+  const cyclesWithAll = useMemo(() => {
+    const base = cycles || []
+    const hasAll = base.some(cycle => cycle.value === 'all')
+    return hasAll ? base : [{ label: 'All cycles', value: 'all' }, ...base]
+  }, [cycles])
+
+  const filteredCyclesWithAll = useMemo(() => {
+    const q = cycleSearch.trim().toLowerCase()
+    if (!q) return cyclesWithAll
+    return cyclesWithAll.filter(cycle =>
+      cycle.label.toLowerCase().includes(q) || cycle.value.toLowerCase().includes(q)
+    )
+  }, [cyclesWithAll, cycleSearch])
+
   const availableYears = useMemo(() => {
     const years = new Set<number>()
     years.add(new Date().getFullYear())
@@ -179,6 +193,7 @@ export function MonthYearPickerV2({
   }
 
   const displayText = (() => {
+    if (selectedCycleValue === 'all') return 'All cycles'
     if (selectedCycleValue && selectedCycleValue !== 'all') {
       const selected = cycles?.find(c => c.value === selectedCycleValue)
       return selected?.label || selectedCycleValue
@@ -279,7 +294,7 @@ export function MonthYearPickerV2({
                     <Loader2 className="h-6 w-6 animate-spin text-primary" />
                     <span className="text-xs text-muted-foreground">Loading cycles...</span>
                   </div>
-                ) : cycles && cycles.length > 0 ? (
+                ) : cyclesWithAll.length > 0 ? (
                   <div className="space-y-2">
                     <div className="relative">
                       <input
@@ -301,7 +316,7 @@ export function MonthYearPickerV2({
                     </div>
 
                     <div className="space-y-1.5 max-h-[220px] overflow-y-auto pr-1">
-                    {filteredCycles.map((cycle) => (
+                    {filteredCyclesWithAll.map((cycle) => (
                       <button
                         key={cycle.value}
                         onClick={() => {
@@ -319,7 +334,7 @@ export function MonthYearPickerV2({
                     ))}
                     </div>
 
-                    {filteredCycles.length === 0 && (
+                    {filteredCyclesWithAll.length === 0 && (
                       <div className="flex items-center justify-center py-4 text-xs text-muted-foreground italic">
                         No matching cycles
                       </div>

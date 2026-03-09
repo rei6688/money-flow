@@ -4,8 +4,6 @@
  * Saves to docs/collections/ for reference during refactoring
  */
 
-import { createNullableStringUnion } from "typescript";
-
 const PB_API = "https://api-db.reiwarden.io.vn";
 
 interface PBCollection {

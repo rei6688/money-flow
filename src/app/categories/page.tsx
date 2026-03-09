@@ -1,5 +1,5 @@
-import { getCategories } from "@/services/category.service"
-import { getShops } from "@/services/shop.service"
+import { getCategoriesWithSource } from "@/services/category.service"
+import { getShopsWithSource } from "@/services/shop.service"
 import { getAccounts } from "@/services/account.service"
 import { getPeople } from "@/services/people.service"
 import { ClassificationsManager } from "@/components/settings/ClassificationsManager"
@@ -18,9 +18,9 @@ export default async function ClassificationsPage({
     searchParams: Promise<{ tab?: string }>
 }) {
     const params = await searchParams
-    const [categories, shops, accounts, people] = await Promise.all([
-        getCategories(),
-        getShops(),
+    const [categoryResult, shopResult, accounts, people] = await Promise.all([
+        getCategoriesWithSource(),
+        getShopsWithSource(),
         getAccounts(),
         getPeople()
     ])
@@ -29,11 +29,15 @@ export default async function ClassificationsPage({
 
     return (
         <ClassificationsManager
-            initialCategories={categories}
-            initialShops={shops}
+            initialCategories={categoryResult.data}
+            initialShops={shopResult.data}
             accounts={accounts}
             people={people}
             defaultTab={tab}
+            initialDataSource={{
+                categories: categoryResult.source,
+                shops: shopResult.source,
+            }}
         />
     )
 }

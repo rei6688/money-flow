@@ -18,6 +18,20 @@ type CategoryRow = {
   is_archived?: boolean | null
 }
 
+export type CategoryDataSource = 'PB' | 'SB'
+
+export async function getCategoriesWithSource(): Promise<{ data: Category[]; source: CategoryDataSource }> {
+  try {
+    console.log('[source:PB] categories.list (with-source)')
+    const data = await getPocketBaseCategories()
+    return { data, source: 'PB' }
+  } catch (pbError) {
+    console.warn('[source:PB] categories.list (with-source) failed, trying SB', pbError)
+    const data = await getSupabaseCategories()
+    return { data, source: 'SB' }
+  }
+}
+
 /**
  * Helper to fetch categories from Supabase
  */

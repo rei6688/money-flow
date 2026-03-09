@@ -1426,19 +1426,54 @@ export async function recomputeAccountCashback(accountId: string, monthsBack?: n
 
 export async function getCashbackCycleOptions(accountId: string, limit: number = 12) {
   const supabase = createAdminClient();
-  const { data: cycles } = await (supabase
+  
+  // PHASE 3: Detect PB vs SB account ID
+  const isPBAccountId = accountId && accountId.length === 15;
+  
+  // Try to fetch from Supabase first
+  const { data: cycles, error: cyclesError } = await (supabase
     .from('cashback_cycles')
     .select('cycle_tag')
     .eq('account_id', accountId)
     .limit(48) as any);
 
-  const { data: account } = await (supabase
-    .from('accounts')
-    .select('cashback_config')
-    .eq('id', accountId)
-    .single() as any);
+  let account: any = null;
+  let cashbackConfig: any = null;
 
-  const config = parseCashbackConfig(account?.cashback_config, accountId);
+  if (isPBAccountId) {
+    // PHASE 3: Query PocketBase for account config
+    console.log('[getCashbackCycleOptions] Detected PB account, fetching from PB API');
+    const PB_API_URL = process.env.NEXT_PUBLIC_POCKETBASE_URL || 'https://api-db.reiwarden.io.vn';
+    try {
+      const response = await fetch(
+        `${PB_API_URL}/api/collections/pvl_acc_001/records/${accountId}`,
+        { cache: 'no-store' }
+      );
+      if (response.ok) {
+        const pbAccount = await response.json();
+        cashbackConfig = pbAccount.cashback_config;
+        account = { cashback_config: cashbackConfig };
+        console.log('[getCashbackCycleOptions] PB account config loaded:', {
+          accountId,
+          hasConfig: !!cashbackConfig,
+          statementDay: cashbackConfig?.program?.statementDay
+        });
+      }
+    } catch (error) {
+      console.error('[getCashbackCycleOptions] Failed to fetch PB account:', error);
+    }
+  } else {
+    // Query Supabase for SB accounts
+    const { data: sbAccount } = await (supabase
+      .from('accounts')
+      .select('cashback_config')
+      .eq('id', accountId)
+      .single() as any);
+    account = sbAccount;
+    cashbackConfig = sbAccount?.cashback_config;
+  }
+
+  const config = parseCashbackConfig(cashbackConfig, accountId);
   const currentCycleTag = getCashbackCycleTag(new Date(), {
     statementDay: config.statementDay,
     cycleType: config.cycleType,
@@ -1447,8 +1482,31 @@ export async function getCashbackCycleOptions(accountId: string, limit: number =
   const existingTags = new Set((cycles ?? []).map((c: any) => c.cycle_tag));
   const options = [...(cycles ?? [])];
 
-  // Inject current cycle if missing
-  if (currentCycleTag && !existingTags.has(currentCycleTag)) {
+  // FALLBACK: If no cycles found and account has cashback config, generate fallback cycles
+  // This handles new PocketBase accounts that may not have cashback_cycles entry yet
+  if ((!cycles || cycles.length === 0) && cashbackConfig) {
+    console.warn(`[getCashbackCycleOptions] No cycles in DB for ${accountId}, generating fallback cycles`);
+    // Inject current cycle at minimum
+    if (currentCycleTag && !existingTags.has(currentCycleTag)) {
+      options.unshift({ cycle_tag: currentCycleTag });
+      
+      // Also add a few past cycles for reference
+      const pastCycleTags = [];
+      for (let i = 1; i <= 3; i++) {
+        const pastDate = new Date();
+        pastDate.setMonth(pastDate.getMonth() - i);
+        const pastTag = getCashbackCycleTag(pastDate, {
+          statementDay: config.statementDay,
+          cycleType: config.cycleType,
+        } as any);
+        if (pastTag && !existingTags.has(pastTag)) {
+          pastCycleTags.push({ cycle_tag: pastTag });
+        }
+      }
+      options.push(...pastCycleTags);
+    }
+  } else if (currentCycleTag && !existingTags.has(currentCycleTag)) {
+    // Original behavior: Inject current cycle if missing
     options.unshift({ cycle_tag: currentCycleTag });
   }
 
@@ -1480,6 +1538,11 @@ export async function getCashbackCycleOptions(accountId: string, limit: number =
       } else {
         label = new Intl.DateTimeFormat('en-US', { month: 'short', year: 'numeric' }).format(new Date(year, monthIdx, 1));
       }
+    }
+
+    // Add (Current) label for current cycle
+    if (tag === currentCycleTag) {
+      label += ' (Current)';
     }
 
     return {
@@ -1662,6 +1725,16 @@ export async function getMonthlyCashbackTransactions(cardId: string, month: numb
  * Fetches all cashback cycles for a specific account.
  */
 export async function getAccountCycles(accountId: string) {
+  // Check if accountId is a valid UUID before querying Supabase
+  // PocketBase IDs are base32 (15 chars alphanumeric), Supabase are UUIDs (36 chars with dashes)
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(accountId);
+  
+  if (!isUuid) {
+    // For PocketBase accounts, cycles will be empty until Phase 3-4 migration
+    console.warn(`[getAccountCycles] Skipping Supabase query for non-UUID account: ${accountId} (likely PocketBase ID)`);
+    return [];
+  }
+
   const supabase = createClient();
   const { data, error } = await supabase.from('cashback_cycles')
     .select('id, cycle_tag, spent_amount, real_awarded, virtual_profit, min_spend_target, max_budget, is_exhausted, met_min_spend')
@@ -1669,7 +1742,11 @@ export async function getAccountCycles(accountId: string) {
     .order('cycle_tag', { ascending: false });
 
   if (error) {
-    console.error('Error fetching account cycles:', error);
+    console.error('[getAccountCycles] Error fetching account cycles:', {
+      accountId,
+      message: error.message,
+      code: error.code
+    });
   }
   return data || [];
 }

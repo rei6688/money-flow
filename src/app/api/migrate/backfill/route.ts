@@ -378,6 +378,26 @@ async function backfillTransactions(): Promise<BackfillResult> {
 
   const { accountMap, categoryMap, shopMap, personMap } = await buildIdBridgeMaps()
 
+  // Build a map of existing PB records by source_id to avoid duplicates
+  const pbRecordsBySourceId = new Map<string, string>()
+  try {
+    let page = 1
+    while (true) {
+      const pbResp: any = await pocketbaseRequest(
+        `/api/collections/${PB_TRANSACTIONS_COLLECTION}/records?page=${page}&perPage=500&fields=id,metadata`,
+      )
+      const items = pbResp?.items ?? []
+      items.forEach((item: any) => {
+        const sourceId = item.metadata?.source_id
+        if (sourceId) pbRecordsBySourceId.set(sourceId, item.id)
+      })
+      if (items.length < 500 || !pbResp?.totalPages || page >= pbResp.totalPages) break
+      page++
+    }
+  } catch (err) {
+    errors.push(`Failed to fetch existing PB records: ${String(err)}`)
+  }
+
   let page = 0
   while (true) {
     const { data: transactionsRaw, error } = await supabase
@@ -397,7 +417,10 @@ async function backfillTransactions(): Promise<BackfillResult> {
     if (transactions.length === 0) break
 
     await runBatched(transactions, 10, async (txn) => {
-      const pbId = toPocketBaseId(txn.id)
+      // Check if this source_id already exists in PB; if so, update that record instead of creating new
+      const existingPbId = pbRecordsBySourceId.get(txn.id)
+      const pbId = existingPbId ?? toPocketBaseId(txn.id)
+      
       try {
         const existingMeta =
           txn.metadata && typeof txn.metadata === 'object'

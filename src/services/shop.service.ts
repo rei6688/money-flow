@@ -10,6 +10,20 @@ type ShopRow = Database['public']['Tables']['shops']['Row']
 type ShopInsert = Database['public']['Tables']['shops']['Insert']
 type ShopUpdate = Database['public']['Tables']['shops']['Update']
 
+export type ShopDataSource = 'PB' | 'SB'
+
+export async function getShopsWithSource(): Promise<{ data: ShopRow[]; source: ShopDataSource }> {
+  try {
+    console.log('[source:PB] shops.list (with-source)')
+    const data = await getPocketBaseShops()
+    return { data, source: 'PB' }
+  } catch (pbError) {
+    console.warn('[source:PB] shops.list (with-source) failed, trying SB', pbError)
+    const data = await getSupabaseShops()
+    return { data, source: 'SB' }
+  }
+}
+
 /**
  * Helper to fetch shops from Supabase
  */
