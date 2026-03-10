@@ -124,15 +124,15 @@ function inferTieredPolicyByCategoryName(account: Account, categoryName: string 
 
 function mapTransaction(record: PocketBaseRecord, currentAccountSourceId: string): TransactionWithDetails {
   const expandedAccount = record.expand?.account_id
-  const expandedTargetAccount = record.expand?.target_account_id || record.expand?.to_account_id
+  const expandedTargetAccount = record.expand?.to_account_id
   const expandedCategory = record.expand?.category_id
   const expandedShop = record.expand?.shop_id
   const expandedPerson = record.expand?.person_id
 
   const sourceAccountPocketBaseId = expandedAccount?.id || record.account_id || null
-  const targetAccountPocketBaseId = expandedTargetAccount?.id || record.target_account_id || record.to_account_id || null
+  const targetAccountPocketBaseId = expandedTargetAccount?.id || record.to_account_id || null
   const sourceAccountSourceId = expandedAccount?.slug || (record.account_id === toPocketBaseId(currentAccountSourceId, 'accounts') ? currentAccountSourceId : record.account_id)
-  const targetAccountSourceId = expandedTargetAccount?.slug || record.target_account_id || record.to_account_id || null
+  const targetAccountSourceId = expandedTargetAccount?.slug || record.to_account_id || null
 
   return {
     id: record.id,
@@ -1115,19 +1115,19 @@ export async function loadPocketBaseTransactionsForAccount(sourceAccountId: stri
   const pocketBaseAccountId = accountRecord.id
   // Attempts in priority order. PB schema notes:
   //   - 'occurred_at' does NOT exist in PB → use 'date' for sort
-  //   - 'to_account_id' is a plain text field, not a PB relation → cannot expand
-  //   - 'target_account_id' is the actual PB relation for destination account
+  //   - 'to_account_id' IS a real PB relation field (destination account) → can filter/expand
+  //   - 'target_account_id' does NOT exist in PB schema — do NOT use
   const attempts: Array<Record<string, string | number | boolean | undefined>> = [
     {
       perPage: Math.min(limit, 200),
       sort: '-date',
-      expand: 'account_id,target_account_id,category_id,shop_id,person_id',
-      filter: `(account_id='${pocketBaseAccountId}' || target_account_id='${pocketBaseAccountId}')`,
+      expand: 'account_id,to_account_id,category_id,shop_id,person_id',
+      filter: `(account_id='${pocketBaseAccountId}' || to_account_id='${pocketBaseAccountId}')`,
     },
     {
       perPage: Math.min(limit, 200),
       sort: '-date',
-      filter: `(account_id='${pocketBaseAccountId}' || target_account_id='${pocketBaseAccountId}')`,
+      filter: `(account_id='${pocketBaseAccountId}' || to_account_id='${pocketBaseAccountId}')`,
     },
   ]
 
@@ -1256,12 +1256,12 @@ export async function getPocketBaseCycleTransactions(sourceAccountId: string, cy
   const pocketBaseAccountId = toPocketBaseId(sourceAccountId, 'accounts')
   // Notes:
   //   - PB uses 'date' not 'occurred_at' for sort
-  //   - 'to_account_id' is not a real PB relation field, omit from filter/expand
+  //   - 'to_account_id' IS a real PB relation (destination account), safe to filter/expand
   //   - 'persisted_cycle_tag' lives inside metadata JSON, not as top-level field
   const records = await listAllRecords('transactions', {
     sort: '-date',
-    expand: 'account_id,target_account_id,category_id,shop_id,person_id,parent_transaction_id',
-    filter: `(account_id='${pocketBaseAccountId}' || target_account_id='${pocketBaseAccountId}') && metadata.persisted_cycle_tag='${cycleTag}'`,
+    expand: 'account_id,to_account_id,category_id,shop_id,person_id,parent_transaction_id',
+    filter: `(account_id='${pocketBaseAccountId}' || to_account_id='${pocketBaseAccountId}') && metadata.persisted_cycle_tag='${cycleTag}'`,
   })
 
   return records.map((item) => mapTransaction(item, sourceAccountId))
@@ -1310,7 +1310,7 @@ export async function createPocketBaseTransaction(supabaseId: string, data: Tran
       tag: data.tag ?? null,
       category_id: data.category_id ? toPocketBaseId(data.category_id) : null,
       person_id: data.person_id ? toPocketBaseId(data.person_id) : null,
-      target_account_id: data.target_account_id ? toPocketBaseId(data.target_account_id) : null,
+      to_account_id: data.target_account_id ? toPocketBaseId(data.target_account_id) : null,
       shop_id: data.shop_id ? toPocketBaseId(data.shop_id) : null,
       status: data.status ?? 'posted',
       persisted_cycle_tag: data.persisted_cycle_tag ?? null,
@@ -1334,7 +1334,7 @@ export async function updatePocketBaseTransaction(supabaseId: string, data: Part
   if (data.tag !== undefined) payload.tag = data.tag
   if (data.category_id !== undefined) payload.category_id = data.category_id ? toPocketBaseId(data.category_id) : null
   if (data.person_id !== undefined) payload.person_id = data.person_id ? toPocketBaseId(data.person_id) : null
-  if (data.target_account_id !== undefined) payload.target_account_id = data.target_account_id ? toPocketBaseId(data.target_account_id) : null
+  if (data.target_account_id !== undefined) payload.to_account_id = data.target_account_id ? toPocketBaseId(data.target_account_id) : null
   if (data.shop_id !== undefined) payload.shop_id = data.shop_id ? toPocketBaseId(data.shop_id) : null
   if (data.status !== undefined) payload.status = data.status
   if (data.persisted_cycle_tag !== undefined) payload.persisted_cycle_tag = data.persisted_cycle_tag
