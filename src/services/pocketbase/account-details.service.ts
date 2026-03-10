@@ -859,14 +859,41 @@ export async function loadPocketBaseTransactionsForAccount(sourceAccountId: stri
   const accountRecord = await resolvePocketBaseAccountRecord(sourceAccountId)
   if (!accountRecord) return []
   const pocketBaseAccountId = accountRecord.id
-  const records = await listAllRecords('transactions', {
-    perPage: Math.min(limit, 200),
-    sort: '-occurred_at',
-    expand: 'account_id,target_account_id,to_account_id,category_id,shop_id,person_id,parent_transaction_id',
-    filter: `(account_id='${pocketBaseAccountId}' || target_account_id='${pocketBaseAccountId}' || to_account_id='${pocketBaseAccountId}')`,
-  })
+  const attempts: Array<Record<string, string | number | boolean | undefined>> = [
+    {
+      perPage: Math.min(limit, 200),
+      sort: '-date',
+      expand: 'account_id,to_account_id,category_id,shop_id,person_id',
+      filter: `(account_id='${pocketBaseAccountId}' || to_account_id='${pocketBaseAccountId}')`,
+    },
+    {
+      perPage: Math.min(limit, 200),
+      sort: '-occurred_at',
+      expand: 'account_id,target_account_id,to_account_id,category_id,shop_id,person_id,parent_transaction_id',
+      filter: `(account_id='${pocketBaseAccountId}' || target_account_id='${pocketBaseAccountId}' || to_account_id='${pocketBaseAccountId}')`,
+    },
+    {
+      perPage: Math.min(limit, 200),
+      sort: '-date',
+      filter: `(account_id='${pocketBaseAccountId}' || to_account_id='${pocketBaseAccountId}')`,
+    },
+  ]
 
-  return records.map((item) => mapTransaction(item, sourceAccountId))
+  for (const params of attempts) {
+    try {
+      const records = await listAllRecords('transactions', params)
+      return records.map((item) => mapTransaction(item, sourceAccountId))
+    } catch (error) {
+      console.warn('[DB:PB] transactions.listForAccount attempt failed', {
+        sourceAccountId,
+        params,
+        error,
+      })
+    }
+  }
+
+  // Never crash account details page due to PB query drift.
+  return []
 }
 
 /**
