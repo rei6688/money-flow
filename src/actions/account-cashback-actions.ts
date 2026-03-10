@@ -8,7 +8,7 @@ export async function getAccountCashbackStatsAction(
   cycleTag?: string
 ): Promise<{ success: boolean; data?: AccountSpendingStats | null; error?: string }> {
   try {
-    const stats = await getPocketBaseAccountSpendingStatsSnapshot(sourceAccountId, cycleTag)
+    const stats = await getPocketBaseAccountSpendingStatsSnapshot(sourceAccountId, new Date(), cycleTag)
     return { success: true, data: stats }
   } catch (err) {
     console.error('[action] getAccountCashbackStats failed:', err)

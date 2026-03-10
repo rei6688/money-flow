@@ -149,32 +149,6 @@ export function AccountDetailHeaderV2({
     const familyDebtAbs = Math.abs(mainAccountBalance + childrenBalancesSum)
     const soloDebtAbs = Math.abs(account.current_balance || 0)
 
-    // Recalculate cashback stats when selectedCycle changes
-    React.useEffect(() => {
-        if (!selectedCycle || selectedCycle === 'all' || !isCreditCard) {
-            setDynamicCashbackStats(cashbackStats)
-            return
-        }
-
-        const fetchCashbackStats = async () => {
-            setIsCashbackLoading(true)
-            try {
-                const response = await fetch(`/api/cashback/stats?accountId=${account.id}&cycleTag=${encodeURIComponent(selectedCycle)}&mode=snapshot`)
-                if (response.ok) {
-                    const data = await response.json()
-                    setDynamicCashbackStats(data)
-                }
-            } catch (error) {
-                console.error('Failed to fetch cashback stats:', error)
-                setDynamicCashbackStats(cashbackStats)
-            } finally {
-                setIsCashbackLoading(false)
-            }
-        }
-
-        fetchCashbackStats()
-    }, [selectedCycle, account.id, isCreditCard, cashbackStats])
-
     // Cleanup 'tab' param if present (fix for persistent url)
     React.useEffect(() => {
         if (searchParams.has('tab')) {
