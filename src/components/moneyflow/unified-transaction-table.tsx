@@ -1227,6 +1227,55 @@ export const UnifiedTransactionTable = React.forwardRef<UnifiedTransactionTableR
     return { incomeSummary, expenseSummary }
   }, [selection, tableData])
 
+  const inferTieredPolicyByCategoryName = useCallback((account: Account | undefined, categoryName: string | undefined) => {
+    if (!account || account.type !== 'credit_card' || account.cb_type !== 'tiered' || !categoryName) return null
+    const tiers = Array.isArray((account.cb_rules_json as any)?.tiers) ? (account.cb_rules_json as any).tiers : []
+    const policies = (tiers[0]?.policies || []) as Array<{ rate?: number; max?: number }>
+    if (policies.length === 0) return null
+
+    const normalizedPolicies = policies
+      .map((item) => ({ rate: Number(item.rate || 0), maxReward: item.max != null ? Number(item.max) : undefined }))
+      .filter((item) => item.rate > 0)
+
+    if (normalizedPolicies.length === 0) return null
+
+    const lowerName = categoryName.toLowerCase()
+    const byRateAsc = [...normalizedPolicies].sort((left, right) => left.rate - right.rate)
+    const byRateDesc = [...normalizedPolicies].sort((left, right) => right.rate - left.rate)
+
+    if (lowerName.includes('online')) return byRateAsc[0]
+    if (lowerName.includes('offline') || lowerName.includes('utilities') || lowerName.includes('utility')) return byRateDesc[0]
+
+    return null
+  }, [])
+
+  const estimateTxnCashback = useCallback((txn: TransactionWithDetails) => {
+    const account = accounts.find(a => a.id === txn.account_id)
+    if (!account || account.type !== 'credit_card') return { estimated: 0, rate: 0, maxReward: undefined as number | undefined, isFallback: false }
+
+    const amountAbs = Math.abs(txn.amount)
+    const categoryName = txn.category_name || categories.find(c => c.id === txn.category_id)?.name || undefined
+    const policy = resolveCashbackPolicy({
+      account: account as any,
+      categoryId: txn.category_id,
+      amount: amountAbs,
+      categoryName,
+      cycleTotals: { spent: 0 }
+    })
+
+    const fallback = inferTieredPolicyByCategoryName(account, categoryName)
+    const shouldUseFallback = Boolean(fallback) && (policy.metadata?.policySource === 'program_default' || policy.metadata?.policySource === 'level_default')
+    const effectiveRate = shouldUseFallback ? Number(fallback?.rate || policy.rate || 0) : Number(policy.rate || 0)
+    const effectiveMaxReward = shouldUseFallback ? fallback?.maxReward : policy.maxReward
+
+    const baseVal = amountAbs * effectiveRate
+    const estimated = (effectiveMaxReward !== undefined && effectiveMaxReward !== null)
+      ? Math.min(baseVal, effectiveMaxReward)
+      : baseVal
+
+    return { estimated, rate: effectiveRate, maxReward: effectiveMaxReward, isFallback: shouldUseFallback }
+  }, [accounts, categories, inferTieredPolicyByCategoryName])
+
   const tableTotals = useMemo(() => {
     let base = 0, net = 0, back = 0, estCb = 0, shared = 0, profit = 0;
 
@@ -1251,21 +1300,9 @@ export const UnifiedTransactionTable = React.forwardRef<UnifiedTransactionTableR
 
       // Est Cashback (From Policy)
       let est_cb = 0;
-      const isExpense = txn.type === 'expense';
-      const account = accounts.find(a => a.id === txn.account_id);
-      if (isExpense && account?.type === 'credit_card') {
-        const policy = resolveCashbackPolicy({
-          account: account as any,
-          categoryId: txn.category_id,
-          amount: originalAmount,
-          categoryName: txn.category_name,
-          cycleTotals: { spent: 0 }
-        });
-        const policyRate = policy?.rate ?? 0;
-        const baseVal = originalAmount * policyRate;
-        est_cb = (policy?.maxReward !== undefined && policy.maxReward !== null)
-          ? Math.min(baseVal, policy.maxReward)
-          : baseVal;
+      const isSpendType = txn.type === 'expense' || txn.type === 'debt' || txn.type === 'service';
+      if (isSpendType) {
+        est_cb = estimateTxnCashback(txn).estimated;
       }
 
       base += originalAmount;
@@ -1277,7 +1314,7 @@ export const UnifiedTransactionTable = React.forwardRef<UnifiedTransactionTableR
     });
 
     return { base, net, back, estCb, shared, profit };
-  }, [paginatedTransactions, statusOverrides, accounts]);
+  }, [paginatedTransactions, statusOverrides, estimateTxnCashback]);
 
   const renderActionMenuItems = (
     txn: TransactionWithDetails,
@@ -1889,27 +1926,15 @@ export const UnifiedTransactionTable = React.forwardRef<UnifiedTransactionTableR
                             return <span className="text-slate-300">-</span>;
                           }
 
-                          const account = accounts.find(a => a.id === txn.account_id);
-                          if (!account || account.type !== 'credit_card') return <span className="text-slate-300">-</span>;
-
-                          const policy = resolveCashbackPolicy({
-                            account: account as any,
-                            categoryId: txn.category_id,
-                            amount: amountAbs,
-                            categoryName: txn.category_name,
-                            cycleTotals: { spent: 0 }
-                          });
-
-                          const policyRate = policy?.rate ?? 0;
+                          const estimate = estimateTxnCashback(txn)
+                          const policyRate = estimate.rate
                           const baseVal = amountAbs * policyRate;
-                          const val = (policy?.maxReward !== undefined && policy.maxReward !== null)
-                            ? Math.min(baseVal, policy.maxReward)
-                            : baseVal;
+                          const val = estimate.estimated
 
                           if (val === 0) return <span className="text-slate-300">-</span>;
 
                           const effectiveRate = amountAbs > 0 ? (val / amountAbs) : 0;
-                          const isCapped = policy?.maxReward !== undefined && policy.maxReward !== null && baseVal > policy.maxReward;
+                          const isCapped = estimate.maxReward !== undefined && estimate.maxReward !== null && baseVal > estimate.maxReward;
 
                           return (
                             <CustomTooltip content={
@@ -1920,12 +1945,17 @@ export const UnifiedTransactionTable = React.forwardRef<UnifiedTransactionTableR
                                 </div>
                                 {isCapped && (
                                   <div className="text-rose-400 font-bold border-t border-white/10 pt-1">
-                                    Config card max = {numberFormatter.format(policy.maxReward || 0)}
+                                    Config card max = {numberFormatter.format(estimate.maxReward || 0)}
                                   </div>
                                 )}
-                                {policy?.metadata?.reason && (
+                                {estimate.isFallback && (
+                                  <div className="text-[10px] italic border-t border-white/5 pt-1 mt-1 text-amber-500">
+                                    Rule fallback: mapped by category name
+                                  </div>
+                                )}
+                                {!estimate.isFallback && (
                                   <div className="text-[10px] italic border-t border-white/5 pt-1 mt-1 text-slate-500">
-                                    Rule: {policy.metadata.reason}
+                                    Rule: policy-based category match
                                   </div>
                                 )}
                               </div>
@@ -2004,22 +2034,8 @@ export const UnifiedTransactionTable = React.forwardRef<UnifiedTransactionTableR
                           }
 
                           const amountAbs = Math.abs(txn.amount);
-                          const account = accounts.find(a => a.id === txn.account_id);
-
-                          // Use same re-calculation logic as actual_cashback
-                          const policy = account?.type === 'credit_card' ? resolveCashbackPolicy({
-                            account: account as any,
-                            categoryId: txn.category_id,
-                            amount: amountAbs,
-                            categoryName: txn.category_name,
-                            cycleTotals: { spent: 0 }
-                          }) : null;
-
-                          const policyRate = policy?.rate ?? 0;
-                          const baseBankBack = amountAbs * policyRate;
-                          const bankBack = (policy?.maxReward !== undefined && policy.maxReward !== null)
-                            ? Math.min(baseBankBack, policy.maxReward)
-                            : baseBankBack;
+                          const estimate = estimateTxnCashback(txn)
+                          const bankBack = estimate.estimated;
 
                           const share = txn.cashback_share_amount ?? 0;
                           const profit = bankBack - share;

@@ -16,7 +16,7 @@ import { SingleTransactionFormValues } from '@/components/transaction/slide-v2/t
 import { DateRange } from 'react-day-picker'
 import { normalizeMonthTag } from '@/lib/month-tag'
 import { startOfMonth, endOfMonth, isWithinInterval, parseISO, isSameDay, format } from 'date-fns'
-import { Search, FilterX, Filter, Clipboard, ChevronDown, X, Trash2 } from 'lucide-react'
+import { Search, FilterX, Filter, Clipboard, ChevronDown, X, Trash2, Loader2 } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import {
@@ -710,6 +710,15 @@ export function AccountDetailTransactions({
             </div>
 
             <div className="flex-1 overflow-hidden relative">
+                {isPending && (
+                    <div className="absolute inset-0 z-[180] bg-white/70 backdrop-blur-[1px] flex items-center justify-center">
+                        <div className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-sm">
+                            <Loader2 className="h-5 w-5 animate-spin text-slate-600" />
+                            <span className="text-sm font-semibold text-slate-700">Fetching cycle data...</span>
+                        </div>
+                    </div>
+                )}
+
                 {/* Add/Duplicate Spinner */}
                 {isSubmittingAdd && (
                     <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[200] pointer-events-none">
