@@ -1356,8 +1356,10 @@ export async function getPocketBaseUnifiedTransactions(options: {
   // Fetching without expand avoids PB 400 errors caused by JOIN complexity on bulk queries.
   // Names/images are resolved client-side from the separately loaded lookup tables.
   const filter = includeVoided ? undefined : `status != 'void'`
+  // Use '-created' (PB built-in, always indexed) instead of '-occurred_at'
+  // (occurred_at is not indexed on large collections → PB 400 on sort without filter)
   const baseParams = {
-    sort: '-occurred_at',
+    sort: '-created',
     ...(filter ? { filter } : {}),
   }
 
