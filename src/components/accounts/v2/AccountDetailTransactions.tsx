@@ -3,7 +3,6 @@
 import { useState, useMemo, useRef, useEffect, useTransition } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { TransactionWithDetails, Account, Category, Person, Shop } from '@/types/moneyflow.types'
-import { fetchAccountCycleOptionsAction } from '@/actions/cashback.actions'
 import { parseCashbackConfig, getCashbackCycleRange, formatIsoCycleTag } from '@/lib/cashback'
 import { UnifiedTransactionTable } from '@/components/moneyflow/unified-transaction-table'
 import { AddTransactionDropdown } from '@/components/transactions-v2/header/AddTransactionDropdown'
@@ -250,8 +249,14 @@ export function AccountDetailTransactions({
         }
 
         setIsCyclesLoading(true)
-        fetchAccountCycleOptionsAction(account.id).then(options => {
-            const cycleOptions = options.map(opt => ({
+        fetch(`/api/cashback/cycle-options?accountId=${encodeURIComponent(account.id)}&t=${Date.now()}`, {
+            method: 'GET',
+            cache: 'no-store',
+        })
+        .then(res => res.ok ? res.json() : { options: [] })
+        .then(payload => {
+            const options = Array.isArray(payload?.options) ? payload.options : []
+            const cycleOptions = options.map((opt: any) => ({
                 label: opt.label,
                 value: opt.tag
             }))
@@ -288,7 +293,8 @@ export function AccountDetailTransactions({
                     }
                 }
             }
-        }).catch(err => {
+        })
+        .catch(err => {
             console.error('Failed to fetch cycle options:', err)
             setCycles([])
             setIsCyclesLoading(false)
