@@ -59,6 +59,13 @@ export function AccountDetailViewV2({
     // Selected Cycle State (for cashback badge in header)
     const [selectedCycle, setSelectedCycle] = useState<string | undefined>()
 
+    useEffect(() => {
+        const tag = searchParams.get('tag')
+        if (tag && tag !== selectedCycle) {
+            setSelectedCycle(tag)
+        }
+    }, [searchParams, selectedCycle])
+
     // Batch Stats State
     const [pendingItems, setPendingItems] = useState<PendingBatchItem[]>([])
     const [isConfirmingPending, setIsConfirmingPending] = useState(false)

@@ -50,9 +50,13 @@ export interface ClassificationsManagerProps {
     accounts: Account[]
     people: Person[]
     defaultTab?: string
+    initialDataSource?: {
+        categories: 'PB' | 'SB'
+        shops: 'PB' | 'SB'
+    }
 }
 
-export function ClassificationsManager({ initialShops, initialCategories, accounts, people, defaultTab = "categories" }: ClassificationsManagerProps) {
+export function ClassificationsManager({ initialShops, initialCategories, accounts, people, defaultTab = "categories", initialDataSource }: ClassificationsManagerProps) {
     const [shops, setShops] = useState<Shop[]>(initialShops)
     const [categories, setCategories] = useState<Category[]>(initialCategories)
 
@@ -357,6 +361,11 @@ export function ClassificationsManager({ initialShops, initialCategories, accoun
                         <Archive className="h-3.5 w-3.5" /> Archived ({archivedCount})
                     </button>
                 </div>
+                {initialDataSource && (
+                    <div className="text-[10px] font-black uppercase tracking-wider text-slate-500">
+                        Source: CATE {initialDataSource.categories} · SHOP {initialDataSource.shops}
+                    </div>
+                )}
             </div>
 
             {/* Middle: Bulk Actions (Absolute or centered) */}
@@ -449,13 +458,13 @@ export function ClassificationsManager({ initialShops, initialCategories, accoun
                                     .map(c => ({
                                         value: c.id,
                                         label: c.name,
-                                        description: c.type.toUpperCase(),
+                                        description: (c.type ?? 'expense').toUpperCase(),
                                         icon: (
                                             <div className="w-5 h-5 rounded-md bg-slate-100 flex items-center justify-center overflow-hidden border border-slate-200 uppercase font-black text-[8px] text-slate-400">
                                                 {c.image_url ? (
                                                     <img src={c.image_url} alt="" className="w-full h-full object-contain p-0.5" />
                                                 ) : (
-                                                    <span>{c.icon || c.name[0]}</span>
+                                                    <span>{c.icon || c.name?.[0] || '?'}</span>
                                                 )}
                                             </div>
                                         )

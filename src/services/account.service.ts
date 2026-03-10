@@ -3,8 +3,8 @@
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { Json } from '@/types/database.types'
 import { Account, AccountRelationships, AccountStats, TransactionWithDetails, AccountRow } from '@/types/moneyflow.types'
+import { executeWithFallback } from '@/lib/pocketbase/fallback-helpers'
 import {
   updatePocketBaseAccountConfig,
   updatePocketBaseAccountInfo,
@@ -21,11 +21,7 @@ import { computeAccountTotals, getCreditCardAvailableBalance, getCreditCardUsage
 import {
   mapUnifiedTransaction
 } from '@/lib/transaction-mapper'
-import {
-  getPocketBaseAccounts,
-  getPocketBaseAccountDetails,
-  loadPocketBaseTransactionsForAccount
-} from './pocketbase/account-details.service'
+import { Database, Json } from '@/types/database.types'
 
 
 
@@ -46,6 +42,89 @@ function parseJsonSafe(value: Json | null): Json | null {
 
 const fmtDate = (d: Date) => {
   return new Intl.DateTimeFormat('vi-VN', { day: '2-digit', month: '2-digit' }).format(d)
+}
+
+async function getSupabaseAccountRows(supabase: SupabaseClient): Promise<AccountRow[]> {
+  const { data, error } = await supabase
+    .from('accounts')
+    .select('id, name, type, currency, current_balance, credit_limit, parent_account_id, account_number, owner_id, cashback_config, cashback_config_version, secured_by_account_id, is_active, image_url, receiver_name, total_in, total_out, annual_fee, annual_fee_waiver_target, cb_type, cb_base_rate, cb_max_budget, cb_is_unlimited, cb_rules_json, cb_min_spend, cb_cycle_type, statement_day, due_date, holder_type, holder_person_id')
+
+  if (error) {
+    console.error('Error fetching accounts:', error)
+    if (error.message) console.error('Error message:', error.message)
+    if (error.code) console.error('Error code:', error.code)
+    return []
+  }
+
+  return (data ?? []) as AccountRow[]
+}
+
+function mapPocketBaseAccountRow(record: any): AccountRow {
+  return {
+    id: record.id,
+    name: record.name ?? '',
+    type: record.type ?? 'bank',
+    currency: record.currency ?? 'VND',
+    current_balance: Number(record.current_balance ?? 0),
+    credit_limit: Number(record.credit_limit ?? 0),
+    parent_account_id: record.parent_account_id || null,
+    account_number: record.account_number || null,
+    owner_id: record.owner_id || null,
+    cashback_config: record.cashback_config ?? null,
+    cashback_config_version: Number(record.cashback_config_version ?? 1),
+    secured_by_account_id: record.secured_by_account_id || null,
+    is_active: record.is_active ?? true,
+    image_url: typeof record.image_url === 'string' && record.image_url.startsWith('http') ? record.image_url : null,
+    receiver_name: record.receiver_name || null,
+    total_in: Number(record.total_in ?? 0),
+    total_out: Number(record.total_out ?? 0),
+    annual_fee: Number(record.annual_fee ?? 0),
+    annual_fee_waiver_target: Number(record.annual_fee_waiver_target ?? 0),
+    cb_type: record.cb_type ?? 'none',
+    cb_base_rate: Number(record.cb_base_rate ?? 0),
+    cb_max_budget: Number(record.cb_max_budget ?? 0),
+    cb_is_unlimited: record.cb_is_unlimited ?? false,
+    cb_rules_json: record.cb_rules_json ?? null,
+    cb_min_spend: Number(record.cb_min_spend ?? 0),
+    cb_cycle_type: record.cb_cycle_type ?? 'calendar_month',
+    statement_day: Number(record.statement_day ?? 0),
+    due_date: Number(record.due_date ?? 0),
+    holder_type: record.holder_type ?? null,
+    holder_person_id: record.holder_person_id ?? null,
+    created_at: record.created ?? null,
+    updated_at: record.updated ?? null,
+  } as AccountRow
+}
+
+async function getPocketBaseAccountRows(): Promise<AccountRow[]> {
+  const candidateUrls = [
+    'https://api-db.reiwarden.io.vn/api/collections/pvl_acc_001/records?perPage=200',
+    'https://api-db.reiwarden.io.vn/api/collections/accounts/records?perPage=200',
+  ]
+
+  let lastErrorText = ''
+
+  for (const url of candidateUrls) {
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        const records = Array.isArray(data.items) ? data.items : []
+        return records.map(mapPocketBaseAccountRow)
+      }
+
+      lastErrorText = await response.text()
+    } catch (error) {
+      lastErrorText = (error as Error)?.message || 'fetch failed'
+      console.warn(`[source:PB] accounts.list url failed: ${url}`, error)
+    }
+  }
+
+  throw new Error(`PB accounts.list failed after retries: ${lastErrorText}`)
 }
 
 async function getStatsForAccount(supabase: ReturnType<typeof createClient>, account: AccountRow): Promise<AccountStats | null> {
@@ -280,31 +359,14 @@ async function getStatsForAccount(supabase: ReturnType<typeof createClient>, acc
 
 
 export async function getAccounts(supabaseClient?: SupabaseClient): Promise<Account[]> {
-  console.log('[DB:PB] accounts.list')
-  try {
-    const pbAccounts = await getPocketBaseAccounts()
-    if (pbAccounts && pbAccounts.length > 0) {
-      return pbAccounts
-    }
-  } catch (err) {
-    console.error('[DB:PB] accounts.list failed:', err)
-  }
-
-  console.log('[DB:SB] accounts.select')
   const supabase = supabaseClient ?? createClient()
   console.log('[DB:SB] accounts.getAll')
 
-  const { data, error } = await supabase
-    .from('accounts')
-    .select('id, name, type, currency, current_balance, credit_limit, parent_account_id, account_number, owner_id, cashback_config, cashback_config_version, secured_by_account_id, is_active, image_url, receiver_name, total_in, total_out, annual_fee, annual_fee_waiver_target, cb_type, cb_base_rate, cb_max_budget, cb_is_unlimited, cb_rules_json, cb_min_spend, cb_cycle_type, statement_day, due_date, holder_type, holder_person_id')
-  // Remove default sorting to handle custom sort logic
-
-  if (error) {
-    console.error('[DB:SB] Error fetching accounts:', error)
-    return []
-  }
-
-  const rows = (data ?? []) as AccountRow[]
+  const rows = await executeWithFallback(
+    () => getPocketBaseAccountRows(),
+    () => getSupabaseAccountRows(supabase),
+    'accounts.list'
+  )
 
   // 1. Pre-process Relationships
   const childrenMap = new Map<string, AccountRow[]>()
@@ -444,43 +506,7 @@ export async function getAccountDetails(id: string): Promise<Account | null> {
   }
   console.log('[DB:SB] accounts.getDetails', { id })
 
-  console.log(`[DB:PB] accounts.get ${id}`)
-  try {
-    const pbAccount = await getPocketBaseAccountDetails(id)
-    if (pbAccount) return pbAccount
-  } catch (err) {
-    console.error(`[DB:PB] accounts.get ${id} failed:`, err)
-  }
-
-  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
-  if (!isUuid) {
-    return null
-  }
-
-  console.log(`[DB:SB] accounts.select.id ${id}`)
-  const supabase = createClient()
-
-  const { data, error } = await supabase
-    .from('accounts')
-    .select('*')
-    .eq('id', id)
-    .maybeSingle()
-
-  if (error || !data) {
-    // Treat "no rows found" as a simple not-found instead of a hard error
-    if (error?.code && error.code === 'PGRST116') {
-      return null
-    }
-    console.error('[DB:SB] Error fetching account details:', {
-      accountId: id,
-      message: error?.message ?? 'unknown error',
-      code: error?.code,
-    })
-    return null
-  }
-
-  const row = data as AccountRow
-  return {
+  const mapAccountRowToDetails = (row: AccountRow): Account => ({
     id: row.id,
     name: row.name,
     type: row.type,
@@ -500,7 +526,6 @@ export async function getAccountDetails(id: string): Promise<Account | null> {
     total_out: row.total_out ?? 0,
     annual_fee: row.annual_fee ?? null,
     annual_fee_waiver_target: row.annual_fee_waiver_target ?? null,
-    // New Cashback Columns
     cb_type: row.cb_type ?? 'none',
     cb_base_rate: row.cb_base_rate ?? 0,
     cb_max_budget: row.cb_max_budget ?? null,
@@ -512,6 +537,71 @@ export async function getAccountDetails(id: string): Promise<Account | null> {
     due_date: row.due_date ?? null,
     holder_type: (row as any).holder_type ?? 'me',
     holder_person_id: (row as any).holder_person_id ?? null
+  })
+
+  const getSupabaseAccountDetailsById = async (): Promise<Account | null> => {
+    const supabase = createClient()
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
+    if (!isUuid) {
+      return null
+    }
+
+    const { data, error } = await supabase
+      .from('accounts')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle()
+
+    if (error || !data) {
+      if (error?.code && error.code === 'PGRST116') {
+        return null
+      }
+      console.error('Error fetching account details from SB:', {
+        accountId: id,
+        message: error?.message ?? 'unknown error',
+        code: error?.code,
+      })
+      return null
+    }
+
+    return mapAccountRowToDetails(data as AccountRow)
+  }
+
+  const getPocketBaseAccountDetailsById = async (): Promise<Account | null> => {
+    const candidateUrls = [
+      `https://api-db.reiwarden.io.vn/api/collections/pvl_acc_001/records/${id}`,
+      `https://api-db.reiwarden.io.vn/api/collections/accounts/records/${id}`,
+    ]
+
+    let lastErrorText = ''
+
+    for (const url of candidateUrls) {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+      })
+
+      if (!response.ok) {
+        lastErrorText = await response.text()
+        continue
+      }
+
+      const record = await response.json()
+      return mapAccountRowToDetails(mapPocketBaseAccountRow(record))
+    }
+
+    throw new Error(`PB account.details failed: ${lastErrorText}`)
+  }
+
+  try {
+    return await executeWithFallback(
+      () => getPocketBaseAccountDetailsById(),
+      () => getSupabaseAccountDetailsById(),
+      `accounts.detail(${id})`
+    )
+  } catch (error) {
+    console.error('accounts.detail exhausted PB/SB sources', { accountId: id, error })
+    return null
   }
 }
 
@@ -530,15 +620,6 @@ async function fetchTransactions(
   accountId: string,
   limit: number,
 ): Promise<TransactionWithDetails[]> {
-  console.log(`[DB:PB] transactions.list account_id=${accountId} limit=${limit}`)
-  try {
-    const pbTxns = await loadPocketBaseTransactionsForAccount(accountId, limit)
-    if (pbTxns && pbTxns.length > 0) return pbTxns
-  } catch (err) {
-    console.error(`[DB:PB] transactions.list account_id=${accountId} failed:`, err)
-  }
-
-  console.log(`[DB:SB] transactions.select account_id=${accountId} limit=${limit}`)
   const supabase = createClient()
 
   const { data, error } = await supabase
@@ -572,7 +653,7 @@ async function fetchTransactions(
     .limit(limit)
 
   if (error) {
-    console.error('[DB:SB] Error fetching transactions for account:', {
+    console.error('Error fetching transactions for account:', {
       accountId,
       message: error?.message ?? 'unknown error',
       code: error?.code,

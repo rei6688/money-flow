@@ -25,15 +25,22 @@ export default async function ClassificationsPage({
         getPeople()
     ])
 
+    const categoryResult = { source: 'Supabase' as const, data: categories }
+    const shopResult = { source: 'Supabase' as const, data: shops }
+
     const tab = params?.tab || "categories"
 
     return (
         <ClassificationsManager
-            initialCategories={categories}
-            initialShops={shops}
+            initialCategories={categoryResult.data}
+            initialShops={shopResult.data}
             accounts={accounts}
             people={people}
             defaultTab={tab}
+            initialDataSource={{
+                categories: categoryResult.source,
+                shops: shopResult.source,
+            }}
         />
     )
 }

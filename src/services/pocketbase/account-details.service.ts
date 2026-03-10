@@ -8,94 +8,6 @@ import { pocketbaseGetById, pocketbaseList, pocketbaseRequest, toPocketBaseId } 
 
 type PocketBaseRecord = Record<string, any>
 
-function escapeFilterValue(value: string): string {
-  return String(value).replace(/'/g, "\\'")
-}
-
-function isPocketBase400Error(error: unknown): boolean {
-  return error instanceof Error && error.message.includes('PocketBase request failed [400]')
-}
-
-function buildTransactionQueryAttempts(
-  baseParams: Record<string, string | number | boolean | undefined>,
-): Array<Record<string, string | number | boolean | undefined>> {
-  const attempts: Array<Record<string, string | number | boolean | undefined>> = []
-  const dedupe = new Set<string>()
-
-  const pushAttempt = (params: Record<string, string | number | boolean | undefined>) => {
-    const key = JSON.stringify(params)
-    if (!dedupe.has(key)) {
-      dedupe.add(key)
-      attempts.push(params)
-    }
-  }
-
-  pushAttempt(baseParams)
-
-  const baseExpand = typeof baseParams.expand === 'string' ? baseParams.expand : ''
-  const baseFilter = typeof baseParams.filter === 'string' ? baseParams.filter : ''
-  const baseSort = typeof baseParams.sort === 'string' ? baseParams.sort : '-date'
-
-  if (baseExpand.includes('to_account_id')) {
-    pushAttempt({ ...baseParams, expand: baseExpand.replace(/to_account_id/g, 'target_account_id') })
-    pushAttempt({ ...baseParams, expand: baseExpand.replace(/,?to_account_id,?/g, ',').replace(/(^,|,$)/g, '') })
-  }
-
-  if (baseFilter.includes('to_account_id')) {
-    pushAttempt({ ...baseParams, filter: baseFilter.replace(/to_account_id/g, 'target_account_id') })
-    pushAttempt({ ...baseParams, filter: baseFilter.replace(/\s*\|\|\s*to_account_id='[^']*'/g, '') })
-  }
-
-  if (baseSort !== '-occurred_at') {
-    pushAttempt({ ...baseParams, sort: '-occurred_at' })
-  }
-
-  pushAttempt({ ...baseParams, expand: undefined })
-
-  return attempts
-}
-
-async function listTransactionsWithFallback(
-  params: Record<string, string | number | boolean | undefined>,
-): Promise<PocketBaseRecord[]> {
-  const attempts = buildTransactionQueryAttempts(params)
-  let lastError: unknown
-
-  for (const attempt of attempts) {
-    try {
-      return await listAllRecords('transactions', attempt)
-    } catch (error) {
-      lastError = error
-      if (!isPocketBase400Error(error)) {
-        throw error
-      }
-    }
-  }
-
-  throw lastError instanceof Error ? lastError : new Error('PocketBase transactions query failed')
-}
-
-async function listTransactionPageWithFallback(
-  params: Record<string, string | number | boolean | undefined>,
-): Promise<PocketBaseRecord[]> {
-  const attempts = buildTransactionQueryAttempts(params)
-  let lastError: unknown
-
-  for (const attempt of attempts) {
-    try {
-      const response = await pocketbaseList<PocketBaseRecord>('transactions', attempt)
-      return response.items || []
-    } catch (error) {
-      lastError = error
-      if (!isPocketBase400Error(error)) {
-        throw error
-      }
-    }
-  }
-
-  throw lastError instanceof Error ? lastError : new Error('PocketBase transactions query failed')
-}
-
 function toAccountType(value: string | null | undefined): Account['type'] {
   if (!value) return 'bank'
   if (value === 'e_wallet') return 'ewallet'
@@ -107,7 +19,7 @@ function toAccountType(value: string | null | undefined): Account['type'] {
 
 function mapAccount(record: PocketBaseRecord): Account {
   return {
-    id: record.id,
+    id: record.slug || record.id,
     name: record.name,
     type: toAccountType(record.type),
     currency: record.currency || 'VND',
@@ -144,7 +56,7 @@ function mapAccount(record: PocketBaseRecord): Account {
 
 function mapCategory(record: PocketBaseRecord): Category {
   return {
-    id: record.id,
+    id: record.slug || record.id,
     name: record.name,
     type: (record.type || 'expense').toLowerCase() as Category['type'],
     icon: record.icon || null,
@@ -156,7 +68,7 @@ function mapCategory(record: PocketBaseRecord): Category {
 
 function mapPerson(record: PocketBaseRecord): Person {
   return {
-    id: record.id,
+    id: record.slug || record.id,
     name: record.name,
     image_url: record.image_url || null,
     is_owner: Boolean(record.is_owner || false),
@@ -165,31 +77,11 @@ function mapPerson(record: PocketBaseRecord): Person {
 
 function mapShop(record: PocketBaseRecord): Shop {
   return {
-    id: record.id,
+    id: record.slug || record.id,
     name: record.name,
     image_url: record.image_url || null,
     default_category_id: record.default_category_id || null,
     is_archived: Boolean(record.is_archived || false),
-  }
-}
-
-export async function resolvePocketBaseAccountId(sourceId: string): Promise<string> {
-  const pbId = toPocketBaseId(sourceId, 'accounts')
-  try {
-    const record = await pocketbaseGetById<PocketBaseRecord>('accounts', pbId)
-    return record.id
-  } catch (err) {
-    // Check if it's a slug
-    const slugMatch = await pocketbaseList<PocketBaseRecord>('accounts', {
-      filter: `slug='${sourceId}'`,
-      perPage: 1,
-      fields: 'id'
-    })
-    if (slugMatch.items?.[0]) {
-      return slugMatch.items[0].id
-    }
-    // Fallback to hashed ID if everything else fails
-    return pbId
   }
 }
 
@@ -209,15 +101,13 @@ function mapTransaction(record: PocketBaseRecord, currentAccountSourceId: string
   const expandedShop = record.expand?.shop_id
   const expandedPerson = record.expand?.person_id
 
-  const sourceAccountSourceId = expandedAccount?.id || (record.account_id === toPocketBaseId(currentAccountSourceId, 'accounts') ? record.account_id : record.account_id)
-  const targetAccountSourceId = expandedTargetAccount?.id || record.target_account_id || record.to_account_id || null
-
-  const occurredAt = record.occurred_at || record.date || record.created || new Date().toISOString()
+  const sourceAccountSourceId = expandedAccount?.slug || (record.account_id === toPocketBaseId(currentAccountSourceId, 'accounts') ? currentAccountSourceId : record.account_id)
+  const targetAccountSourceId = expandedTargetAccount?.slug || record.target_account_id || record.to_account_id || null
 
   return {
-    id: record.id,
-    occurred_at: occurredAt,
-    date: record.date || occurredAt,
+    id: record.metadata?.source_id || record.id,
+    occurred_at: record.occurred_at,
+    date: record.date || record.occurred_at,
     note: record.note || record.description || null,
     amount: Number(record.amount || 0),
     final_price: Number(record.final_price || 0),
@@ -268,9 +158,34 @@ async function listAllRecords(collection: string, params: Record<string, string 
   return allItems
 }
 
+async function resolvePocketBaseAccountRecord(sourceOrPocketBaseId: string): Promise<PocketBaseRecord | null> {
+  try {
+    return await pocketbaseGetById<PocketBaseRecord>('accounts', sourceOrPocketBaseId)
+  } catch {
+    // fallthrough: id may be source UUID, not PB id
+  }
+
+  const hashedPocketBaseId = toPocketBaseId(sourceOrPocketBaseId, 'accounts')
+  if (hashedPocketBaseId !== sourceOrPocketBaseId) {
+    try {
+      return await pocketbaseGetById<PocketBaseRecord>('accounts', hashedPocketBaseId)
+    } catch {
+      // fallthrough
+    }
+  }
+
+  const bySlug = await pocketbaseList<PocketBaseRecord>('accounts', {
+    perPage: 1,
+    filter: `slug='${sourceOrPocketBaseId}'`,
+  })
+
+  return bySlug.items?.[0] ?? null
+}
+
 export async function getPocketBaseCategories(): Promise<Category[]> {
   console.log('[DB:PB] categories.list')
-  const records = await listAllRecords('categories', { sort: '-created' })
+  // Removed sort parameter - PocketBase has issues with sorting, results sorted client-side anyway
+  const records = await listAllRecords('categories')
   const items = records.map(mapCategory).sort((a, b) => a.name.localeCompare(b.name))
   console.log('[DB:PB] categories.list →', items.length, 'records')
   return items
@@ -294,6 +209,7 @@ export async function createPocketBaseCategory(
       method: 'POST',
       body: {
         id: pbId,
+        slug: supabaseId,
         name: data.name,
         type: data.type,
         icon: data.icon ?? null,
@@ -322,7 +238,6 @@ export async function updatePocketBaseCategory(
   }>
 ): Promise<boolean> {
   const pbId = toPocketBaseId(supabaseId)
-  console.log('[DB:PB] categories.update', { pbId })
   try {
     await pocketbaseRequest<PocketBaseRecord>(`/api/collections/categories/records/${pbId}`, {
       method: 'PATCH',
@@ -395,7 +310,8 @@ export async function deletePocketBaseCategoriesBulk(supabaseIds: string[]): Pro
 
 export async function getPocketBasePeople(): Promise<Person[]> {
   console.log('[DB:PB] people.list')
-  const records = await listAllRecords('people', { sort: '-created' })
+  // Removed sort parameter - PocketBase has issues with sorting, results sorted client-side anyway
+  const records = await listAllRecords('people')
   const items = records.map(mapPerson).sort((a, b) => a.name.localeCompare(b.name))
   console.log('[DB:PB] people.list →', items.length, 'records')
   return items
@@ -403,7 +319,8 @@ export async function getPocketBasePeople(): Promise<Person[]> {
 
 export async function getPocketBaseShops(): Promise<Shop[]> {
   console.log('[DB:PB] shops.list')
-  const records = await listAllRecords('shops', { sort: '-created' })
+  // Removed sort parameter - PocketBase has issues with sorting, results sorted client-side anyway
+  const records = await listAllRecords('shops')
   const items = records.map(mapShop).sort((a, b) => a.name.localeCompare(b.name))
   console.log('[DB:PB] shops.list →', items.length, 'records')
   return items
@@ -425,6 +342,7 @@ export async function createPocketBaseShop(
       method: 'POST',
       body: {
         id: pbId,
+        slug: supabaseId,
         name: data.name,
         image_url: data.image_url ?? null,
         default_category_id: pbCategoryId,
@@ -798,84 +716,31 @@ export async function updatePocketBaseAccountConfig(
 }
 
 export async function getPocketBaseAccounts(): Promise<Account[]> {
-  const records = await listAllRecords('accounts', { sort: '-created' })
+  // Note: removed sort parameter - PocketBase has issues with sorting on this collection
+  // Results are sorted client-side anyway
+  const records = await listAllRecords('accounts')
   const mapped = records.map(mapAccount).sort((a, b) => a.name.localeCompare(b.name))
 
   const byPocketBaseId = new Map(records.map((item) => [item.id, item]))
   const pocketBaseToSource = new Map(records.map((item) => [item.id, item.slug || item.id]))
 
-  // FAST PATH: Identify and pre-fetch cycles for current state
-  const now = new Date()
-
-  // First pass: Resolve which tags we need to fetch
-  const accTagMap = new Map<string, string>();
-  const tagsToFetch = new Set<string>();
-
-  for (const account of mapped) {
-    if (account.type !== 'credit_card') continue;
-
-    const config = parseCashbackConfig(account.cashback_config, account.id);
-    const range = getCashbackCycleRange(config, now);
-    const tag = formatIsoCycleTag(range?.end ?? now);
-
-    const pbId = toPocketBaseId(account.id, 'accounts');
-    accTagMap.set(pbId, tag);
-    tagsToFetch.add(tag);
-  }
-
-  // Second pass: Fetch all relevant cycles in one go (or batches if too many)
-  const allCycles: PocketBaseRecord[] = [];
-  if (tagsToFetch.size > 0) {
-    // If many disparate tags, this might be slow, but usually it's just 1-2 (current month, prev month)
-    const tagFilter = Array.from(tagsToFetch).map(t => `cycle_tag='${t}'`).join(' || ');
-    const cyclesResp = await pocketbaseList<PocketBaseRecord>('cashback_cycles', {
-      filter: `(${tagFilter})`,
-      perPage: 200
-    });
-    allCycles.push(...(cyclesResp.items || []));
-  }
-
-  const cyclesByAccTag = new Map(allCycles.map(c => [`${c.account_id}:${c.cycle_tag}`, c]));
-
   return mapped.map((account) => {
-    const pbId = toPocketBaseId(account.id, 'accounts')
-    const sourceRecord = byPocketBaseId.get(pbId)
+    const sourceRecord = byPocketBaseId.get(toPocketBaseId(account.id, 'accounts'))
     const parentPocketBaseId = sourceRecord?.parent_account_id || null
     const securedByPocketBaseId = sourceRecord?.secured_by_account_id || null
 
-    // Attach Stats if credit card
-    let stats: any = null
-    if (account.type === 'credit_card') {
-      const resolvedTag = accTagMap.get(pbId)
-      const cycle = cyclesByAccTag.get(`${pbId}:${resolvedTag}`)
-      if (cycle) {
-        const earnedSoFar = Number(cycle.real_awarded || 0) + Number(cycle.virtual_profit || 0)
-        const maxBudget = cycle.max_budget ?? account.cb_max_budget ?? null
-        stats = {
-          spent_this_cycle: Number(cycle.spent_amount || 0),
-          shared_cashback: Number(cycle.real_awarded || 0),
-          virtual_profit: Number(cycle.virtual_profit || 0),
-          remains_cap: maxBudget === null ? null : Math.max(0, maxBudget - earnedSoFar),
-          is_qualified: Boolean(cycle.met_min_spend),
-          earned_so_far: earnedSoFar,
-          cycle_tag: resolvedTag
-        }
-      }
-    }
-
     return {
       ...account,
-      stats,
-      parent_account_id: parentPocketBaseId || null,
-      secured_by_account_id: securedByPocketBaseId || null,
+      parent_account_id: parentPocketBaseId ? pocketBaseToSource.get(parentPocketBaseId) || null : null,
+      secured_by_account_id: securedByPocketBaseId ? pocketBaseToSource.get(securedByPocketBaseId) || null : null,
     }
   })
 }
 
 export async function getPocketBaseAccountSpendingStatsSnapshot(sourceAccountId: string, date: Date, cycleTag?: string): Promise<AccountSpendingStats | null> {
-  const pocketBaseAccountId = await resolvePocketBaseAccountId(sourceAccountId)
-  const accountRecord = await pocketbaseGetById<PocketBaseRecord>('accounts', pocketBaseAccountId)
-
+  const accountRecord = await resolvePocketBaseAccountRecord(sourceAccountId)
+  if (!accountRecord) return null
+  const pocketBaseAccountId = accountRecord.id
   const account = mapAccount(accountRecord)
 
   if (account.type !== 'credit_card') return null
@@ -902,23 +767,6 @@ export async function getPocketBaseAccountSpendingStatsSnapshot(sourceAccountId:
   const remainingBudget = maxCashback === null ? null : Math.max(0, Number(maxCashback) - earnedSoFar)
   const isMinSpendMet = minSpend === null ? true : currentSpend >= Number(minSpend)
 
-  // OPTIONAL: Resolve policy for metadata (Zero-latency path if stats are cached)
-  const { resolveCashbackPolicy } = await import('../cashback/policy-resolver')
-  const policy = resolveCashbackPolicy({
-    account: {
-      id: account.id,
-      cb_type: account.cb_type,
-      cb_base_rate: account.cb_base_rate,
-      cb_max_budget: account.cb_max_budget,
-      cb_is_unlimited: account.cb_is_unlimited,
-      cb_rules_json: account.cb_rules_json,
-      cb_min_spend: account.cb_min_spend,
-      cashback_config: account.cashback_config
-    },
-    amount: 1000000, // Dummy for policy check
-    cycleTotals: { spent: currentSpend }
-  })
-
   const statementDay = account.statement_day || null
   const cycleLabel = cycleRange
     ? (config.cycleType === 'statement_cycle'
@@ -931,7 +779,7 @@ export async function getPocketBaseAccountSpendingStatsSnapshot(sourceAccountId:
     minSpend: minSpend === null ? null : Number(minSpend),
     maxCashback: maxCashback === null ? null : Number(maxCashback),
     actualClaimed,
-    rate: policy.rate, // Use policy rate
+    rate: Number(account.cb_base_rate || 0) / 100,
     earnedSoFar,
     sharedAmount,
     potentialProfit: netProfit,
@@ -940,23 +788,25 @@ export async function getPocketBaseAccountSpendingStatsSnapshot(sourceAccountId:
     is_min_spend_met: isMinSpendMet,
     estYearlyTotal: earnedSoFar * 12,
     activeRules: [],
-    policyMetadata: policy.metadata,
-    matchReason: policy.metadata?.reason,
     cycle: cycleRange ? {
       tag: resolvedCycleTag,
       label: cycleLabel,
       start: cycleRange.start.toISOString(),
       end: cycleRange.end.toISOString(),
-    } : null
+    } : null,
+    potentialRate: Number(account.cb_base_rate || 0) / 100,
+    maxReward: null,
+    matchReason: statementDay ? 'statement_cycle' : 'calendar_month',
   }
 }
 
 export async function getPocketBaseAccountDetails(sourceAccountId: string): Promise<Account | null> {
-  const pocketBaseAccountId = await resolvePocketBaseAccountId(sourceAccountId)
-  const allAccounts = await getPocketBaseAccounts()
-  const account = allAccounts.find((item) => item.id === pocketBaseAccountId)
+  // Resolve the account record using multi-strategy lookup (direct ID, hashed ID, or slug filter)
+  const accountRecord = await resolvePocketBaseAccountRecord(sourceAccountId)
+  if (!accountRecord) return null
 
-  if (!account) return null
+  const account = mapAccount(accountRecord)
+  const allAccounts = await getPocketBaseAccounts()
 
   const usagePercent = account.type === 'credit_card'
     ? getCreditCardUsage({ type: account.type, credit_limit: account.credit_limit || 0, current_balance: account.current_balance || 0 }).percent
@@ -1006,15 +856,48 @@ export async function getPocketBaseAccountDetails(sourceAccountId: string): Prom
 }
 
 export async function loadPocketBaseTransactionsForAccount(sourceAccountId: string, limit = 2000): Promise<TransactionWithDetails[]> {
-  const pocketBaseAccountId = await resolvePocketBaseAccountId(sourceAccountId)
-  const records = await listTransactionsWithFallback({
+  const accountRecord = await resolvePocketBaseAccountRecord(sourceAccountId)
+  if (!accountRecord) return []
+  const pocketBaseAccountId = accountRecord.id
+  const records = await listAllRecords('transactions', {
     perPage: Math.min(limit, 200),
-    sort: '-date',
-    expand: 'account_id,to_account_id,category_id,shop_id,person_id',
-    filter: `(account_id='${pocketBaseAccountId}' || to_account_id='${pocketBaseAccountId}')`,
+    sort: '-occurred_at',
+    expand: 'account_id,target_account_id,to_account_id,category_id,shop_id,person_id,parent_transaction_id',
+    filter: `(account_id='${pocketBaseAccountId}' || target_account_id='${pocketBaseAccountId}' || to_account_id='${pocketBaseAccountId}')`,
   })
 
   return records.map((item) => mapTransaction(item, sourceAccountId))
+}
+
+/**
+ * Load PocketBase transactions with flexible options
+ * NOTE: Phase 1 implementation - only supports accountId filtering
+ * TODO Phase 2: Add support for personId, categoryId, shopId, installmentPlanId
+ */
+export async function loadPocketBaseTransactions(options: {
+  accountId?: string
+  personId?: string
+  personIds?: string[]
+  categoryId?: string
+  shopId?: string
+  installmentPlanId?: string
+  limit?: number
+  context?: 'person' | 'account' | 'general'
+  includeVoided?: boolean
+}): Promise<TransactionWithDetails[]> {
+  // Phase 1: Only accountId is supported
+  if (options.accountId) {
+    return loadPocketBaseTransactionsForAccount(options.accountId, options.limit)
+  }
+  
+  // Phase 2+: Other filters not yet implemented
+  if (options.personId || options.personIds || options.categoryId || options.shopId || options.installmentPlanId) {
+    console.warn('[loadPocketBaseTransactions] Phase 2 filters not yet implemented, falling back to Supabase')
+    return []
+  }
+  
+  // No filters - not supported in Phase 1
+  return []
 }
 
 export async function getPocketBaseAccountCycleOptions(sourceAccountId: string, limit = 12): Promise<Array<{
@@ -1029,9 +912,9 @@ export async function getPocketBaseAccountCycleOptions(sourceAccountId: string, 
     virtual_profit: number
   }
 }>> {
-  const pocketBaseAccountId = await resolvePocketBaseAccountId(sourceAccountId)
-
-  const accountRecord = await pocketbaseGetById<PocketBaseRecord>('accounts', pocketBaseAccountId)
+  const accountRecord = await resolvePocketBaseAccountRecord(sourceAccountId)
+  if (!accountRecord) return []
+  const pocketBaseAccountId = accountRecord.id
   const account = mapAccount(accountRecord)
   const config = parseCashbackConfig(account.cashback_config, account.id)
 
@@ -1077,89 +960,14 @@ export async function getPocketBaseAccountCycleOptions(sourceAccountId: string, 
 }
 
 export async function getPocketBaseCycleTransactions(sourceAccountId: string, cycleTag: string): Promise<TransactionWithDetails[]> {
-  const pocketBaseAccountId = await resolvePocketBaseAccountId(sourceAccountId)
-  const records = await listTransactionsWithFallback({
-    sort: '-date',
-    expand: 'account_id,to_account_id,category_id,shop_id,person_id',
-    filter: `(account_id='${pocketBaseAccountId}' || to_account_id='${pocketBaseAccountId}') && (persisted_cycle_tag='${cycleTag}' || tag='${cycleTag}')`,
+  const pocketBaseAccountId = toPocketBaseId(sourceAccountId, 'accounts')
+  const records = await listAllRecords('transactions', {
+    sort: '-occurred_at',
+    expand: 'account_id,target_account_id,to_account_id,category_id,shop_id,person_id,parent_transaction_id',
+    filter: `(account_id='${pocketBaseAccountId}' || target_account_id='${pocketBaseAccountId}' || to_account_id='${pocketBaseAccountId}') && (persisted_cycle_tag='${cycleTag}' || tag='${cycleTag}')`,
   })
 
   return records.map((item) => mapTransaction(item, sourceAccountId))
-}
-export async function loadPocketBaseTransactions(options: {
-  transactionId?: string;
-  accountId?: string;
-  personId?: string;
-  personIds?: string[];
-  categoryId?: string;
-  shopId?: string;
-  installmentPlanId?: string;
-  limit?: number;
-  includeVoided?: boolean;
-}): Promise<TransactionWithDetails[]> {
-  const filters: string[] = []
-
-  if (options.transactionId) {
-    const normalizedInputId = options.transactionId.trim()
-    const hashedId = toPocketBaseId(normalizedInputId, 'transactions')
-    const possibleIds = new Set<string>([normalizedInputId, hashedId].filter(Boolean))
-    const idFilter = Array.from(possibleIds)
-      .map((id) => `id='${escapeFilterValue(id)}'`)
-      .join(' || ')
-    filters.push(`(${idFilter})`)
-  } else {
-    if (options.personIds && options.personIds.length > 0) {
-      const pIdList = options.personIds
-        .map((id) => toPocketBaseId(id, 'people'))
-        .map((id) => `person_id='${escapeFilterValue(id)}'`)
-        .join(' || ')
-      filters.push(`(${pIdList})`)
-    } else if (options.personId) {
-      const pbPersonId = toPocketBaseId(options.personId, 'people')
-      filters.push(`person_id='${escapeFilterValue(pbPersonId)}'`)
-    } else if (options.accountId) {
-      const pbAccountId = await resolvePocketBaseAccountId(options.accountId)
-      filters.push(`(account_id='${escapeFilterValue(pbAccountId)}' || to_account_id='${escapeFilterValue(pbAccountId)}')`)
-    }
-  }
-
-  if (options.shopId) {
-    const pbShopId = toPocketBaseId(options.shopId, 'shops')
-    filters.push(`shop_id='${escapeFilterValue(pbShopId)}'`)
-  }
-
-  if (options.categoryId) {
-    const pbCategoryId = toPocketBaseId(options.categoryId, 'categories')
-    filters.push(`category_id='${escapeFilterValue(pbCategoryId)}'`)
-  }
-
-  if (options.installmentPlanId) {
-    filters.push(`installment_plan_id='${escapeFilterValue(options.installmentPlanId)}'`)
-  }
-
-  const queryParams: any = {
-    sort: '-date',
-    expand: 'account_id,to_account_id,category_id,shop_id,person_id',
-    perPage: options.limit ? Math.min(options.limit, 200) : 200,
-  }
-
-  if (filters.length > 0) {
-    queryParams.filter = filters.join(' && ')
-  }
-
-  const items = await listTransactionPageWithFallback(queryParams)
-  const mapped = items.map((item) => mapTransaction(item, options.accountId || ''))
-
-  if (options.includeVoided) {
-    return mapped
-  }
-
-  return mapped.filter((item) => String(item.status || '').toLowerCase() !== 'void')
-}
-
-export async function getPocketBaseTransactionById(transactionId: string): Promise<TransactionWithDetails | null> {
-  const results = await loadPocketBaseTransactions({ transactionId, limit: 1, includeVoided: true })
-  return results[0] || null
 }
 
 // ============================================================

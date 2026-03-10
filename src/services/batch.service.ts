@@ -407,6 +407,12 @@ export async function revertBatchItem(transactionId: string) {
  * Used for "Confirm Money Received" feature on Account Cards
  */
 export async function getPendingBatchItemsByAccount(accountId: string) {
+    // Guard: PB accounts don't have batch items (Supabase-only feature)
+    const isPB = accountId && accountId.length === 15
+    if (isPB) {
+        return []
+    }
+
     const supabase: any = createClient()
     const { data, error } = await supabase
         .from('batch_items')
