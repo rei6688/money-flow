@@ -167,8 +167,8 @@ function mapTransaction(record: PocketBaseRecord, currentAccountSourceId: string
     persisted_cycle_tag: parseCycleTagFromTransaction(record),
     tag: record.tag || null,
     cashback_mode: record.cashback_mode || null,
-    cashback_share_percent: record.cashback_share_percent ?? null,
-    cashback_share_fixed: record.cashback_share_fixed ?? null,
+    cashback_share_percent: record.cashback_share_percent ?? record.metadata?.cashback_share_percent ?? null,
+    cashback_share_fixed: record.cashback_share_fixed ?? record.metadata?.cashback_share_fixed ?? null,
     cashback_amount: Number(record.cashback_amount || 0),
     cashback_share_amount: record.cashback_amount ?? null,
     is_installment: Boolean(record.is_installment || false),
@@ -1193,16 +1193,11 @@ export async function loadPocketBaseTransactions(options: {
     return []
   }
 
-  // Phase 1a: accountId is supported
-  if (options.accountId) {
-    return loadPocketBaseTransactionsForAccount(options.accountId, options.limit)
-  }
-  
-  // Phase 1b: personId/personIds is now supported via simple filter
+  // Phase 1b: personId/personIds is supported via simple filter
   if (options.personId || options.personIds) {
     const personIds = options.personIds && options.personIds.length > 0 ? options.personIds : (options.personId ? [options.personId] : [])
     if (personIds.length === 0) return []
-    
+
     // Build OR filter for multiple person IDs
     const filterParts = personIds.map(pid => `person_id='${pid}'`).join(' || ')
     const records = await listAllRecords('transactions', {
@@ -1210,6 +1205,11 @@ export async function loadPocketBaseTransactions(options: {
       filter: filterParts,
     })
     return records.map((item) => mapTransaction(item, ''))
+  }
+
+  // Phase 1a: accountId is supported
+  if (options.accountId) {
+    return loadPocketBaseTransactionsForAccount(options.accountId, options.limit)
   }
   
   // Phase 2+: Other filters not yet implemented
@@ -1326,6 +1326,9 @@ export async function createPocketBaseTransaction(supabaseId: string, data: Tran
   const mergedMetadata = {
     ...(data.metadata && typeof data.metadata === 'object' ? (data.metadata as Record<string, unknown>) : {}),
     source_id: supabaseId,
+    cashback_share_percent: data.cashback_share_percent ?? null,
+    cashback_share_fixed: data.cashback_share_fixed ?? null,
+    cashback_mode: data.cashback_mode ?? null,
   }
   await pocketbaseRequest(`/api/collections/transactions/records`, {
     method: 'POST',
@@ -1370,7 +1373,19 @@ export async function updatePocketBaseTransaction(supabaseId: string, data: Part
   if (data.cashback_share_percent !== undefined) payload.cashback_share_percent = data.cashback_share_percent
   if (data.cashback_share_fixed !== undefined) payload.cashback_share_fixed = data.cashback_share_fixed
   if (data.cashback_mode !== undefined) payload.cashback_mode = data.cashback_mode
-  if (data.metadata !== undefined) payload.metadata = data.metadata
+  if (data.metadata !== undefined || data.cashback_share_percent !== undefined || data.cashback_share_fixed !== undefined || data.cashback_mode !== undefined) {
+    const current = await pocketbaseGetById<PocketBaseRecord>('transactions', pbId)
+    const currentMetadata = current?.metadata && typeof current.metadata === 'object'
+      ? (current.metadata as Record<string, unknown>)
+      : {}
+    payload.metadata = {
+      ...currentMetadata,
+      ...(data.metadata && typeof data.metadata === 'object' ? (data.metadata as Record<string, unknown>) : {}),
+      ...(data.cashback_share_percent !== undefined ? { cashback_share_percent: data.cashback_share_percent ?? null } : {}),
+      ...(data.cashback_share_fixed !== undefined ? { cashback_share_fixed: data.cashback_share_fixed ?? null } : {}),
+      ...(data.cashback_mode !== undefined ? { cashback_mode: data.cashback_mode ?? null } : {}),
+    }
+  }
   if (Object.keys(payload).length === 0) return
   await pocketbaseRequest(`/api/collections/transactions/records/${pbId}`, {
     method: 'PATCH',

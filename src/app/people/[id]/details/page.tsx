@@ -29,7 +29,6 @@ export default async function MemberDetailsPage({ params }: { params: Promise<{ 
         notFound()
     }
 
-    const actualAccountId = person.id
     const sheetProfileId = person.id
 
     // Fetch all required data in parallel
@@ -59,7 +58,6 @@ export default async function MemberDetailsPage({ params }: { params: Promise<{ 
     const transactions = isGroupProfile
         ? await getTransactionsByPeople(groupPersonIds, 1000)
         : await getUnifiedTransactions({
-            accountId: actualAccountId,
             personId: person.id,
             context: 'person',
             includeVoided: true,

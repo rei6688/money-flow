@@ -110,7 +110,6 @@ async function PeopleDetailContent({
     notFound()
   }
 
-  const actualAccountId = person.id
   const sheetProfileId = person.id
 
   // Fetch all required data in parallel
@@ -141,7 +140,6 @@ async function PeopleDetailContent({
   const transactions = isGroupProfile
     ? await getTransactionsByPeople(groupPersonIds, 2000)
     : await getUnifiedTransactions({
-      accountId: actualAccountId,
       personId: person.id,
       limit: 2000,
       context: 'person',
