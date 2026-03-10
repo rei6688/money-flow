@@ -1,9 +1,9 @@
 import {
-  getPocketBasePeople,
   getPocketBaseAccounts,
   getPocketBaseCategories,
   getPocketBaseShops,
 } from '@/services/pocketbase/account-details.service'
+import { getPocketBasePeople } from '@/services/pocketbase/people.service'
 import { getServices } from '@/services/service-manager'
 import { PeopleDirectoryV2 } from '@/components/people/v2/people-directory-v2'
 import { Metadata } from 'next'

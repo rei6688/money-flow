@@ -12,11 +12,13 @@ import type {
 } from '@/types/moneyflow.types'
 import { toYYYYMMFromDate, normalizeMonthTag } from '@/lib/month-tag'
 import {
+  createPocketBaseAccount,
+} from '@/services/pocketbase/account-details.service'
+import {
   getPocketBasePeople,
   createPocketBasePerson,
   updatePocketBasePerson,
-  createPocketBaseAccount,
-} from '@/services/pocketbase/account-details.service'
+} from '@/services/pocketbase/people.service'
 
 type Person = MoneyflowPerson & { email?: string | null }
 

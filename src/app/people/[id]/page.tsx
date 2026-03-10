@@ -2,9 +2,9 @@ import { notFound, redirect } from 'next/navigation'
 import {
   getPocketBaseAccounts,
   getPocketBaseCategories,
-  getPocketBasePeople,
   getPocketBaseShops,
 } from '@/services/pocketbase/account-details.service'
+import { getPocketBasePeople, getPocketBasePersonDetails } from '@/services/pocketbase/people.service'
 import { getDebtByTags } from '@/services/debt.service'
 import { getUnifiedTransactions, getTransactionsByPeople } from '@/services/transaction.service'
 import { getPersonCycleSheets } from '@/services/person-cycle-sheet.service'
@@ -29,7 +29,7 @@ export async function generateMetadata({
   const { id } = await params
   if (id === 'details') return { title: 'Redirecting...' }
   const { tab } = await searchParams
-  const person = await getPersonWithSubs(id)
+  const person = (await getPocketBasePersonDetails(id)) ?? (await getPersonWithSubs(id))
 
   if (!person) return { title: 'Person Not Found' }
 
@@ -104,7 +104,7 @@ async function PeopleDetailContent({
   const personId = resolvedParams.id
 
   // Fetch person details
-  const person = await getPersonWithSubs(personId)
+  const person = (await getPocketBasePersonDetails(personId)) ?? (await getPersonWithSubs(personId))
 
   if (!person) {
     notFound()
