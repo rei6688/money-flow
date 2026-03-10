@@ -771,14 +771,23 @@ export async function getPocketBaseAccountSpendingStatsSnapshot(sourceAccountId:
 
   const cycle = cycleResponse.items?.[0]
 
-  const transactionResponse = await pocketbaseList<PocketBaseRecord>('transactions', {
-    perPage: 2000,
-    filter: `account_id='${pocketBaseAccountId}' && status!='void'`,
-    sort: '-occurred_at,-created',
-    fields: 'id,amount,type,category_id,cashback_amount,cashback_share_percent,cashback_share_fixed,metadata,date,occurred_at,note,description',
-  })
-
-  const rawTransactions = transactionResponse.items || []
+  let rawTransactions: PocketBaseRecord[] = []
+  try {
+    const transactionResponse = await pocketbaseList<PocketBaseRecord>('transactions', {
+      perPage: 2000,
+      filter: `account_id='${pocketBaseAccountId}' && status!='void'`,
+      sort: '-occurred_at,-created',
+      fields: 'id,amount,type,category_id,cashback_amount,cashback_share_percent,cashback_share_fixed,metadata,date,occurred_at,note,description',
+    })
+    rawTransactions = transactionResponse.items || []
+  } catch (err) {
+    console.warn('[DB:PB] account spending stats: transaction query failed, falling back to cycle snapshot', {
+      sourceAccountId,
+      cycleTag: resolvedCycleTag,
+      error: String(err),
+    })
+    // Fallback: continue without transaction details; use cycle precomputed values below
+  }
   const cycleStartTime = cycleRange?.start ? cycleRange.start.getTime() : null
   const cycleEndTime = cycleRange?.end ? cycleRange.end.getTime() : null
 
@@ -819,70 +828,79 @@ export async function getPocketBaseAccountSpendingStatsSnapshot(sourceAccountId:
 
   let estimatedCashback = 0
   let sharedAmount = 0
+  let actualClaimed = 0
 
   const activeRuleMap = new Map<string, { ruleId: string; name: string; rate: number; spent: number; earned: number; max?: number }>()
 
-  for (const tx of spendTransactions) {
-    const amount = Math.abs(Number(tx.amount || 0))
-    if (amount <= 0) continue
+  // If transaction query failed (rawTransactions empty), fallback to cycle precomputed values
+  if (cycleTransactions.length === 0) {
+    estimatedCashback = Number(cycle?.virtual_profit ?? 0) + Number(cycle?.real_awarded ?? 0)
+    sharedAmount = Number(cycle?.shared_amount ?? cycle?.real_awarded ?? 0)
+    actualClaimed = Number(cycle?.real_awarded ?? 0)
+    // activeRules stays empty on fallback
+  } else {
+    for (const tx of spendTransactions) {
+      const amount = Math.abs(Number(tx.amount || 0))
+      if (amount <= 0) continue
 
-    const category = tx.category_id ? categoryMap.get(tx.category_id) : undefined
-    const policy = resolveCashbackPolicy({
-      account,
-      categoryId: category?.sourceId || null,
-      categoryName: category?.name,
-      amount,
-      cycleTotals: { spent: spendForPolicy },
-    })
-
-    let txnEstimate = amount * Number(policy.rate || 0)
-    if (policy.maxReward && policy.maxReward > 0) {
-      txnEstimate = Math.min(txnEstimate, Number(policy.maxReward))
-    }
-    estimatedCashback += txnEstimate
-
-    const sharedFixed = Number(tx.cashback_share_fixed || 0)
-    const sharedAmountField = Number(tx.cashback_amount || 0)
-    const sharedPercent = Number(tx.cashback_share_percent || 0)
-    const txnShared = sharedFixed > 0
-      ? sharedFixed
-      : sharedAmountField > 0
-        ? sharedAmountField
-        : sharedPercent > 0
-          ? txnEstimate * sharedPercent
-          : 0
-    sharedAmount += txnShared
-
-    const metadata = policy.metadata || {}
-    const ruleId = String(metadata.ruleId || `${category?.sourceId || 'general'}-${policy.rate}`)
-    const ruleName = category?.name
-      ? `${Math.round(Number(policy.rate || 0) * 100)}% ${category.name}`
-      : `Rule ${Math.round(Number(policy.rate || 0) * 100)}%`
-
-    const prev = activeRuleMap.get(ruleId)
-    if (prev) {
-      prev.spent += amount
-      prev.earned += txnEstimate
-    } else {
-      activeRuleMap.set(ruleId, {
-        ruleId,
-        name: ruleName,
-        rate: Math.round(Number(policy.rate || 0) * 100),
-        spent: amount,
-        earned: txnEstimate,
-        max: policy.maxReward,
+      const category = tx.category_id ? categoryMap.get(tx.category_id) : undefined
+      const policy = resolveCashbackPolicy({
+        account,
+        categoryId: category?.sourceId || null,
+        categoryName: category?.name,
+        amount,
+        cycleTotals: { spent: spendForPolicy },
       })
-    }
-  }
 
-  const actualClaimed = cycleTransactions.reduce((sum, tx) => {
-    if (String(tx.type || '') !== 'income') return sum
-    const categoryName = tx.category_id ? (categoryMap.get(tx.category_id)?.name || '') : ''
-    const note = String(tx.note || tx.description || '').toLowerCase()
-    const isCashbackIncome = categoryName.toLowerCase().includes('cashback') || categoryName.toLowerCase().includes('hoàn tiền') || note.includes('cashback') || note.includes('hoàn tiền')
-    if (!isCashbackIncome) return sum
-    return sum + Math.abs(Number(tx.amount || 0))
-  }, 0)
+      let txnEstimate = amount * Number(policy.rate || 0)
+      if (policy.maxReward && policy.maxReward > 0) {
+        txnEstimate = Math.min(txnEstimate, Number(policy.maxReward))
+      }
+      estimatedCashback += txnEstimate
+
+      const sharedFixed = Number(tx.cashback_share_fixed || 0)
+      const sharedAmountField = Number(tx.cashback_amount || 0)
+      const sharedPercent = Number(tx.cashback_share_percent || 0)
+      const txnShared = sharedFixed > 0
+        ? sharedFixed
+        : sharedAmountField > 0
+          ? sharedAmountField
+          : sharedPercent > 0
+            ? txnEstimate * sharedPercent
+            : 0
+      sharedAmount += txnShared
+
+      const metadata = policy.metadata || {}
+      const ruleId = String(metadata.ruleId || `${category?.sourceId || 'general'}-${policy.rate}`)
+      const ruleName = category?.name
+        ? `${Math.round(Number(policy.rate || 0) * 100)}% ${category.name}`
+        : `Rule ${Math.round(Number(policy.rate || 0) * 100)}%`
+
+      const prev = activeRuleMap.get(ruleId)
+      if (prev) {
+        prev.spent += amount
+        prev.earned += txnEstimate
+      } else {
+        activeRuleMap.set(ruleId, {
+          ruleId,
+          name: ruleName,
+          rate: Math.round(Number(policy.rate || 0) * 100),
+          spent: amount,
+          earned: txnEstimate,
+          max: policy.maxReward,
+        })
+      }
+    }
+
+    actualClaimed = cycleTransactions.reduce((sum, tx) => {
+      if (String(tx.type || '') !== 'income') return sum
+      const categoryName = tx.category_id ? (categoryMap.get(tx.category_id)?.name || '') : ''
+      const note = String(tx.note || tx.description || '').toLowerCase()
+      const isCashbackIncome = categoryName.toLowerCase().includes('cashback') || categoryName.toLowerCase().includes('hoàn tiền') || note.includes('cashback') || note.includes('hoàn tiền')
+      if (!isCashbackIncome) return sum
+      return sum + Math.abs(Number(tx.amount || 0))
+    }, 0)
+  }
 
   const minSpend = cycle?.min_spend_target ?? account.cb_min_spend ?? null
   const maxCashback = cycle?.max_budget ?? account.cb_max_budget ?? null
