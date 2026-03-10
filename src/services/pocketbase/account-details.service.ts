@@ -4,6 +4,7 @@ import { Account, Category, Person, Shop, TransactionWithDetails } from '@/types
 import { AccountSpendingStats } from '@/types/cashback.types'
 import { getCashbackCycleRange, formatIsoCycleTag, parseCashbackConfig } from '@/lib/cashback'
 import { getCreditCardAvailableBalance, getCreditCardUsage } from '@/lib/account-balance'
+import { resolveCashbackPolicy } from '@/services/cashback/policy-resolver'
 import { pocketbaseGetById, pocketbaseList, pocketbaseRequest, toPocketBaseId } from './server'
 
 type PocketBaseRecord = Record<string, any>
@@ -101,11 +102,13 @@ function mapTransaction(record: PocketBaseRecord, currentAccountSourceId: string
   const expandedShop = record.expand?.shop_id
   const expandedPerson = record.expand?.person_id
 
+  const sourceAccountPocketBaseId = expandedAccount?.id || record.account_id || null
+  const targetAccountPocketBaseId = expandedTargetAccount?.id || record.target_account_id || record.to_account_id || null
   const sourceAccountSourceId = expandedAccount?.slug || (record.account_id === toPocketBaseId(currentAccountSourceId, 'accounts') ? currentAccountSourceId : record.account_id)
   const targetAccountSourceId = expandedTargetAccount?.slug || record.target_account_id || record.to_account_id || null
 
   return {
-    id: record.metadata?.source_id || record.id,
+    id: record.id,
     occurred_at: record.occurred_at,
     date: record.date || record.occurred_at,
     note: record.note || record.description || null,
@@ -113,9 +116,16 @@ function mapTransaction(record: PocketBaseRecord, currentAccountSourceId: string
     final_price: Number(record.final_price || 0),
     type: record.type,
     status: record.status || 'posted',
-    account_id: sourceAccountSourceId,
-    target_account_id: targetAccountSourceId,
-    to_account_id: targetAccountSourceId,
+    account_id: sourceAccountPocketBaseId,
+    target_account_id: targetAccountPocketBaseId,
+    to_account_id: targetAccountPocketBaseId,
+    source_account_id: sourceAccountPocketBaseId,
+    destination_account_id: targetAccountPocketBaseId,
+    source_name: expandedAccount?.name || null,
+    source_image: expandedAccount?.image_url || null,
+    destination_name: expandedTargetAccount?.name || null,
+    destination_image: expandedTargetAccount?.image_url || null,
+    account_name: expandedAccount?.name || null,
     category_id: record.category_id || null,
     shop_id: record.shop_id || null,
     person_id: record.person_id || null,
@@ -131,10 +141,15 @@ function mapTransaction(record: PocketBaseRecord, currentAccountSourceId: string
     cashback_mode: record.cashback_mode || null,
     cashback_share_percent: record.cashback_share_percent ?? null,
     cashback_share_fixed: record.cashback_share_fixed ?? null,
+    cashback_amount: Number(record.cashback_amount || 0),
     cashback_share_amount: record.cashback_amount ?? null,
     is_installment: Boolean(record.is_installment || false),
     parent_transaction_id: record.parent_transaction_id || null,
-    metadata: record.metadata || null,
+    metadata: {
+      ...(record.metadata || {}),
+      source_account_id: sourceAccountSourceId,
+      source_target_account_id: targetAccountSourceId,
+    },
   } as TransactionWithDetails
 }
 
@@ -756,16 +771,126 @@ export async function getPocketBaseAccountSpendingStatsSnapshot(sourceAccountId:
 
   const cycle = cycleResponse.items?.[0]
 
-  const currentSpend = Number(cycle?.spent_amount || 0)
+  const transactionResponse = await pocketbaseList<PocketBaseRecord>('transactions', {
+    perPage: 2000,
+    filter: `account_id='${pocketBaseAccountId}' && status!='void'`,
+    sort: '-occurred_at,-created',
+    fields: 'id,amount,type,category_id,cashback_amount,cashback_share_percent,cashback_share_fixed,metadata,date,occurred_at,note,description',
+  })
+
+  const rawTransactions = transactionResponse.items || []
+  const cycleStartTime = cycleRange?.start ? cycleRange.start.getTime() : null
+  const cycleEndTime = cycleRange?.end ? cycleRange.end.getTime() : null
+
+  const cycleTransactions = rawTransactions.filter((tx) => {
+    const metadata = tx.metadata && typeof tx.metadata === 'object' ? tx.metadata : {}
+    const txCycleTag = tx.persisted_cycle_tag || tx.tag || metadata?.persisted_cycle_tag || null
+    if (cycleTag && txCycleTag) return String(txCycleTag) === resolvedCycleTag
+
+    const txDateRaw = tx.occurred_at || tx.date
+    const txDate = txDateRaw ? new Date(txDateRaw) : null
+    if (!txDate || Number.isNaN(txDate.getTime())) return false
+    if (cycleStartTime === null || cycleEndTime === null) return true
+    return txDate.getTime() >= cycleStartTime && txDate.getTime() <= cycleEndTime
+  })
+
+  const categoryIds = Array.from(new Set(cycleTransactions.map((tx) => tx.category_id).filter(Boolean)))
+  const categoryMap = new Map<string, { id: string; sourceId: string; name: string }>()
+
+  if (categoryIds.length > 0) {
+    const categoryResponse = await pocketbaseList<PocketBaseRecord>('categories', {
+      perPage: 200,
+      filter: categoryIds.map((id) => `id='${id}'`).join(' || '),
+      fields: 'id,slug,name',
+    })
+
+    for (const categoryRecord of categoryResponse.items || []) {
+      categoryMap.set(categoryRecord.id, {
+        id: categoryRecord.id,
+        sourceId: categoryRecord.slug || categoryRecord.id,
+        name: String(categoryRecord.name || ''),
+      })
+    }
+  }
+
+  const spendTransactions = cycleTransactions.filter((tx) => ['expense', 'debt', 'service'].includes(String(tx.type || '')))
+  const currentSpend = spendTransactions.reduce((sum, tx) => sum + Math.abs(Number(tx.amount || 0)), 0)
+  const spendForPolicy = Number(cycle?.spent_amount ?? currentSpend)
+
+  let estimatedCashback = 0
+  let sharedAmount = 0
+
+  const activeRuleMap = new Map<string, { ruleId: string; name: string; rate: number; spent: number; earned: number; max?: number }>()
+
+  for (const tx of spendTransactions) {
+    const amount = Math.abs(Number(tx.amount || 0))
+    if (amount <= 0) continue
+
+    const category = tx.category_id ? categoryMap.get(tx.category_id) : undefined
+    const policy = resolveCashbackPolicy({
+      account,
+      categoryId: category?.sourceId || null,
+      categoryName: category?.name,
+      amount,
+      cycleTotals: { spent: spendForPolicy },
+    })
+
+    let txnEstimate = amount * Number(policy.rate || 0)
+    if (policy.maxReward && policy.maxReward > 0) {
+      txnEstimate = Math.min(txnEstimate, Number(policy.maxReward))
+    }
+    estimatedCashback += txnEstimate
+
+    const sharedFixed = Number(tx.cashback_share_fixed || 0)
+    const sharedAmountField = Number(tx.cashback_amount || 0)
+    const sharedPercent = Number(tx.cashback_share_percent || 0)
+    const txnShared = sharedFixed > 0
+      ? sharedFixed
+      : sharedAmountField > 0
+        ? sharedAmountField
+        : sharedPercent > 0
+          ? txnEstimate * sharedPercent
+          : 0
+    sharedAmount += txnShared
+
+    const metadata = policy.metadata || {}
+    const ruleId = String(metadata.ruleId || `${category?.sourceId || 'general'}-${policy.rate}`)
+    const ruleName = category?.name
+      ? `${Math.round(Number(policy.rate || 0) * 100)}% ${category.name}`
+      : `Rule ${Math.round(Number(policy.rate || 0) * 100)}%`
+
+    const prev = activeRuleMap.get(ruleId)
+    if (prev) {
+      prev.spent += amount
+      prev.earned += txnEstimate
+    } else {
+      activeRuleMap.set(ruleId, {
+        ruleId,
+        name: ruleName,
+        rate: Math.round(Number(policy.rate || 0) * 100),
+        spent: amount,
+        earned: txnEstimate,
+        max: policy.maxReward,
+      })
+    }
+  }
+
+  const actualClaimed = cycleTransactions.reduce((sum, tx) => {
+    if (String(tx.type || '') !== 'income') return sum
+    const categoryName = tx.category_id ? (categoryMap.get(tx.category_id)?.name || '') : ''
+    const note = String(tx.note || tx.description || '').toLowerCase()
+    const isCashbackIncome = categoryName.toLowerCase().includes('cashback') || categoryName.toLowerCase().includes('hoàn tiền') || note.includes('cashback') || note.includes('hoàn tiền')
+    if (!isCashbackIncome) return sum
+    return sum + Math.abs(Number(tx.amount || 0))
+  }, 0)
+
   const minSpend = cycle?.min_spend_target ?? account.cb_min_spend ?? null
   const maxCashback = cycle?.max_budget ?? account.cb_max_budget ?? null
-  const actualClaimed = Number(cycle?.real_awarded || 0)
-  const virtualProfit = Number(cycle?.virtual_profit || 0)
-  const sharedAmount = Number(cycle?.shared_amount ?? actualClaimed)
-  const netProfit = Number(cycle?.net_profit ?? virtualProfit)
-  const earnedSoFar = actualClaimed + virtualProfit
+  const earnedSoFar = estimatedCashback
+  const netProfit = earnedSoFar - sharedAmount
   const remainingBudget = maxCashback === null ? null : Math.max(0, Number(maxCashback) - earnedSoFar)
   const isMinSpendMet = minSpend === null ? true : currentSpend >= Number(minSpend)
+  const activeRules = Array.from(activeRuleMap.values()).sort((left, right) => right.rate - left.rate)
 
   const statementDay = account.statement_day || null
   const cycleLabel = cycleRange
@@ -787,7 +912,7 @@ export async function getPocketBaseAccountSpendingStatsSnapshot(sourceAccountId:
     remainingBudget,
     is_min_spend_met: isMinSpendMet,
     estYearlyTotal: earnedSoFar * 12,
-    activeRules: [],
+    activeRules,
     cycle: cycleRange ? {
       tag: resolvedCycleTag,
       label: cycleLabel,

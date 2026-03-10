@@ -2515,17 +2515,19 @@ export const UnifiedTransactionTable = React.forwardRef<UnifiedTransactionTableR
                           // FLOW COLUMN WITH CYCLE BADGES
                           // ==============================
                           // Extract data
-                          const sourceName = txn.source_name || txn.account_name || 'Unknown'
-                          const sourceIcon = txn.source_image
                           const sourceId = txnSourceId
+                          const sourceAccountFromId = sourceId ? accounts.find(a => a.id === sourceId) : null
+                          const sourceName = txn.source_name || txn.account_name || sourceAccountFromId?.name || 'Unknown'
+                          const sourceIcon = txn.source_image || sourceAccountFromId?.image_url || null
 
                           const personId = (txn as any).person_id
                           const personName = (txn as any).person_name
                           const personImage = (txn as any).person_image_url
 
-                          const destName = destNameRaw
-                          const destIcon = txn.destination_image
                           const destId = txnDestId
+                          const destAccountFromId = destId ? accounts.find(a => a.id === destId) : null
+                          const destName = txn.destination_name || destAccountFromId?.name || destNameRaw
+                          const destIcon = txn.destination_image || destAccountFromId?.image_url || null
 
                           // Determine what to display
                           const hasPerson = !!personId
