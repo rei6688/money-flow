@@ -11,7 +11,7 @@ import {
 import { TagFilterProvider } from '@/context/tag-filter-context'
 import { AccountDetailViewV2 } from '@/components/accounts/v2/AccountDetailViewV2'
 import { Metadata } from 'next'
-import { notFound } from 'next/navigation'
+import { notFound, redirect } from 'next/navigation'
 
 export const dynamic = 'force-dynamic'
 
@@ -65,6 +65,20 @@ export default async function AccountPage({ params, searchParams }: PageProps) {
   if (!account) {
     notFound()
   }
+
+  // Canonicalize account URL to PocketBase ID (prevents old UUID URLs from spreading)
+  if (id !== account.id) {
+    const query = new URLSearchParams()
+    if (tab) query.set('tab', tab)
+    if (tag) query.set('tag', tag)
+    const queryString = query.toString()
+    const target = queryString
+      ? `/accounts/${account.id}?${queryString}`
+      : `/accounts/${account.id}`
+    redirect(target)
+  }
+
+  const pocketBaseAccountId = account.id
 
   const resolvedDate = new Date() // Fallback
 

@@ -19,7 +19,7 @@ function toAccountType(value: string | null | undefined): Account['type'] {
 
 function mapAccount(record: PocketBaseRecord): Account {
   return {
-    id: record.slug || record.id,
+    id: record.id,
     name: record.name,
     type: toAccountType(record.type),
     currency: record.currency || 'VND',
