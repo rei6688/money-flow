@@ -2,6 +2,35 @@
 
 ## 🔴 Critical Update - 2026-03-10 (Transactions Remigration Required)
 
+### Latest execution result (2026-03-11)
+- Executed: `node scripts/pocketbase/remigrate-transactions-sourceid-safe.mjs --hard-reset-domain --reset --apply`
+- Script now supports hard reset of transaction domain collections and recreates `transactions` before backfill.
+- Applied result:
+  - transactions created: `307`
+  - cashback_cycles created: `56`
+  - missing metadata.source_id: `0`
+  - missing account_id: `0`
+
+### Sample verification (user-provided source id)
+- Source: `06c4e853-f6c6-4009-9a82-5c9add3abef2`
+- PB record now has top-level fields populated:
+  - `cashback_share_percent: 0.08`
+  - `cashback_mode: real_percent`
+  - `debt_cycle_tag: 2026-03`
+  - `persisted_cycle_tag: 2026-03`
+
+### Remaining data quality notes
+- unresolved category_id refs: 12 distinct legacy ids (`e000...` style); these are source FK mismatches from Supabase -> current PB categories map.
+- formula mismatch warnings: 48 rows (`final_price` in source differs from computed formula from share fields); script preserves source `final_price` and logs warnings only.
+
+### Follow-up fix (2026-03-11)
+- Added and executed `scripts/pocketbase/remap-legacy-system-categories.mjs`.
+- Result:
+  - resolved rules: `12/12`
+  - PB category `slug` backfilled for legacy UUIDs: `12`
+  - PB transactions category remapped: `121`
+- After this fix, remigration dry/apply checks no longer report unresolved category for sampled transactions.
+
 ### Implementation update (done)
 - Added new script: `scripts/pocketbase/remigrate-transactions-sourceid-safe.mjs`
 - Added runbook: `TRANSACTION_REMIGRATE_GUIDE.md`

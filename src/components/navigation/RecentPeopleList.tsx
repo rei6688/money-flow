@@ -8,6 +8,7 @@ import { getRecentPeopleByTransactions } from '@/services/people.service';
 import { cn } from '@/lib/utils';
 import { User } from 'lucide-react';
 import { CustomTooltip } from '@/components/ui/custom-tooltip';
+import { getPersonRouteId } from '@/lib/person-route';
 
 export function RecentPeopleList({ isCollapsed, onClick }: { isCollapsed: boolean; onClick?: () => void }) {
     const [recentPeople, setRecentPeople] = useState<Person[]>([]);
@@ -37,7 +38,7 @@ export function RecentPeopleList({ isCollapsed, onClick }: { isCollapsed: boolea
         )}>
             <div className="space-y-0.5">
                 {recentPeople.map(person => {
-                    const href = `/people/${person.id}`;
+                    const href = `/people/${getPersonRouteId(person)}`;
                     const isActive = pathname === href;
 
                     return (

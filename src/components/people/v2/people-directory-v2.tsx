@@ -84,8 +84,8 @@ export function PeopleDirectoryV2({
     // Statistics
     const stats = useMemo(() => {
         return {
-            outstandingCount: people.filter(p => (p.current_debt || 0) > 0 && !p.is_archived).length,
-            settledCount: people.filter(p => (p.current_debt || 0) === 0 && !p.is_archived).length,
+            outstandingCount: people.filter(p => ((p.current_cycle_debt || 0) + (p.outstanding_debt || 0)) > 0 && !p.is_archived).length,
+            settledCount: people.filter(p => ((p.current_cycle_debt || 0) + (p.outstanding_debt || 0)) === 0 && !p.is_archived).length,
             archivedCount: people.filter(p => p.is_archived).length,
             groupsCount: people.filter(p => p.is_group).length,
         };
@@ -100,9 +100,9 @@ export function PeopleDirectoryV2({
 
         // Status Filter
         if (activeFilter === 'outstanding') {
-            result = result.filter(p => ((p as any).current_debt || 0) > 0);
+            result = result.filter(p => ((p.current_cycle_debt || 0) + (p.outstanding_debt || 0)) > 0);
         } else if (activeFilter === 'settled') {
-            result = result.filter(p => ((p as any).current_debt || 0) === 0);
+            result = result.filter(p => ((p.current_cycle_debt || 0) + (p.outstanding_debt || 0)) === 0);
         } else if (activeFilter === 'groups') {
             result = result.filter(p => p.is_group);
         }
@@ -143,8 +143,8 @@ export function PeopleDirectoryV2({
         } else {
             // Default Sort: by current_debt (highest first)
             result.sort((a, b) => {
-                const currentDebtA = (a as any).current_debt || 0;
-                const currentDebtB = (b as any).current_debt || 0;
+                const currentDebtA = (a.current_cycle_debt || 0) + (a.outstanding_debt || 0);
+                const currentDebtB = (b.current_cycle_debt || 0) + (b.outstanding_debt || 0);
                 return currentDebtB - currentDebtA;
             });
         }

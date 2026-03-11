@@ -27,6 +27,7 @@ const includeCycles = !argSet.has('--skip-cycles')
 const strictRelations = !argSet.has('--no-strict-relations')
 const autoSyncTxnSchema = !argSet.has('--no-auto-sync-schema')
 const recreateCollection = argSet.has('--recreate-collection')
+const hardResetDomain = argSet.has('--hard-reset-domain')
 const limitArg = process.argv.find((a) => a.startsWith('--limit='))
 const onlyIdArg = process.argv.find((a) => a.startsWith('--only-id='))
 const limit = limitArg ? Number(limitArg.split('=')[1]) : null
@@ -200,23 +201,32 @@ async function pbGetCollectionFields(collection, headers) {
 }
 
 async function syncTransactionsSchemaFromLocal(headers) {
-  const schemaPath = path.resolve(__dirname, 'schema.json')
-  if (!fs.existsSync(schemaPath)) {
-    throw new Error(`schema.json not found at ${schemaPath}`)
+  const txnCollection = readTransactionsSchemaFromLocal()
+
+  const liveRes = await fetch(`${PB_URL}/api/collections/transactions`, { headers })
+  if (!liveRes.ok) {
+    throw new Error(`Failed to read current transactions collection: ${liveRes.status} ${await liveRes.text()}`)
   }
 
-  const raw = fs.readFileSync(schemaPath, 'utf8')
-  const collections = JSON.parse(raw)
-  const txnCollection = collections.find((item) => item && item.name === 'transactions')
+  const liveCollection = await liveRes.json()
+  const liveFields = Array.isArray(liveCollection.fields) ? liveCollection.fields : []
+  const localFields = Array.isArray(txnCollection.fields) ? txnCollection.fields : []
+  const liveNames = new Set(liveFields.map((field) => field.name))
 
-  if (!txnCollection) {
-    throw new Error('transactions schema block not found in scripts/pocketbase/schema.json')
+  const missingLocalFields = localFields.filter((field) => !liveNames.has(field.name))
+  if (missingLocalFields.length === 0) {
+    return
+  }
+
+  const patchBody = {
+    ...liveCollection,
+    fields: [...liveFields, ...missingLocalFields],
   }
 
   const patchRes = await fetch(`${PB_URL}/api/collections/transactions`, {
     method: 'PATCH',
     headers,
-    body: JSON.stringify(txnCollection),
+    body: JSON.stringify(patchBody),
   })
 
   if (!patchRes.ok) {
@@ -272,6 +282,188 @@ async function recreateTransactionsCollection(headers) {
   }
 }
 
+function collectionCreatePayload(collection) {
+  return {
+    id: collection.id,
+    name: collection.name,
+    type: collection.type,
+    system: Boolean(collection.system),
+    listRule: collection.listRule ?? null,
+    viewRule: collection.viewRule ?? null,
+    createRule: collection.createRule ?? null,
+    updateRule: collection.updateRule ?? null,
+    deleteRule: collection.deleteRule ?? null,
+    fields: Array.isArray(collection.fields) ? collection.fields : [],
+    indexes: Array.isArray(collection.indexes) ? collection.indexes : [],
+    options: collection.options ?? {},
+  }
+}
+
+async function pbGetCollection(name, headers) {
+  const res = await fetch(`${PB_URL}/api/collections/${name}`, { headers })
+  if (res.status === 404) return null
+  if (!res.ok) throw new Error(`Get collection ${name} failed: ${res.status} ${await res.text()}`)
+  return await res.json()
+}
+
+async function pbDeleteCollection(name, headers) {
+  const coll = await pbGetCollection(name, headers)
+  if (!coll) return false
+  const collId = coll.id || name
+  const res = await fetch(`${PB_URL}/api/collections/${collId}`, {
+    method: 'DELETE',
+    headers,
+  })
+  if (!res.ok) throw new Error(`Delete collection ${name} failed: ${res.status} ${await res.text()}`)
+  return true
+}
+
+async function pbCreateCollection(payload, headers) {
+  const res = await fetch(`${PB_URL}/api/collections`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) throw new Error(`Create collection ${payload.name} failed: ${res.status} ${await res.text()}`)
+}
+
+async function pbGetCollectionsMap(headers) {
+  const res = await fetch(`${PB_URL}/api/collections?perPage=500&fields=id,name`, { headers })
+  if (!res.ok) throw new Error(`List collections failed: ${res.status} ${await res.text()}`)
+  const data = await res.json()
+  const idByName = new Map()
+  const nameById = new Map()
+  for (const item of data.items || []) {
+    idByName.set(item.name, item.id)
+    nameById.set(item.id, item.name)
+  }
+  return { idByName, nameById }
+}
+
+function inferRelationTargetName(fieldName) {
+  if (fieldName === 'account_id' || fieldName === 'to_account_id') return 'accounts'
+  if (fieldName === 'category_id') return 'categories'
+  if (fieldName === 'shop_id') return 'shops'
+  if (fieldName === 'person_id') return 'people'
+  if (fieldName === 'parent_transaction_id') return 'transactions'
+  if (fieldName === 'installment_plan_id') return 'installments'
+  return null
+}
+
+function normalizeSchemaFieldForCreate(field, maps) {
+  const normalized = {
+    id: field.id,
+    name: field.name,
+    type: field.type,
+    required: Boolean(field.required),
+    presentable: field.presentable,
+    hidden: field.hidden,
+    system: field.system,
+  }
+
+  if (field.type === 'select') {
+    normalized.maxSelect = field.maxSelect ?? field.options?.maxSelect ?? 1
+    normalized.values = field.values ?? field.options?.values ?? []
+  } else if (field.type === 'relation') {
+    if (field.name === 'parent_transaction_id') {
+      return null
+    }
+    normalized.maxSelect = field.maxSelect ?? field.options?.maxSelect ?? 1
+    normalized.cascadeDelete = field.cascadeDelete ?? field.options?.cascadeDelete ?? false
+
+    const rawTargetId = field.collectionId ?? field.options?.collectionId ?? null
+    let targetName = rawTargetId ? maps.nameById.get(rawTargetId) || null : null
+    if (!targetName) targetName = inferRelationTargetName(field.name)
+    const resolvedTargetId = targetName ? maps.idByName.get(targetName) || null : null
+    if (!resolvedTargetId) {
+      return null
+    }
+    normalized.collectionId = resolvedTargetId
+  }
+
+  if (field.min != null) normalized.min = field.min
+  if (field.max != null) normalized.max = field.max
+  if (field.pattern != null) normalized.pattern = field.pattern
+  if (field.values != null && field.type !== 'select') normalized.values = field.values
+
+  return normalized
+}
+
+async function ensureParentTransactionRelationField(headers) {
+  const res = await fetch(`${PB_URL}/api/collections/transactions`, { headers })
+  if (!res.ok) throw new Error(`Read transactions collection failed: ${res.status} ${await res.text()}`)
+
+  const collection = await res.json()
+  const fields = Array.isArray(collection.fields) ? collection.fields : []
+  const hasField = fields.some((f) => f.name === 'parent_transaction_id')
+  if (hasField) return
+
+  const parentField = {
+    id: 'f_partxn_01',
+    name: 'parent_transaction_id',
+    type: 'relation',
+    required: false,
+    maxSelect: 1,
+    cascadeDelete: false,
+    collectionId: collection.id,
+  }
+
+  const patchRes = await fetch(`${PB_URL}/api/collections/${collection.id}`, {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify({ fields: [...fields, parentField] }),
+  })
+  if (!patchRes.ok) {
+    throw new Error(`Add parent_transaction_id relation failed: ${patchRes.status} ${await patchRes.text()}`)
+  }
+}
+
+async function buildTransactionsCreatePayload(headers) {
+  const schema = readTransactionsSchemaFromLocal()
+  const maps = await pbGetCollectionsMap(headers)
+  const fields = (schema.fields || [])
+    .map((field) => normalizeSchemaFieldForCreate(field, maps))
+    .filter(Boolean)
+
+  return {
+    id: schema.id,
+    name: schema.name,
+    type: schema.type,
+    system: Boolean(schema.system),
+    listRule: schema.listRule ?? null,
+    viewRule: schema.viewRule ?? null,
+    createRule: schema.createRule ?? null,
+    updateRule: schema.updateRule ?? null,
+    deleteRule: schema.deleteRule ?? null,
+    fields,
+    indexes: Array.isArray(schema.indexes) ? schema.indexes : [],
+    options: schema.options ?? {},
+  }
+}
+
+async function hardResetTransactionsDomain(headers) {
+  const dependentNames = ['batch_items', 'cashback_entries', 'installments']
+  const backups = []
+
+  for (const name of dependentNames) {
+    const collection = await pbGetCollection(name, headers)
+    if (collection) backups.push(collectionCreatePayload(collection))
+  }
+
+  for (const name of dependentNames) {
+    await pbDeleteCollection(name, headers)
+  }
+
+  await pbDeleteCollection('transactions', headers)
+  const transactionsPayload = await buildTransactionsCreatePayload(headers)
+  await pbCreateCollection(transactionsPayload, headers)
+  await ensureParentTransactionRelationField(headers)
+
+  for (const payload of backups) {
+    await pbCreateCollection(payload, headers)
+  }
+}
+
 async function buildResolver(collection, headers) {
   const rows = await pbListAll(collection, headers, 'id,slug')
   const idSet = new Set(rows.map((r) => r.id))
@@ -301,7 +493,7 @@ async function buildResolver(collection, headers) {
 async function fetchSupabaseData() {
   let query = supabase
     .from('transactions')
-    .select('id,occurred_at,note,amount,type,status,account_id,target_account_id,category_id,shop_id,person_id,parent_transaction_id,is_installment,metadata,final_price,cashback_amount,cashback_share_percent,cashback_share_fixed,cashback_mode,statement_cycle_tag,tag')
+    .select('id,occurred_at,note,amount,type,status,account_id,target_account_id,category_id,shop_id,person_id,parent_transaction_id,is_installment,metadata,final_price,cashback_share_percent,cashback_share_fixed,cashback_mode,persisted_cycle_tag,debt_cycle_tag,statement_cycle_tag,tag')
     .order('occurred_at', { ascending: true })
 
   if (onlyId) {
@@ -334,7 +526,7 @@ async function fetchSupabaseData() {
   }
 }
 
-function buildTransactionPayloads({ transactions, accountStatementMap, resolvers, existingTxnBySourceId, existingTxnIdSet }) {
+function buildTransactionPayloads({ transactions, accountStatementMap, resolvers, existingTxnBySourceId, existingTxnIdSet, transactionFieldSet }) {
   const unresolved = {
     account: new Map(),
     toAccount: new Map(),
@@ -383,7 +575,8 @@ function buildTransactionPayloads({ transactions, accountStatementMap, resolvers
     }
 
     const statementDay = accountStatementMap.get(txn.account_id)
-    const persistedCycleTag = txn.statement_cycle_tag || calculateCycleTag(txn.occurred_at, statementDay)
+    const persistedCycleTag = txn.persisted_cycle_tag || txn.statement_cycle_tag || calculateCycleTag(txn.occurred_at, statementDay)
+    const debtCycleTag = txn.debt_cycle_tag || (txn.tag ? String(txn.tag) : null)
 
     const amount = parseMoney(txn.amount) ?? 0
     const sharePercent = parseMoney(txn.cashback_share_percent)
@@ -405,36 +598,45 @@ function buildTransactionPayloads({ transactions, accountStatementMap, resolvers
       ...(txn.metadata && typeof txn.metadata === 'object' ? txn.metadata : {}),
       source_id: sourceId,
       persisted_cycle_tag: persistedCycleTag,
+      occurred_at: normalizeDate(txn.occurred_at),
+      status: normalizeStatus(txn.status),
+      cashback_share_percent: sharePercent,
+      cashback_share_fixed: shareFixed,
+      cashback_mode: txn.cashback_mode ?? null,
+      debt_cycle_tag: debtCycleTag,
     }
+
+    const body = {
+      date: normalizeDate(txn.occurred_at),
+      description: txn.note || '',
+      amount,
+      type: txn.type,
+      account_id: accountId,
+      to_account_id: toAccountId,
+      category_id: categoryId,
+      shop_id: shopId,
+      person_id: personId,
+      final_price: finalPrice,
+      cashback_amount: parseMoney(txn.cashback_amount) ?? parseMoney(txn.cashback_share_fixed),
+      is_installment: Boolean(txn.is_installment),
+      parent_transaction_id: null,
+      metadata,
+    }
+
+    if (transactionFieldSet.has('occurred_at')) body.occurred_at = normalizeDate(txn.occurred_at)
+    if (transactionFieldSet.has('note')) body.note = txn.note || null
+    if (transactionFieldSet.has('status')) body.status = normalizeStatus(txn.status)
+    if (transactionFieldSet.has('cashback_share_percent')) body.cashback_share_percent = sharePercent
+    if (transactionFieldSet.has('cashback_share_fixed')) body.cashback_share_fixed = shareFixed
+    if (transactionFieldSet.has('cashback_mode')) body.cashback_mode = txn.cashback_mode ?? null
+    if (transactionFieldSet.has('debt_cycle_tag')) body.debt_cycle_tag = debtCycleTag
+    if (transactionFieldSet.has('persisted_cycle_tag')) body.persisted_cycle_tag = persistedCycleTag
 
     payloads.push({
       sourceId,
       pbId,
       parentSourceId: txn.parent_transaction_id || null,
-      body: {
-        date: normalizeDate(txn.occurred_at),
-        occurred_at: normalizeDate(txn.occurred_at),
-        description: txn.note || '',
-        note: txn.note || null,
-        amount,
-        type: txn.type,
-        status: normalizeStatus(txn.status),
-        account_id: accountId,
-        to_account_id: toAccountId,
-        category_id: categoryId,
-        shop_id: shopId,
-        person_id: personId,
-        final_price: finalPrice,
-        cashback_amount: parseMoney(txn.cashback_amount) ?? parseMoney(txn.cashback_share_fixed),
-        cashback_share_percent: sharePercent,
-        cashback_share_fixed: shareFixed,
-        cashback_mode: txn.cashback_mode ?? null,
-        debt_cycle_tag: txn.type === 'debt' && txn.tag ? String(txn.tag) : null,
-        persisted_cycle_tag: persistedCycleTag,
-        is_installment: Boolean(txn.is_installment),
-        parent_transaction_id: null,
-        metadata,
-      },
+      body,
     })
   }
 
@@ -483,7 +685,7 @@ function printSummary(stats) {
 }
 
 async function validateAfterApply(headers, sourceTransactions) {
-  const pbTransactions = await pbListAll('transactions', headers, 'id,account_id,person_id,metadata,amount,final_price,cashback_share_percent,cashback_share_fixed')
+  const pbTransactions = await pbListAll('transactions', headers, 'id,account_id,person_id,metadata,amount,final_price')
 
   const sourceIds = new Set(sourceTransactions.map((t) => String(t.id)))
   const pbSourceIds = new Set(
@@ -504,7 +706,12 @@ async function validateAfterApply(headers, sourceTransactions) {
     if (!txn.account_id) accountNullCount += 1
 
     const amount = Number(txn.amount || 0)
-    const expected = computeExpectedFinalPrice(amount, txn.cashback_share_percent, txn.cashback_share_fixed)
+    const metadata = txn.metadata && typeof txn.metadata === 'object' ? txn.metadata : {}
+    const expected = computeExpectedFinalPrice(
+      amount,
+      txn.cashback_share_percent ?? metadata.cashback_share_percent ?? null,
+      txn.cashback_share_fixed ?? metadata.cashback_share_fixed ?? null
+    )
     const finalPrice = txn.final_price == null ? null : Number(txn.final_price)
     if (finalPrice !== null && Math.abs(finalPrice - expected) > 0.01) formulaMismatchCount += 1
   }
@@ -518,23 +725,28 @@ async function validateAfterApply(headers, sourceTransactions) {
 
 async function main() {
   console.log(`\n[remigrate-source-id] mode=${isApply ? 'APPLY' : 'DRY-RUN'}`)
-  console.log(`[remigrate-source-id] options: reset=${shouldReset} includeCycles=${includeCycles} strictRelations=${strictRelations} recreateCollection=${recreateCollection}`)
+  console.log(`[remigrate-source-id] options: reset=${shouldReset} includeCycles=${includeCycles} strictRelations=${strictRelations} recreateCollection=${recreateCollection} hardResetDomain=${hardResetDomain}`)
   if (onlyId) console.log(`[remigrate-source-id] only-id=${onlyId}`)
   if (limit) console.log(`[remigrate-source-id] limit=${limit}`)
 
   if (recreateCollection && !isApply) {
     throw new Error('--recreate-collection is destructive and requires --apply')
   }
+  if (hardResetDomain && !isApply) {
+    throw new Error('--hard-reset-domain is destructive and requires --apply')
+  }
 
   const headers = await pbAuthHeaders()
 
+  if (hardResetDomain) {
+    console.log('[remigrate-source-id] hard reset transactions domain enabled (delete/recreate dependent collections + transactions)...')
+    await hardResetTransactionsDomain(headers)
+  }
+
   const requiredFields = [
     'date',
-    'occurred_at',
-    'note',
     'amount',
     'type',
-    'status',
     'account_id',
     'to_account_id',
     'category_id',
@@ -542,23 +754,24 @@ async function main() {
     'person_id',
     'parent_transaction_id',
     'final_price',
-    'cashback_share_percent',
-    'cashback_share_fixed',
-    'cashback_mode',
-    'debt_cycle_tag',
-    'persisted_cycle_tag',
     'metadata',
   ]
 
+  let recreateSucceeded = false
   if (recreateCollection) {
     console.log('[remigrate-source-id] recreating transactions collection from local schema...')
-    await recreateTransactionsCollection(headers)
+    try {
+      await recreateTransactionsCollection(headers)
+      recreateSucceeded = true
+    } catch (error) {
+      console.warn('[remigrate-source-id] recreate-collection failed, fallback to additive schema sync:', String(error))
+    }
   }
 
   let fieldSet = await pbGetCollectionFields('transactions', headers)
   let missingFields = requiredFields.filter((field) => !fieldSet.has(field))
 
-  if (missingFields.length > 0 && autoSyncTxnSchema) {
+  if (missingFields.length > 0 && autoSyncTxnSchema && !hardResetDomain) {
     console.log('[remigrate-source-id] missing transaction fields detected, auto-syncing transactions schema...')
     await syncTransactionsSchemaFromLocal(headers)
     fieldSet = await pbGetCollectionFields('transactions', headers)
@@ -602,6 +815,7 @@ async function main() {
     resolvers,
     existingTxnBySourceId,
     existingTxnIdSet,
+    transactionFieldSet: fieldSet,
   })
 
   console.log('[remigrate-source-id] transaction planning')
@@ -720,6 +934,10 @@ async function main() {
   })
 
   await validateAfterApply(headers, source.transactions)
+
+  if (recreateCollection && !recreateSucceeded) {
+    console.log('[remigrate-source-id] note: collection recreate was skipped due cross-collection references; remigration completed in fallback mode.')
+  }
 }
 
 main().catch((error) => {

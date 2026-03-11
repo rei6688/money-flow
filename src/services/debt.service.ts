@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 import { DebtAccount } from '@/types/moneyflow.types'
 import { toYYYYMMFromDate, normalizeMonthTag } from '@/lib/month-tag'
 import { CreateTransactionInput, createTransaction } from './transaction.service'
+import { resolvePocketBasePersonRecord } from './pocketbase/people.service'
 
 type TransactionType = 'income' | 'expense' | 'transfer' | 'debt' | 'repayment'
 
@@ -38,6 +39,26 @@ type SettleDebtResult = {
   transactionId: string
   direction: 'collect' | 'repay'
   amount: number
+}
+
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+}
+
+async function resolvePersonSupabaseId(personId: string): Promise<string> {
+  if (!personId) return personId
+  if (isUuid(personId)) return personId
+
+  try {
+    const record = await resolvePocketBasePersonRecord(personId)
+    if (record && typeof record.slug === 'string' && isUuid(record.slug)) {
+      return record.slug
+    }
+  } catch (err) {
+    console.error('[resolvePersonSupabaseId] Failed to resolve PB person ID:', err)
+  }
+
+  return personId
 }
 
 function resolveBaseType(type: TransactionType | null | undefined): 'income' | 'expense' | 'transfer' {
@@ -98,18 +119,19 @@ export async function computeDebtFromTransactions(rows: DebtTransactionRow[], pe
 
 export async function getPersonDebt(personId: string): Promise<number> {
   if (!personId) return 0
+  const resolvedPersonId = await resolvePersonSupabaseId(personId)
   const supabase = createClient()
   const { data, error } = await supabase
     .from('transactions')
     .select('amount, type, person_id, status, cashback_share_percent, cashback_share_fixed, final_price')
-    .eq('person_id', personId)
+    .eq('person_id', resolvedPersonId)
 
   if (error || !data) {
     if (error) console.error('Error fetching person debt:', error)
     return 0
   }
 
-  return await computeDebtFromTransactions(data as unknown as DebtTransactionRow[], personId)
+  return await computeDebtFromTransactions(data as unknown as DebtTransactionRow[], resolvedPersonId)
 }
 
 export async function getDebtAccounts(): Promise<DebtAccount[]> {
@@ -171,13 +193,14 @@ export async function getPersonDetails(id: string): Promise<{
   sheet_show_bank_account: boolean
   sheet_show_qr_image: boolean
 } | null> {
+  const resolvedPersonId = await resolvePersonSupabaseId(id)
   const supabase = createClient()
 
   // Add new columns to SELECT
   const { data, error } = await supabase
     .from('people')
     .select('id, name, image_url, sheet_link, google_sheet_url, sheet_full_img, sheet_show_bank_account, sheet_show_qr_image')
-    .eq('id', id)
+    .eq('id', resolvedPersonId)
     .maybeSingle()
 
   if (error) {
@@ -190,13 +213,13 @@ export async function getPersonDetails(id: string): Promise<{
     const fallback = await supabase
       .from('people')
       .select('id, name, image_url, sheet_link')
-      .eq('id', id)
+      .eq('id', resolvedPersonId)
       .maybeSingle()
     return fallback.data ? {
       ...(fallback.data as any),
       name: (fallback.data as any).name ?? 'Unknown',
       owner_id: (fallback.data as any).id,
-      current_balance: await getPersonDebt(id), // Recalculate or reuse logic below
+      current_balance: await getPersonDebt(resolvedPersonId), // Recalculate or reuse logic below
       google_sheet_url: null,
       sheet_full_img: null,
       sheet_show_bank_account: false,
@@ -211,7 +234,7 @@ export async function getPersonDetails(id: string): Promise<{
 
   const profile = data as any // simpler casting since we added fields
 
-  const currentBalance = await getPersonDebt(id)
+  const currentBalance = await getPersonDebt(resolvedPersonId)
   return {
     id: profile.id,
     name: profile.name,
@@ -228,12 +251,13 @@ export async function getPersonDetails(id: string): Promise<{
 
 export async function getDebtByTags(personId: string): Promise<DebtByTagAggregatedResult[]> {
   if (!personId) return []
+  const resolvedPersonId = await resolvePersonSupabaseId(personId)
 
   const supabase = createClient()
   const { data, error } = await supabase
     .from('transactions')
     .select('tag, occurred_at, amount, type, person_id, status, cashback_share_percent, cashback_share_fixed, final_price, id, metadata')
-    .eq('person_id', personId)
+    .eq('person_id', resolvedPersonId)
     .neq('status', 'void')
     .order('occurred_at', { ascending: true }) // Oldest first for FIFO
 

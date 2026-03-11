@@ -629,6 +629,22 @@ export function AccountDetailTransactions({
                             selectedCycleValue={selectedCycle}
                             onCycleSelect={handleCycleChange}
                             isCycleLoading={isCyclesLoading}
+                            resetLoading={isPending}
+                            onResetToCurrent={() => {
+                                setDate(new Date())
+                                setDateRange(undefined)
+                                setDateMode('month')
+                                setIsFilterActive(true)
+                                setSelectedCycle(undefined)
+
+                                startTransition(() => {
+                                    const params = new URLSearchParams(window.location.search)
+                                    params.delete('tag')
+                                    const newUrl = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ''}`
+                                    router.push(newUrl, { scroll: false })
+                                    router.refresh()
+                                })
+                            }}
                         />
 
                         {/* Search with Paste Icon & Search Button */}

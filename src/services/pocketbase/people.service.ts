@@ -12,6 +12,8 @@ import {
 
 type PocketBaseRecord = Record<string, unknown>
 
+const isUuid = (value: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
+
 type PocketBasePersonWrite = {
   name: string
   image_url?: string | null
@@ -31,6 +33,7 @@ type PocketBasePersonWrite = {
 function mapPerson(record: PocketBaseRecord): Person {
   return {
     id: String(record.slug || record.id || ''),
+    pocketbase_id: typeof record.id === 'string' ? record.id : null,
     created_at: typeof record.created === 'string' ? record.created : undefined,
     name: String(record.name || ''),
     image_url: (record.image_url as string | null | undefined) ?? null,
@@ -97,7 +100,9 @@ export async function getPocketBasePeople(): Promise<Person[]> {
 
       if (error) throw error
 
-      return (data ?? []).map((item) => ({
+      const rows = (data ?? []) as Array<any>
+
+      return rows.map((item) => ({
         id: item.id,
         created_at: item.created_at ?? undefined,
         name: item.name,
@@ -125,7 +130,118 @@ export async function getPocketBasePersonDetails(sourceOrPocketBaseId: string): 
       logSource('PB', 'people.get', { sourceOrPocketBaseId })
       const personRecord = await resolvePocketBasePersonRecord(sourceOrPocketBaseId)
       if (!personRecord) return null
-      return mapPerson(personRecord)
+      const mapped = mapPerson(personRecord)
+      const sourcePersonId = (() => {
+        if (typeof personRecord.slug === 'string' && isUuid(personRecord.slug)) return personRecord.slug
+        if (typeof personRecord.source_id === 'string' && isUuid(personRecord.source_id)) return personRecord.source_id
+        if (isUuid(sourceOrPocketBaseId)) return sourceOrPocketBaseId
+        if (isUuid(mapped.id)) return mapped.id
+        return null
+      })()
+
+      if (!sourcePersonId) {
+        return mapped
+      }
+
+      const supabase = createClient()
+      const { data, error } = await supabase
+        .from('people')
+        .select('sheet_link, google_sheet_url, sheet_full_img, sheet_show_bank_account, sheet_bank_info, sheet_linked_bank_id, sheet_show_qr_image')
+        .eq('id', sourcePersonId)
+        .maybeSingle()
+
+      if (error || !data) {
+        const { data: webhookDataByName } = await supabase
+          .from('sheet_webhook_links')
+          .select('url, name, created_at')
+          .ilike('name', mapped.name)
+          .order('created_at', { ascending: false })
+          .limit(1)
+
+        let webhookLink = Array.isArray(webhookDataByName) ? webhookDataByName[0] : null
+        if (!webhookLink) {
+          const { data: webhookDataLatest } = await supabase
+            .from('sheet_webhook_links')
+            .select('url, name, created_at')
+            .order('created_at', { ascending: false })
+            .limit(1)
+          webhookLink = Array.isArray(webhookDataLatest) ? webhookDataLatest[0] : null
+        }
+
+        let cycleSheetUrl: string | null = null
+        const { data: cycleSheetRows } = await supabase
+          .from('person_cycle_sheets')
+          .select('sheet_url, updated_at, created_at')
+          .eq('person_id', sourcePersonId)
+          .not('sheet_url', 'is', null)
+          .order('updated_at', { ascending: false, nullsFirst: false })
+          .order('created_at', { ascending: false, nullsFirst: false })
+          .limit(1)
+
+        const latest = Array.isArray(cycleSheetRows) ? cycleSheetRows[0] : null
+        cycleSheetUrl = (latest?.sheet_url as string | null | undefined) ?? null
+
+        return {
+          ...mapped,
+          sheet_link: mapped.sheet_link ?? (webhookLink?.url ?? null),
+          google_sheet_url: mapped.google_sheet_url ?? cycleSheetUrl,
+        }
+      }
+
+      const sbPerson = data as any
+
+      const hydrated = {
+        ...mapped,
+        sheet_link: mapped.sheet_link ?? sbPerson.sheet_link,
+        google_sheet_url: mapped.google_sheet_url ?? sbPerson.google_sheet_url,
+        sheet_full_img: mapped.sheet_full_img ?? sbPerson.sheet_full_img,
+        sheet_show_bank_account: mapped.sheet_show_bank_account ?? sbPerson.sheet_show_bank_account,
+        sheet_bank_info: mapped.sheet_bank_info ?? sbPerson.sheet_bank_info,
+        sheet_linked_bank_id: mapped.sheet_linked_bank_id ?? sbPerson.sheet_linked_bank_id,
+        sheet_show_qr_image: mapped.sheet_show_qr_image ?? sbPerson.sheet_show_qr_image,
+      }
+
+      if (hydrated.sheet_link) {
+        return hydrated
+      }
+
+      const { data: webhookDataByName } = await supabase
+        .from('sheet_webhook_links')
+        .select('url, name, created_at')
+        .ilike('name', mapped.name)
+        .order('created_at', { ascending: false })
+        .limit(1)
+
+      let webhookLink = Array.isArray(webhookDataByName) ? webhookDataByName[0] : null
+      if (!webhookLink) {
+        const { data: webhookDataLatest } = await supabase
+          .from('sheet_webhook_links')
+          .select('url, name, created_at')
+          .order('created_at', { ascending: false })
+          .limit(1)
+        webhookLink = Array.isArray(webhookDataLatest) ? webhookDataLatest[0] : null
+      }
+
+      let cycleSheetUrl: string | null = null
+      if (!hydrated.google_sheet_url && sourcePersonId) {
+        const { data: cycleSheetRows } = await supabase
+          .from('person_cycle_sheets')
+          .select('sheet_url, updated_at, created_at')
+          .eq('person_id', sourcePersonId)
+          .not('sheet_url', 'is', null)
+          .order('updated_at', { ascending: false, nullsFirst: false })
+          .order('created_at', { ascending: false, nullsFirst: false })
+          .limit(1)
+
+        const latest = Array.isArray(cycleSheetRows) ? cycleSheetRows[0] : null
+        cycleSheetUrl = (latest?.sheet_url as string | null | undefined) ?? null
+      }
+
+      return {
+        ...hydrated,
+        sheet_link: hydrated.sheet_link ?? (webhookLink?.url ?? null),
+        google_sheet_url: hydrated.google_sheet_url ?? cycleSheetUrl,
+      }
     },
     async () => {
       logSource('SB', 'people.get fallback', { sourceOrPocketBaseId })
@@ -139,22 +255,24 @@ export async function getPocketBasePersonDetails(sourceOrPocketBaseId: string): 
       if (error) throw error
       if (!data) return null
 
+      const row = data as any
+
       return {
-        id: data.id,
-        created_at: data.created_at ?? undefined,
-        name: data.name,
-        image_url: data.image_url,
-        sheet_link: data.sheet_link,
-        google_sheet_url: data.google_sheet_url,
-        is_owner: data.is_owner,
-        is_archived: data.is_archived,
-        is_group: data.is_group,
-        group_parent_id: data.group_parent_id,
-        sheet_full_img: data.sheet_full_img,
-        sheet_show_bank_account: data.sheet_show_bank_account,
-        sheet_bank_info: data.sheet_bank_info,
-        sheet_linked_bank_id: data.sheet_linked_bank_id,
-        sheet_show_qr_image: data.sheet_show_qr_image,
+        id: row.id,
+        created_at: row.created_at ?? undefined,
+        name: row.name,
+        image_url: row.image_url,
+        sheet_link: row.sheet_link,
+        google_sheet_url: row.google_sheet_url,
+        is_owner: row.is_owner,
+        is_archived: row.is_archived,
+        is_group: row.is_group,
+        group_parent_id: row.group_parent_id,
+        sheet_full_img: row.sheet_full_img,
+        sheet_show_bank_account: row.sheet_show_bank_account,
+        sheet_bank_info: row.sheet_bank_info,
+        sheet_linked_bank_id: row.sheet_linked_bank_id,
+        sheet_show_qr_image: row.sheet_show_qr_image,
       }
     },
     'people.get'

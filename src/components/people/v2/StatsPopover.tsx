@@ -1,6 +1,7 @@
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { FileText, ArrowRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useState } from 'react'
 
 interface StatsPopoverProps {
     originalLend: number
@@ -11,6 +12,19 @@ interface StatsPopoverProps {
     paidRollover?: number
     receiveRollover?: number
     children?: React.ReactNode
+    tabs?: Array<{
+        key: string
+        label: string
+        stats: {
+            originalLend: number
+            cashback: number
+            netLend: number
+            repay: number
+            remains: number
+            paidRollover?: number
+            receiveRollover?: number
+        }
+    }>
 }
 
 const numberFormatter = new Intl.NumberFormat('en-US', {
@@ -25,8 +39,21 @@ export function StatsPopover({
     remains,
     paidRollover,
     receiveRollover,
-    children
+    children,
+    tabs,
 }: StatsPopoverProps) {
+    const [activeTab, setActiveTab] = useState<string>(tabs?.[0]?.key ?? 'default')
+    const tabStats = tabs?.find((tab) => tab.key === activeTab)?.stats
+    const view = tabStats ?? {
+        originalLend,
+        cashback,
+        netLend,
+        repay,
+        remains,
+        paidRollover,
+        receiveRollover,
+    }
+
     return (
         <Popover>
             <PopoverTrigger asChild>
@@ -41,6 +68,25 @@ export function StatsPopover({
                     <FileText className="h-4 w-4 text-slate-500" />
                     <h4 className="font-bold text-sm text-slate-900">Balance Calculation</h4>
                 </div>
+
+                {tabs && tabs.length > 1 && (
+                    <div className="mb-3 inline-flex items-center rounded-lg border border-slate-200 p-1 bg-slate-50">
+                        {tabs.map((tab) => (
+                            <button
+                                key={tab.key}
+                                onClick={() => setActiveTab(tab.key)}
+                                className={cn(
+                                    'h-7 px-3 rounded-md text-[11px] font-bold transition-colors',
+                                    activeTab === tab.key
+                                        ? 'bg-white text-slate-900 shadow-sm'
+                                        : 'text-slate-500 hover:text-slate-700'
+                                )}
+                            >
+                                {tab.label}
+                            </button>
+                        ))}
+                    </div>
+                )}
 
                 <div className="flex items-center justify-between text-xs mb-2 text-slate-500">
                     <span>Flow logic</span>
@@ -57,8 +103,8 @@ export function StatsPopover({
                             <div className="h-2 w-2 rounded-full bg-slate-400" />
                             <span className="text-xs font-medium text-slate-600">Original Spend</span>
                         </div>
-                        <span className="font-mono text-sm font-bold text-slate-900">
-                            {numberFormatter.format(originalLend)}
+                        <span className="text-sm font-bold text-slate-900">
+                            {numberFormatter.format(view.originalLend)}
                         </span>
                     </div>
 
@@ -73,8 +119,8 @@ export function StatsPopover({
                             <div className="h-2 w-2 rounded-full bg-amber-500" />
                             <span className="text-xs font-medium text-amber-700">Less Cashback</span>
                         </div>
-                        <span className="font-mono text-sm font-bold text-amber-700">
-                            -{numberFormatter.format(cashback)}
+                        <span className="text-sm font-bold text-amber-700">
+                            -{numberFormatter.format(view.cashback)}
                         </span>
                     </div>
 
@@ -89,8 +135,8 @@ export function StatsPopover({
                             <div className="h-2 w-2 rounded-full bg-blue-500" />
                             <span className="text-xs font-medium text-blue-700">Net Lend</span>
                         </div>
-                        <span className="font-mono text-sm font-bold text-blue-700">
-                            {numberFormatter.format(netLend)}
+                        <span className="text-sm font-bold text-blue-700">
+                            {numberFormatter.format(view.netLend)}
                         </span>
                     </div>
 
@@ -101,20 +147,20 @@ export function StatsPopover({
                                 <div className="h-2 w-2 rounded-full bg-emerald-500" />
                                 <span className="text-xs font-medium text-emerald-700">Total Repay</span>
                             </div>
-                            <span className="font-mono text-sm font-bold text-emerald-700">
-                                -{numberFormatter.format(repay)}
+                            <span className="text-sm font-bold text-emerald-700">
+                                -{numberFormatter.format(view.repay)}
                             </span>
                         </div>
-                        {(paidRollover || 0) > 0 && (
+                        {(view.paidRollover || 0) > 0 && (
                             <div className="flex items-center justify-between pl-4 text-[10px] text-emerald-600/80 italic">
                                 <span>incl. Paid Rollover</span>
-                                <span>-{numberFormatter.format(paidRollover || 0)}</span>
+                                <span>-{numberFormatter.format(view.paidRollover || 0)}</span>
                             </div>
                         )}
                     </div>
 
                     {/* Step 5: Receive Rollover (If any) */}
-                    {(receiveRollover || 0) > 0 && (
+                    {(view.receiveRollover || 0) > 0 && (
                         <>
                             <div className="flex justify-center -my-1">
                                 <ArrowRight className="h-3 w-3 text-slate-300 rotate-90" />
@@ -125,8 +171,8 @@ export function StatsPopover({
                                         <div className="h-2 w-2 rounded-full bg-slate-400" />
                                         <span className="text-xs font-medium text-slate-600">Opening Balance</span>
                                     </div>
-                                    <span className="font-mono text-sm font-bold text-slate-900">
-                                        {numberFormatter.format(receiveRollover || 0)}
+                                    <span className="text-sm font-bold text-slate-900">
+                                        {numberFormatter.format(view.receiveRollover || 0)}
                                     </span>
                                 </div>
                                 <div className="pl-4 text-[10px] text-slate-400 italic">
@@ -145,8 +191,8 @@ export function StatsPopover({
                             <div className="h-2.5 w-2.5 rounded-full bg-rose-600" />
                             <span className="text-sm font-bold text-rose-800">REMAINS</span>
                         </div>
-                        <span className="font-mono text-lg font-bold text-rose-600">
-                            {numberFormatter.format(remains)}
+                        <span className="text-lg font-bold text-rose-600">
+                            {numberFormatter.format(view.remains)}
                         </span>
                     </div>
                 </div>

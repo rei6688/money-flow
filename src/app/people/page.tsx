@@ -3,7 +3,7 @@ import {
   getPocketBaseCategories,
   getPocketBaseShops,
 } from '@/services/pocketbase/account-details.service'
-import { getPocketBasePeople } from '@/services/pocketbase/people.service'
+import { getPeople } from '@/services/people.service'
 import { getServices } from '@/services/service-manager'
 import { PeopleDirectoryV2 } from '@/components/people/v2/people-directory-v2'
 import { Metadata } from 'next'
@@ -16,7 +16,7 @@ export const dynamic = 'force-dynamic'
 
 export default async function PeopleV2Page() {
     const [people, subscriptions, accounts, categories, shops] = await Promise.all([
-        getPocketBasePeople(),
+        getPeople(),
         getServices() as Promise<any>,
         getPocketBaseAccounts(),
         getPocketBaseCategories(),

@@ -6,6 +6,14 @@
 
 ## 🎯 Your First 30 Minutes
 
+### ⚠️ Current Continuation Context (March 11, 2026)
+- Read latest handover first: [docs/handovers/PHASE_PEOPLE_SHEET_HANDOVER_2026-03-11.md](./docs/handovers/PHASE_PEOPLE_SHEET_HANDOVER_2026-03-11.md)
+- Focus area moved from transaction slide to People Details migration gaps:
+  - Sheet Config blank in some entry paths
+  - Legacy UUID `/people/:id` links still emitted in some places
+  - Cycle picker account/debt mode conflicts
+- Do not start coding until you can reproduce all 3 issues in handover checklist.
+
 ### Step 1: Understand V2 Architecture (5 min)
 ```
 TransactionSlideV2 = Right-side slide panel (replaces old center modal)

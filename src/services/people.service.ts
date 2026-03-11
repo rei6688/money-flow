@@ -213,18 +213,12 @@ export async function createPerson(
 
 export async function getPeople(options?: { includeArchived?: boolean }): Promise<Person[]> {
   const includeArchived = Boolean(options?.includeArchived)
+  let pbPeopleMap = new Map<string, Person>()
   console.log('[DB:PB] people.list')
   try {
     const pbPeople = await getPocketBasePeople()
     if (pbPeople && pbPeople.length > 0) {
-      // For now, if PB data is present, we still need to calculate debt balances
-      // because the full aggregation logic isn't in PB service yet.
-      // So we use PB profiles but fallback to existing logic for balances.
-      // But let's try to just return PB profiles first for stabilization.
-      if (!options?.includeArchived) {
-        return pbPeople.filter(p => !p.is_archived)
-      }
-      return pbPeople
+      pbPeopleMap = new Map(pbPeople.map((p) => [p.id, p]))
     }
   } catch (err) {
     console.error('[DB:PB] people.list failed:', err)
@@ -325,7 +319,7 @@ export async function getPeople(options?: { includeArchived?: boolean }): Promis
     const { data: txns, error: txnsError } = await supabase
       .from('transactions')
       .select('account_id, target_account_id, person_id, amount, status, occurred_at, type, tag, cashback_share_percent, cashback_share_fixed, final_price')
-      .eq('type', 'debt')
+      .in('type', ['debt', 'expense'])
       .neq('status', 'void')
 
     if (txnsError) {
@@ -333,6 +327,9 @@ export async function getPeople(options?: { includeArchived?: boolean }): Promis
       console.error('Error Details:', (txnsError as any)?.message, (txnsError as any)?.details)
     } else {
       (txns as any[])?.forEach(txn => {
+        const txnType = String(txn.type || '').toLowerCase()
+        if (txnType === 'expense' && !txn.person_id) return
+
         const txnDate = txn.occurred_at ? new Date(txn.occurred_at) : null
         const currentMonthTag = toYYYYMMFromDate(new Date())
         const normalizedTag = normalizeMonthTag(txn.tag) ?? txn.tag
@@ -391,12 +388,15 @@ export async function getPeople(options?: { includeArchived?: boolean }): Promis
   if (personIds.length > 0) {
     const { data: repayTxns, error: repayError } = await supabase
       .from('transactions')
-      .select('person_id, amount, status, cashback_share_percent, cashback_share_fixed, final_price')
-      .eq('type', 'repayment')
+      .select('person_id, amount, status, type, cashback_share_percent, cashback_share_fixed, final_price')
+      .in('type', ['repayment', 'income'])
       .neq('status', 'void')
 
     if (!repayError && repayTxns) {
       (repayTxns as any[]).forEach(txn => {
+        const txnType = String(txn.type || '').toLowerCase()
+        if (txnType === 'income' && !txn.person_id) return
+
         if (txn.person_id && personIds.includes(txn.person_id)) {
           // Calculate final price (Prefer DB final_price > Calc)
           let finalPrice = 0
@@ -445,15 +445,19 @@ export async function getPeople(options?: { includeArchived?: boolean }): Promis
   if (personIds.length > 0) {
     const { data: monthlyTxns, error: monthlyTxnsError } = await supabase
       .from('transactions')
-      .select('id, metadata, person_id, target_account_id, amount, occurred_at, tag, status, cashback_share_percent, cashback_share_fixed, final_price')
-      .eq('type', 'debt')
+      .select('id, metadata, person_id, target_account_id, amount, occurred_at, tag, status, type, cashback_share_percent, cashback_share_fixed, final_price')
+      .in('type', ['debt', 'expense'])
       .neq('status', 'void')
       .order('occurred_at', { ascending: false })
 
     if (monthlyTxnsError) {
       console.error('Error fetching monthly debt lines:', JSON.stringify(monthlyTxnsError, null, 2))
     } else {
-      allDebtTxns = monthlyTxns as any[]
+      allDebtTxns = (monthlyTxns as any[]).filter((txn) => {
+        const txnType = String(txn.type || '').toLowerCase()
+        if (txnType === 'expense') return Boolean(txn.person_id)
+        return true
+      })
     }
   }
 
@@ -461,14 +465,18 @@ export async function getPeople(options?: { includeArchived?: boolean }): Promis
   if (personIds.length > 0) {
     const { data: repayTxns, error: repayError } = await supabase
       .from('transactions')
-      .select('id, metadata, person_id, amount, occurred_at, tag, status')
-      .eq('type', 'repayment')
+      .select('id, metadata, person_id, amount, occurred_at, tag, status, type, cashback_share_percent, cashback_share_fixed, final_price')
+      .in('type', ['repayment', 'income'])
       .neq('status', 'void')
 
     if (repayError) {
       console.error('Error fetching repayments:', repayError)
     } else {
-      allRepayTxns = repayTxns as any[]
+      allRepayTxns = (repayTxns as any[]).filter((txn) => {
+        const txnType = String(txn.type || '').toLowerCase()
+        if (txnType === 'income') return Boolean(txn.person_id)
+        return true
+      })
     }
   }
 
@@ -702,6 +710,7 @@ export async function getPeople(options?: { includeArchived?: boolean }): Promis
   }
 
   const mapped = (profiles as unknown as PersonRow[] | null)?.map(person => {
+    const pbProfile = pbPeopleMap.get(person.id)
     const debtInfo = debtAccountMap.get(person.id)
     const subs = subscriptionMap.get(person.id) ?? []
 
@@ -745,20 +754,21 @@ export async function getPeople(options?: { includeArchived?: boolean }): Promis
 
     return {
       id: person.id,
-      name: person.name ?? '',
+      pocketbase_id: pbProfile?.pocketbase_id ?? null,
+      name: pbProfile?.name || person.name || '',
       email: person.email,
-      image_url: person.image_url,
-      sheet_link: person.sheet_link,
-      google_sheet_url: person.google_sheet_url,
-      sheet_full_img: (person as any).sheet_full_img ?? null,
-      sheet_show_bank_account: (person as any).sheet_show_bank_account ?? false,
-      sheet_bank_info: (person as any).sheet_bank_info ?? null,
-      sheet_linked_bank_id: (person as any).sheet_linked_bank_id ?? null,
-      sheet_show_qr_image: (person as any).sheet_show_qr_image ?? false,
-      is_owner: (person as any).is_owner ?? null,
-      is_archived: (person as any).is_archived ?? null,
-      is_group: (person as any).is_group ?? null,
-      group_parent_id: (person as any).group_parent_id ?? null,
+      image_url: pbProfile?.image_url ?? person.image_url,
+      sheet_link: pbProfile?.sheet_link ?? person.sheet_link,
+      google_sheet_url: pbProfile?.google_sheet_url ?? person.google_sheet_url,
+      sheet_full_img: pbProfile?.sheet_full_img ?? (person as any).sheet_full_img ?? null,
+      sheet_show_bank_account: pbProfile?.sheet_show_bank_account ?? (person as any).sheet_show_bank_account ?? false,
+      sheet_bank_info: pbProfile?.sheet_bank_info ?? (person as any).sheet_bank_info ?? null,
+      sheet_linked_bank_id: pbProfile?.sheet_linked_bank_id ?? (person as any).sheet_linked_bank_id ?? null,
+      sheet_show_qr_image: pbProfile?.sheet_show_qr_image ?? (person as any).sheet_show_qr_image ?? false,
+      is_owner: pbProfile?.is_owner ?? (person as any).is_owner ?? null,
+      is_archived: pbProfile?.is_archived ?? (person as any).is_archived ?? null,
+      is_group: pbProfile?.is_group ?? (person as any).is_group ?? null,
+      group_parent_id: pbProfile?.group_parent_id ?? (person as any).group_parent_id ?? null,
       debt_account_id: debtInfo?.id ?? null,
       balance: displayBalance,
       current_cycle_debt: fifoCurrentCycle,
@@ -1081,8 +1091,24 @@ export async function getRecentPeopleByTransactions(limit: number = 5): Promise<
 
   if (pError || !people) return []
 
+  let pbPeopleMap = new Map<string, Person>()
+  try {
+    const pbPeople = await getPocketBasePeople()
+    pbPeopleMap = new Map(pbPeople.map((person) => [person.id, person]))
+  } catch (error) {
+    console.error('[DB:PB] people.recent map failed:', error)
+  }
+
   // Return matched people in correct order
   return personIds
-    .map(id => (people as any[]).find(p => p.id === id))
-    .filter(Boolean) as Person[]
+    .map((id) => {
+      const sourcePerson = (people as any[]).find(p => p.id === id)
+      if (!sourcePerson) return null
+      const pbProfile = pbPeopleMap.get(id)
+      return {
+        ...sourcePerson,
+        pocketbase_id: pbProfile?.pocketbase_id ?? null,
+      } as Person
+    })
+    .filter((person): person is Person => Boolean(person))
 }

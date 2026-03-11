@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Person, TransactionWithDetails } from "@/types/moneyflow.types";
+import { getPersonRouteId } from '@/lib/person-route';
 import { Badge } from "@/components/ui/badge";
 import { loadTransactions } from "@/services/transaction.service"; // This is use server, so we can call it in a server action or a client-side wrapper.
 import { formatMoneyVND, cn } from "@/lib/utils";
@@ -35,7 +36,7 @@ export function PeopleRowDetailsV2({ person, isExpanded }: PeopleRowDetailsProps
         setIsLoading(true);
         try {
             const txns = await loadTransactions({
-                personId: person.id,
+                personId: getPersonRouteId(person),
                 limit: 4 // Reduced to 4 to fit better
             });
             setRecentTxns(txns);
@@ -81,7 +82,7 @@ export function PeopleRowDetailsV2({ person, isExpanded }: PeopleRowDetailsProps
                                     )}
                                 </TooltipProvider>
                                 <Link
-                                    href={`/people/${person.id}`}
+                                    href={`/people/${getPersonRouteId(person)}`}
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     className="inline-flex items-center gap-2 text-xs font-semibold text-slate-600 hover:text-slate-900 transition-colors bg-slate-100 px-2 py-1 rounded w-fit"
@@ -167,7 +168,7 @@ export function PeopleRowDetailsV2({ person, isExpanded }: PeopleRowDetailsProps
                         <h4 className="text-[10px] uppercase font-black text-slate-400 tracking-widest">Recent Activity</h4>
                         {recentTxns.length > 0 && (
                             <Link
-                                href={`/people/${person.id}`}
+                                href={`/people/${getPersonRouteId(person)}`}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="text-[10px] font-bold text-blue-600 hover:underline"

@@ -194,23 +194,12 @@ export function AccountDetailHeaderV2({
         // Calculate shared from share fields
         const shared = cycleSpendRows.reduce((sum: number, tx: any) => {
             const sharedFixed = Number(tx.cashback_share_fixed || 0)
-            if (sharedFixed > 0) return sum + sharedFixed
-
-            const sharePercent = Number(tx.cashback_share_percent || 0)
-            if (sharePercent > 0) {
-                // Use transaction amount as base for percentage calculation
-                const txAmount = Math.abs(Number(tx.amount || 0))
-                // Get earned for this transaction
-                const entries = Array.isArray(tx.cashback_entries) ? tx.cashback_entries : []
-                const txEarned = entries.reduce((s: number, e: any) => {
-                    if (e.mode === 'virtual' || e.mode === 'real') {
-                        return s + Math.abs(Number(e.amount || 0))
-                    }
-                    return s
-                }, 0)
-                return sum + (txEarned > 0 ? txEarned * sharePercent : 0)
-            }
-            return sum
+            const rawSharePercent = Number(tx.cashback_share_percent || 0)
+            const sharePercent = rawSharePercent > 1 ? rawSharePercent / 100 : rawSharePercent
+            const txAmount = Math.abs(Number(tx.amount || 0))
+            const computedShared = (txAmount * sharePercent) + sharedFixed
+            const sharedAmount = Number(tx.cashback_share_amount ?? computedShared)
+            return sum + (isNaN(sharedAmount) ? 0 : sharedAmount)
         }, 0)
 
         const actual = cycleTransactions.reduce((sum: number, tx: any) => {

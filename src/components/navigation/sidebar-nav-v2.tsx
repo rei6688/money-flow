@@ -85,7 +85,7 @@ export function SidebarNavV2({
     }
   }
 
-  const handleMouseEnter = () => {
+  const handleMenuMouseEnter = () => {
     if (navState === 'collapsed') {
       setNavState('hover_expanded')
     }
@@ -105,7 +105,6 @@ export function SidebarNavV2({
   return (
     <div
       ref={containerRef}
-      onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
       className={cn(
         'flex flex-col h-full transition-all duration-300 ease-in-out',
@@ -114,7 +113,7 @@ export function SidebarNavV2({
       )}
     >
       {/* ── Stabilize the trigger icon ── */}
-      <div className="flex w-16 justify-center mb-6 pt-2 shrink-0">
+      <div className="flex w-16 justify-center mb-6 pt-2 shrink-0" onMouseEnter={handleMenuMouseEnter}>
         <Button
           variant="ghost"
           size="icon"

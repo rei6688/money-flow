@@ -37,12 +37,29 @@ export function usePersonDetails({
     cycleSheets,
     urlTag,
 }: UsePersonDetailsProps) {
+    const getTxnCycleTag = (txn: TransactionWithDetails): string => {
+        const metadata = txn.metadata as any
+        const metadataDebtCycle = metadata?.debt_cycle_tag as string | undefined
+        const metadataPersisted = metadata?.persisted_cycle_tag as string | undefined
+        const persisted = (txn as any).persisted_cycle_tag as string | undefined
+        const debtCycle = (txn as any).debt_cycle_tag as string | undefined
+        const metadataTag = (metadata?.tag as string | undefined)
+        const rawTag = debtCycle || metadataDebtCycle || txn.tag || persisted || metadataPersisted || metadataTag || ''
+        const normalized = normalizeMonthTag(rawTag)
+        return normalized?.trim() ? normalized.trim() : (rawTag?.trim() ? rawTag.trim() : 'Untagged')
+    }
+
     // Map for O(1) lookup of Server Side Status
     const debtTagsMap = useMemo(() => {
         const m = new Map<string, any>()
         debtTags.forEach(t => m.set(t.tag, t))
         return m
     }, [debtTags])
+
+    const activeTransactions = useMemo(
+        () => transactions.filter((txn) => txn.status !== 'void'),
+        [transactions]
+    )
 
     // Calculate overall metrics
     const metrics = useMemo(() => {
@@ -98,7 +115,7 @@ export function usePersonDetails({
         )
 
         return totals
-    }, [transactions])
+    }, [activeTransactions])
 
     // Group transactions by cycle tag
     const debtCycles = useMemo(() => {
@@ -112,9 +129,8 @@ export function usePersonDetails({
             groups.set(urlTag, [])
         }
 
-        transactions.forEach(txn => {
-            const normalizedTag = normalizeMonthTag(txn.tag)
-            const tag = normalizedTag?.trim() ? normalizedTag.trim() : (txn.tag?.trim() ? txn.tag.trim() : 'Untagged')
+        activeTransactions.forEach(txn => {
+            const tag = getTxnCycleTag(txn)
             if (!groups.has(tag)) {
                 groups.set(tag, [])
             }
@@ -197,8 +213,11 @@ export function usePersonDetails({
                 if (normalized) serverStatus = debtTagsMap.get(normalized)
             }
 
-            // Trust local calculation for display correctness: Net Lend - Repay
-            const remains = stats.lend - stats.repay
+            // Prefer server-calculated remaining principal (FIFO) when available
+            const serverRemainingPrincipal = serverStatus && Number.isFinite(Number(serverStatus.remainingPrincipal))
+                ? Number(serverStatus.remainingPrincipal)
+                : null
+            const remains = serverRemainingPrincipal ?? (stats.lend - stats.repay)
 
             const isSettled = serverStatus ? serverStatus.status === 'settled' : (txns.length === 0 ? false : Math.abs(remains) < 100)
 
@@ -219,24 +238,23 @@ export function usePersonDetails({
             if (b.tagDateVal > 0) return 1
             return b.latestDate - a.latestDate
         })
-    }, [transactions, debtTagsMap])
+    }, [activeTransactions, debtTagsMap, urlTag])
 
     // Available years for filtering
     const availableYears = useMemo(() => {
         const years = new Set<string>()
-        transactions.forEach(txn => {
-            const normalizedTag = normalizeMonthTag(txn.tag || '')
-            const tag = normalizedTag?.trim() ? normalizedTag.trim() : (txn.tag?.trim() || '')
+        activeTransactions.forEach(txn => {
+            const tag = getTxnCycleTag(txn)
             if (isYYYYMM(tag)) {
                 years.add(tag.split('-')[0])
-            } else if (tag) {
+            } else if (tag && tag !== 'Untagged') {
                 years.add('Other')
             }
         })
         const currentYear = new Date().getFullYear().toString()
         years.add(currentYear)
         return Array.from(years).sort().reverse()
-    }, [transactions])
+    }, [activeTransactions])
 
     // Current cycle info
     const currentCycle = useMemo(() => {

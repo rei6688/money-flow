@@ -108,7 +108,18 @@ export function resolveCashbackPolicy(params: {
             }
         } else if (account.cb_type === 'simple' && Array.isArray(account.cb_rules_json)) {
             const rules = account.cb_rules_json as any[];
-            const matchedRule = categoryId ? rules.find((r: any) => r.categoryIds?.includes(categoryId) || r.cat_ids?.includes(categoryId)) : null;
+            let matchedRule = categoryId ? rules.find((r: any) => r.categoryIds?.includes(categoryId) || r.cat_ids?.includes(categoryId)) : null;
+
+            // Fallback: if categoryId didn't match, try categoryName heuristic
+            if (!matchedRule && categoryName && rules.length > 0) {
+                const lowerName = categoryName.toLowerCase();
+                if (lowerName.includes('online') || lowerName.includes('shopping')) {
+                    matchedRule = rules.find((r: any) => (r.categoryNames || []).includes('online') || (r.categoryNames || []).includes('shopping'));
+                }
+                if (!matchedRule && rules.length > 0) {
+                    matchedRule = rules[0]; // Use first rule as fallback
+                }
+            }
 
             if (matchedRule) {
                 finalRate = normalizeRate(matchedRule.rate ?? 0);

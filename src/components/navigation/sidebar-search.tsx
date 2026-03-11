@@ -17,6 +17,7 @@ interface SidebarSearchProps {
 
 type ResultItem = {
   id: string
+  route_id?: string
   name: string
   image?: string | null
   icon?: any
@@ -94,6 +95,7 @@ export function SidebarSearch({
       const matched = list.filter(item => item?.name?.toLowerCase()?.includes(query))
       return matched.slice(0, limit).map(item => ({
         id: item.id,
+        route_id: item.route_id,
         name: item.name,
         image: item.image_url,
         type
@@ -111,6 +113,7 @@ export function SidebarSearch({
     if (results.account.length === 0 && data.accounts.length > 0) {
       results.account = [{
         id: data.accounts[0].id,
+        route_id: undefined,
         name: data.accounts[0].name,
         image: data.accounts[0].image_url,
         type: 'account' as const
@@ -120,6 +123,7 @@ export function SidebarSearch({
     if (results.person.length === 0 && data.people.length > 0) {
       results.person = [{
         id: data.people[0].id,
+        route_id: (data.people[0] as any).route_id,
         name: data.people[0].name,
         image: data.people[0].image_url,
         type: 'person' as const
@@ -340,7 +344,7 @@ function ResultRow({ result, isCollapsed }: { result: ResultItem, isCollapsed: b
   const getHref = () => {
     switch (result.type) {
       case 'account': return `/accounts/${result.id}`
-      case 'person': return `/people/${result.id}`
+      case 'person': return `/people/${result.route_id || result.id}`
       case 'shop': return `/shops/${result.id}`
       case 'category': return `/categories/${result.id}`
       default: return '#'

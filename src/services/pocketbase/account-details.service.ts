@@ -1,11 +1,12 @@
 'use server'
 
 import { Account, Category, Person, Shop, TransactionWithDetails } from '@/types/moneyflow.types'
-import { AccountSpendingStats } from '@/types/cashback.types'
+import { AccountSpendingStats, RuleProgress } from '@/types/cashback.types'
 import { getCashbackCycleRange, formatIsoCycleTag, parseCashbackConfig } from '@/lib/cashback'
 import { getCreditCardAvailableBalance, getCreditCardUsage } from '@/lib/account-balance'
 import { resolveCashbackPolicy } from '@/services/cashback/policy-resolver'
 import { pocketbaseGetById, pocketbaseList, pocketbaseRequest, toPocketBaseId } from './server'
+import { resolvePocketBasePersonRecord } from './people.service'
 
 type PocketBaseRecord = Record<string, any>
 
@@ -154,9 +155,9 @@ function mapTransaction(record: PocketBaseRecord, currentAccountSourceId: string
     destination_name: expandedTargetAccount?.name || null,
     destination_image: expandedTargetAccount?.image_url || null,
     account_name: expandedAccount?.name || null,
-    category_id: record.category_id || null,
-    shop_id: record.shop_id || null,
-    person_id: record.person_id || null,
+    category_id: expandedCategory?.slug || record.category_id || null,
+    shop_id: expandedShop?.slug || record.shop_id || null,
+    person_id: expandedPerson?.slug || record.person_id || null,
     category_name: expandedCategory?.name || null,
     category_icon: expandedCategory?.icon || null,
     category_image_url: expandedCategory?.image_url || null,
@@ -165,7 +166,8 @@ function mapTransaction(record: PocketBaseRecord, currentAccountSourceId: string
     person_name: expandedPerson?.name || null,
     person_image_url: expandedPerson?.image_url || null,
     persisted_cycle_tag: parseCycleTagFromTransaction(record),
-    tag: record.tag || null,
+    debt_cycle_tag: record.debt_cycle_tag || record.metadata?.debt_cycle_tag || record.tag || null,
+    tag: record.debt_cycle_tag || record.metadata?.debt_cycle_tag || record.tag || null,
     cashback_mode: record.cashback_mode || null,
     cashback_share_percent: record.cashback_share_percent ?? record.metadata?.cashback_share_percent ?? null,
     cashback_share_fixed: record.cashback_share_fixed ?? record.metadata?.cashback_share_fixed ?? null,
@@ -903,7 +905,7 @@ export async function getPocketBaseAccountSpendingStatsSnapshot(sourceAccountId:
   let sharedAmount = 0
   let actualClaimed = 0
 
-  const activeRuleMap = new Map<string, { ruleId: string; name: string; rate: number; spent: number; earned: number; max?: number }>()
+  const activeRuleMap = new Map<string, RuleProgress>()
 
   // If transaction query failed (rawTransactions empty), fallback to cycle precomputed values
   if (cycleTransactions.length === 0) {
@@ -998,7 +1000,8 @@ export async function getPocketBaseAccountSpendingStatsSnapshot(sourceAccountId:
           rate: Math.round(effectiveRate * 100),
           spent: amount,
           earned: txnEstimate,
-          max: effectiveMaxReward,
+          max: effectiveMaxReward ?? null,
+          isMain: true,
         })
       }
     }
@@ -1198,10 +1201,27 @@ export async function loadPocketBaseTransactions(options: {
     const personIds = options.personIds && options.personIds.length > 0 ? options.personIds : (options.personId ? [options.personId] : [])
     if (personIds.length === 0) return []
 
-    // Build OR filter for multiple person IDs
-    const filterParts = personIds.map(pid => `person_id='${pid}'`).join(' || ')
+    const resolvedPersonRecords = await Promise.all(
+      personIds.map((personId) => resolvePocketBasePersonRecord(personId))
+    )
+
+    const candidatePersonIds = Array.from(new Set(
+      personIds.flatMap((personId, index) => {
+        const resolvedRecord = resolvedPersonRecords[index]
+        return [
+          personId,
+          toPocketBaseId(personId, 'people'),
+          resolvedRecord?.id ? String(resolvedRecord.id) : null,
+          resolvedRecord?.slug ? String(resolvedRecord.slug) : null,
+        ].filter((value): value is string => Boolean(value))
+      })
+    ))
+
+    const escapeFilterValue = (value: string) => value.replace(/'/g, "\\'")
+    const filterParts = candidatePersonIds.map(pid => `person_id='${escapeFilterValue(pid)}'`).join(' || ')
     const records = await listAllRecords('transactions', {
       sort: '-date',
+      expand: 'account_id,to_account_id,category_id,shop_id,person_id,parent_transaction_id',
       filter: filterParts,
     })
     return records.map((item) => mapTransaction(item, ''))
@@ -1284,14 +1304,28 @@ export async function getPocketBaseAccountCycleOptions(sourceAccountId: string, 
 export async function getPocketBaseCycleTransactions(sourceAccountId: string, cycleTag: string): Promise<TransactionWithDetails[]> {
   const pocketBaseAccountId = toPocketBaseId(sourceAccountId, 'accounts')
   // Notes:
-  //   - PB uses 'date' not 'occurred_at' for sort
-  //   - 'to_account_id' IS a real PB relation (destination account), safe to filter/expand
-  //   - 'persisted_cycle_tag' lives inside metadata JSON, not as top-level field
-  const records = await listAllRecords('transactions', {
-    sort: '-date',
-    expand: 'account_id,to_account_id,category_id,shop_id,person_id,parent_transaction_id',
-    filter: `(account_id='${pocketBaseAccountId}' || to_account_id='${pocketBaseAccountId}') && metadata.persisted_cycle_tag='${cycleTag}'`,
-  })
+  //   - PB uses 'date' for sort
+  //   - 'to_account_id' is the destination relation
+  //   - prefer top-level persisted_cycle_tag, fallback to metadata.persisted_cycle_tag for legacy records
+  let records: PocketBaseRecord[] = []
+
+  try {
+    records = await listAllRecords('transactions', {
+      sort: '-date',
+      expand: 'account_id,to_account_id,category_id,shop_id,person_id,parent_transaction_id',
+      filter: `(account_id='${pocketBaseAccountId}' || to_account_id='${pocketBaseAccountId}') && persisted_cycle_tag='${cycleTag}'`,
+    })
+  } catch {
+    records = []
+  }
+
+  if (records.length === 0) {
+    records = await listAllRecords('transactions', {
+      sort: '-date',
+      expand: 'account_id,to_account_id,category_id,shop_id,person_id,parent_transaction_id',
+      filter: `(account_id='${pocketBaseAccountId}' || to_account_id='${pocketBaseAccountId}') && metadata.persisted_cycle_tag='${cycleTag}'`,
+    })
+  }
 
   return records.map((item) => mapTransaction(item, sourceAccountId))
 }
@@ -1307,6 +1341,7 @@ type TransactionWriteData = {
   account_id: string
   amount: number
   tag?: string | null
+  debt_cycle_tag?: string | null
   category_id?: string | null
   person_id?: string | null
   target_account_id?: string | null
@@ -1326,6 +1361,7 @@ export async function createPocketBaseTransaction(supabaseId: string, data: Tran
   const mergedMetadata = {
     ...(data.metadata && typeof data.metadata === 'object' ? (data.metadata as Record<string, unknown>) : {}),
     source_id: supabaseId,
+    debt_cycle_tag: data.debt_cycle_tag ?? data.tag ?? null,
     cashback_share_percent: data.cashback_share_percent ?? null,
     cashback_share_fixed: data.cashback_share_fixed ?? null,
     cashback_mode: data.cashback_mode ?? null,
@@ -1339,7 +1375,7 @@ export async function createPocketBaseTransaction(supabaseId: string, data: Tran
       type: data.type,
       account_id: toPocketBaseId(data.account_id),
       amount: data.amount,
-      tag: data.tag ?? null,
+      debt_cycle_tag: data.debt_cycle_tag ?? data.tag ?? null,
       category_id: data.category_id ? toPocketBaseId(data.category_id) : null,
       person_id: data.person_id ? toPocketBaseId(data.person_id) : null,
       to_account_id: data.target_account_id ? toPocketBaseId(data.target_account_id) : null,
@@ -1363,7 +1399,9 @@ export async function updatePocketBaseTransaction(supabaseId: string, data: Part
   if (data.type !== undefined) payload.type = data.type
   if (data.account_id !== undefined) payload.account_id = toPocketBaseId(data.account_id)
   if (data.amount !== undefined) payload.amount = data.amount
-  if (data.tag !== undefined) payload.tag = data.tag
+  if (data.tag !== undefined || data.debt_cycle_tag !== undefined) {
+    payload.debt_cycle_tag = data.debt_cycle_tag ?? data.tag ?? null
+  }
   if (data.category_id !== undefined) payload.category_id = data.category_id ? toPocketBaseId(data.category_id) : null
   if (data.person_id !== undefined) payload.person_id = data.person_id ? toPocketBaseId(data.person_id) : null
   if (data.target_account_id !== undefined) payload.to_account_id = data.target_account_id ? toPocketBaseId(data.target_account_id) : null
@@ -1373,7 +1411,7 @@ export async function updatePocketBaseTransaction(supabaseId: string, data: Part
   if (data.cashback_share_percent !== undefined) payload.cashback_share_percent = data.cashback_share_percent
   if (data.cashback_share_fixed !== undefined) payload.cashback_share_fixed = data.cashback_share_fixed
   if (data.cashback_mode !== undefined) payload.cashback_mode = data.cashback_mode
-  if (data.metadata !== undefined || data.cashback_share_percent !== undefined || data.cashback_share_fixed !== undefined || data.cashback_mode !== undefined) {
+  if (data.metadata !== undefined || data.cashback_share_percent !== undefined || data.cashback_share_fixed !== undefined || data.cashback_mode !== undefined || data.debt_cycle_tag !== undefined || data.tag !== undefined) {
     const current = await pocketbaseGetById<PocketBaseRecord>('transactions', pbId)
     const currentMetadata = current?.metadata && typeof current.metadata === 'object'
       ? (current.metadata as Record<string, unknown>)
@@ -1384,6 +1422,7 @@ export async function updatePocketBaseTransaction(supabaseId: string, data: Part
       ...(data.cashback_share_percent !== undefined ? { cashback_share_percent: data.cashback_share_percent ?? null } : {}),
       ...(data.cashback_share_fixed !== undefined ? { cashback_share_fixed: data.cashback_share_fixed ?? null } : {}),
       ...(data.cashback_mode !== undefined ? { cashback_mode: data.cashback_mode ?? null } : {}),
+      ...(data.debt_cycle_tag !== undefined || data.tag !== undefined ? { debt_cycle_tag: data.debt_cycle_tag ?? data.tag ?? null } : {}),
     }
   }
   if (Object.keys(payload).length === 0) return

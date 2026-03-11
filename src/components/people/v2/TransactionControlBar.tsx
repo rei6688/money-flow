@@ -10,10 +10,14 @@ import { RolloverDebtDialog } from '@/components/people/rollover-debt-dialog'
 import { TypeFilterDropdown, FilterType } from '@/components/transactions-v2/header/TypeFilterDropdown'
 import { StatusDropdown, StatusFilter } from '@/components/transactions-v2/header/StatusDropdown'
 import { QuickFilterDropdown } from '@/components/transactions-v2/header/QuickFilterDropdown'
+import { MonthYearPickerV2 } from '@/components/transactions-v2/header/MonthYearPickerV2'
+import { DateRange } from 'react-day-picker'
 import { toast } from 'sonner'
 
 import { ManageSheetButton } from '@/components/people/manage-sheet-button'
 import { Person, Account, Category, Shop } from '@/types/moneyflow.types'
+import { formatCycleTag } from '@/lib/cycle-utils'
+import { isYYYYMM } from '@/lib/month-tag'
 
 interface PaidCounterProps {
     paidCount: number
@@ -40,6 +44,12 @@ interface TransactionControlBarProps {
     onStatusChange: (value: StatusFilter) => void
     selectedAccountId?: string
     onAccountChange: (value?: string) => void
+    date: Date
+    dateRange: DateRange | undefined
+    dateMode: 'month' | 'range' | 'date' | 'all' | 'year' | 'cycle'
+    onDateChange: (date: Date) => void
+    onRangeChange: (range: DateRange | undefined) => void
+    onModeChange: (mode: 'month' | 'range' | 'date' | 'all' | 'year' | 'cycle') => void
     accountItems: { id: string; name: string; image_url?: string | null }[]
     accounts: Account[]
     categories: Category[]
@@ -60,9 +70,8 @@ const numberFormatter = new Intl.NumberFormat('en-US', {
 })
 
 function getMonthDisplayName(tag: string) {
-    if (!tag.includes('-')) return tag
-    const [year, month] = tag.split('-')
-    return `${month}/${year}`
+    if (isYYYYMM(tag)) return formatCycleTag(tag)
+    return tag
 }
 
 export function TransactionControlBar({
@@ -85,6 +94,12 @@ export function TransactionControlBar({
     onStatusChange,
     selectedAccountId,
     onAccountChange,
+    date,
+    dateRange,
+    dateMode,
+    onDateChange,
+    onRangeChange,
+    onModeChange,
     accountItems,
     accounts,
     categories,
@@ -137,7 +152,7 @@ export function TransactionControlBar({
                 </div>
             )}
             {/* Single Row: Status + Paid + Cycle Selector + Filters + Sheet */}
-            <div className="flex flex-wrap items-center gap-2 bg-white border border-slate-200 rounded-xl p-3 shadow-sm">
+            <div className="flex flex-nowrap items-center gap-2 bg-white border border-slate-200 rounded-xl p-3 shadow-sm overflow-x-auto">
 
                 {/* 1. Primary Actions: Add + Sync Controller */}
                 <div className="flex items-center gap-3 flex-shrink-0">
@@ -235,10 +250,32 @@ export function TransactionControlBar({
                             emptyText="No accounts"
                         />
                     </div>
+
+                    <MonthYearPickerV2
+                        date={date}
+                        dateRange={dateRange}
+                        mode={dateMode}
+                        onDateChange={onDateChange}
+                        onRangeChange={onRangeChange}
+                        onModeChange={onModeChange}
+                        cycles={allCycles.map(cycle => ({
+                            label: getMonthDisplayName(cycle.tag),
+                            value: cycle.tag,
+                        }))}
+                        selectedCycleValue={activeCycle.tag}
+                        onCycleSelect={(tag) => {
+                            if (onCycleSelect) {
+                                onCycleSelect(tag, selectedYear)
+                                return
+                            }
+                            onCycleChange(tag)
+                        }}
+                        accountCycleTags={allCycles.map(cycle => cycle.tag)}
+                    />
                 </div>
 
                 {/* 3. Dynamic Search Bar (Stretches to fill gap) */}
-                <div className="relative flex-1">
+                <div className="relative flex-1 min-w-[220px]">
                     <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
                     <button
                         type="button"

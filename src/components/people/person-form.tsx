@@ -75,6 +75,7 @@ export function PersonForm({
     handleSubmit,
     watch,
     setValue,
+    reset,
     formState: { errors, isSubmitting, isDirty },
   } = useForm<PersonFormValues>({
     resolver: zodResolver(schema),
@@ -95,6 +96,21 @@ export function PersonForm({
       onChange()
     }
   }, [isDirty, onChange])
+
+  useEffect(() => {
+    const nextValues: PersonFormValues = {
+      name: initialValues?.name ?? '',
+      image_url: initialValues?.image_url ?? '',
+      sheet_link: initialValues?.sheet_link ?? '',
+      google_sheet_url: initialValues?.google_sheet_url ?? '',
+      subscriptionIds: initialValues?.subscriptionIds ?? [],
+      is_owner: initialValues?.is_owner ?? false,
+      is_archived: initialValues?.is_archived ?? false,
+      is_group: initialValues?.is_group ?? false,
+    }
+    reset(nextValues)
+    setImagePreview(nextValues.image_url || null)
+  }, [initialValues, reset])
 
   const watchedImage = watch('image_url') // Changed from watchedAvatar
   const watchedSubs = watch('subscriptionIds')

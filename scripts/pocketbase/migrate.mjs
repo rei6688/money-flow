@@ -24,6 +24,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const COLLECTION_ORDER = [
     'people',
+    'person_cycle_sheets',
     'categories',
     'shops',
     'accounts',
@@ -35,7 +36,8 @@ const COLLECTION_ORDER = [
 
 const PHASE_TO_COLLECTIONS = {
     all: COLLECTION_ORDER,
-    foundation: ['people', 'categories'],
+    foundation: ['people', 'person_cycle_sheets', 'categories'],
+    people: ['people', 'person_cycle_sheets'],
     shops: ['shops'],
     accounts: ['accounts'],
     transactions: ['transactions'],
@@ -389,9 +391,38 @@ async function migrate() {
         phaseKey: 'people',
         tableName: 'people',
         pbCollection: 'people',
-        mapper: (p) => ({ name: p.name, role: p.role, image_url: p.image_url, is_owner: p.is_owner || false })
+        mapper: (p) => ({
+            slug: p.id,
+            name: p.name,
+            role: p.role,
+            image_url: p.image_url,
+            sheet_link: p.sheet_link ?? null,
+            google_sheet_url: p.google_sheet_url ?? null,
+            sheet_full_img: p.sheet_full_img ?? null,
+            sheet_show_bank_account: p.sheet_show_bank_account ?? false,
+            sheet_bank_info: p.sheet_bank_info ?? null,
+            sheet_linked_bank_id: p.sheet_linked_bank_id ? toPocketBaseId(p.sheet_linked_bank_id, 'accounts') : null,
+            sheet_show_qr_image: p.sheet_show_qr_image ?? false,
+            is_owner: p.is_owner || false,
+            is_archived: p.is_archived ?? false,
+            is_group: p.is_group ?? false,
+            group_parent_id: p.group_parent_id ? toPocketBaseId(p.group_parent_id, 'people') : null,
+        })
     });
     if (peopleResult) summary.push(peopleResult);
+
+    const personCycleSheetsResult = await migrateTable({
+        phaseKey: 'person_cycle_sheets',
+        tableName: 'person_cycle_sheets',
+        pbCollection: 'person_cycle_sheets',
+        mapper: (s) => ({
+            person_id: s.person_id ? toPocketBaseId(s.person_id, 'people') : null,
+            cycle_tag: s.cycle_tag,
+            sheet_id: s.sheet_id ?? null,
+            sheet_url: s.sheet_url ?? null,
+        })
+    });
+    if (personCycleSheetsResult) summary.push(personCycleSheetsResult);
 
     const categoriesResult = await migrateTable({
         phaseKey: 'categories',

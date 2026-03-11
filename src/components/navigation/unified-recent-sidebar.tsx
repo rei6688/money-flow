@@ -9,6 +9,7 @@ import { getRecentPeopleByTransactions } from '@/services/people.service'
 import { cn } from '@/lib/utils'
 import { Landmark, User, Loader2 } from 'lucide-react'
 import { CustomTooltip } from '@/components/ui/custom-tooltip'
+import { getPersonRouteId } from '@/lib/person-route'
 
 interface UnifiedRecentSidebarProps {
   isCollapsed: boolean
@@ -67,7 +68,9 @@ export function UnifiedRecentSidebar({ isCollapsed, searchQuery = '' }: UnifiedR
       isCollapsed && "space-y-0.5"
     )}>
       {allRecentItems.map(item => {
-        const href = item._kind === 'account' ? `/accounts/${item.id}` : `/people/${item.id}`
+        const href = item._kind === 'account'
+          ? `/accounts/${item.id}`
+          : `/people/${getPersonRouteId(item)}`
         const isActive = pathname === href
         const label = item.name || 'Unknown'
         const image_url = (item as any).image_url

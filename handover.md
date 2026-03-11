@@ -24,6 +24,12 @@
 - Then run a validation dry pass:
     - `node scripts/pocketbase/remigrate-transactions-sourceid-safe.mjs --reset --limit=100`
 
+## Updated Command Path (2026-03-11)
+- Preferred full reset flow:
+    - `node scripts/pocketbase/remigrate-transactions-sourceid-safe.mjs --hard-reset-domain --reset --apply`
+- This mode deletes/recreates transaction domain collections needed to unblock transaction schema recreation, then backfills from Supabase.
+- Verified on sample source transaction `06c4e853-f6c6-4009-9a82-5c9add3abef2`: top-level `cashback_share_percent`, `cashback_mode`, `debt_cycle_tag`, `persisted_cycle_tag` are populated.
+
 ## Non-Negotiable Fields In New `transactions`
 - Core: `date`, `occurred_at`, `amount`, `final_price`, `type`, `status`, `note`
 - Relations: `account_id`, `to_account_id`, `category_id`, `shop_id`, `person_id`, `parent_transaction_id`

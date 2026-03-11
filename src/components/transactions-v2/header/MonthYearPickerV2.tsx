@@ -8,7 +8,7 @@ import {
 } from '@/components/ui/popover'
 import { Button } from '@/components/ui/button'
 import { Calendar } from '@/components/ui/calendar'
-import { CalendarIcon, ChevronDown, ChevronLeft, ChevronRight, X, Loader2 } from 'lucide-react'
+import { CalendarIcon, ChevronDown, ChevronLeft, ChevronRight, X, Loader2, RotateCcw } from 'lucide-react'
 import { format, isSameMonth, startOfYear, endOfYear } from 'date-fns'
 import { DateRange } from 'react-day-picker'
 import { cn } from '@/lib/utils'
@@ -33,6 +33,8 @@ interface MonthYearPickerV2Props {
   fullWidth?: boolean
   locked?: boolean
   disabled?: boolean // New: disable entire picker
+  onResetToCurrent?: () => void
+  resetLoading?: boolean
 }
 
 export function MonthYearPickerV2({
@@ -53,6 +55,8 @@ export function MonthYearPickerV2({
   fullWidth,
   locked,
   disabled = false,
+  onResetToCurrent,
+  resetLoading = false,
 }: MonthYearPickerV2Props) {
   const [open, setOpen] = useState(false)
   const hoverTimeoutRef = useRef<NodeJS.Timeout | null>(null)
@@ -252,27 +256,48 @@ export function MonthYearPickerV2({
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={disabled}
-          onMouseEnter={handleMouseEnter}
-          onMouseLeave={handleMouseLeave}
-          className={cn(
-            "gap-2 justify-between font-medium transition-all",
-            fullWidth ? 'w-full h-10' : 'w-[200px] h-9',
-            (locked || disabled) && "opacity-50 cursor-not-allowed bg-muted/50",
-            mode !== 'all' && "border-primary/50 bg-primary/5 text-primary"
-          )}
-        >
-          <div className="flex items-center gap-1.5 truncate pointer-events-none">
-            <CalendarIcon className={cn("w-3.5 h-3.5 shrink-0", mode !== 'all' ? "text-primary" : "text-slate-500")} />
-            <span className="truncate">{displayText}</span>
-          </div>
-          <ChevronDown className={cn("w-3 h-3 opacity-50 transition-transform pointer-events-none", open && "rotate-180")} />
-        </Button>
-      </PopoverTrigger>
+      <div className={cn("flex items-center gap-1.5", fullWidth && "w-full")}>
+        <PopoverTrigger asChild>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={disabled || resetLoading}
+            onMouseEnter={handleMouseEnter}
+            onMouseLeave={handleMouseLeave}
+            className={cn(
+              "gap-2 justify-between font-medium transition-all",
+              fullWidth ? 'flex-1 h-10' : 'w-[200px] h-9',
+              (locked || disabled) && "opacity-50 cursor-not-allowed bg-muted/50",
+              mode !== 'all' && "border-primary/50 bg-primary/5 text-primary"
+            )}
+          >
+            <div className="flex items-center gap-1.5 truncate pointer-events-none">
+              <CalendarIcon className={cn("w-3.5 h-3.5 shrink-0", mode !== 'all' ? "text-primary" : "text-slate-500")} />
+              <span className="truncate">{displayText}</span>
+            </div>
+            <ChevronDown className={cn("w-3 h-3 opacity-50 transition-transform pointer-events-none", open && "rotate-180")} />
+          </Button>
+        </PopoverTrigger>
+        {onResetToCurrent && (
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            disabled={disabled || resetLoading}
+            onClick={(e) => {
+              e.stopPropagation()
+              onResetToCurrent()
+            }}
+            className={cn(
+              "h-9 w-9 text-slate-500 hover:text-slate-700",
+              fullWidth && "h-10 w-10"
+            )}
+            title="Reset to current month"
+          >
+            {resetLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+          </Button>
+        )}
+      </div>
       <PopoverContent
         className="w-auto p-0 border-primary/20 shadow-xl"
         align="start"
