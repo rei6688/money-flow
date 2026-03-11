@@ -190,13 +190,20 @@ async function cleanupCollections(baseUrl, collections, headers, mode) {
         for (let i = 0; i < ids.length; i += concurrency) {
             const chunk = ids.slice(i, i + concurrency);
             const results = await Promise.all(chunk.map(async (id) => {
-                const res = await fetch(`${baseUrl}/api/collections/${coll}/records/${id}`, { method: 'DELETE', headers });
-                if (!res.ok) {
-                    const text = await res.text();
-                    throw new Error(`Delete failed ${coll}/${id}: ${text}`);
+                try {
+                    const res = await fetch(`${baseUrl}/api/collections/${coll}/records/${id}`, { method: 'DELETE', headers });
+                    if (!res.ok) {
+                        const text = await res.text();
+                        console.warn(`⚠️  Skip delete ${coll}/${id} (likely referenced by other tables)`);
+                        return false;
+                    }
+                    return true;
+                } catch (err) {
+                    console.warn(`⚠️  Error deleting ${coll}/${id}: ${err.message}`);
+                    return false;
                 }
             }));
-            deleted += results.length;
+            deleted += results.filter(r => r === true).length;
         }
         console.log(`- ${coll}: deleted ${deleted}`);
     }

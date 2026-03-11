@@ -37,7 +37,7 @@ export async function executeWithFallback<T>(
 ): Promise<T> {
   try {
     console.log(`[source:PB] ${context}`)
-    // console.log(`[source:PB] ${context} - success`)
+    const result = await pbQuery()
     return result
   } catch (error) {
     if (isPocketBase400Or404(error)) {
@@ -45,7 +45,6 @@ export async function executeWithFallback<T>(
       console.log(`[source:SB] ${context} - falling back to Supabase`)
       try {
         const result = await sbQuery()
-        // console.log(`[source:SB] ${context} - success (fallback)`)
         return result
       } catch (sbError) {
         console.error(`[source:SB] ${context} - fallback also failed`, sbError)
@@ -73,7 +72,6 @@ export async function executeWithAttempts<T>(
     try {
       console.log(`[source:PB] ${context} - attempt ${i + 1}/${attempts.length}`)
       const result = await attempts[i]()
-      // console.log(`[source:PB] ${context} - success on attempt ${i + 1}`)
       return result
     } catch (error) {
       lastError = error
@@ -91,7 +89,6 @@ export async function executeWithAttempts<T>(
     console.log(`[source:SB] ${context} - all PB attempts failed, falling back to Supabase`)
     try {
       const result = await sbQuery()
-      // console.log(`[source:SB] ${context} - success (fallback)`)
       return result
     } catch (sbError) {
       console.error(`[source:SB] ${context} - fallback also failed`, sbError)
