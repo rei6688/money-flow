@@ -214,11 +214,13 @@ export async function createPerson(
 export async function getPeople(options?: { includeArchived?: boolean }): Promise<Person[]> {
   const includeArchived = Boolean(options?.includeArchived)
   let pbPeopleMap = new Map<string, Person>()
+  let pbPeopleMapByName = new Map<string, Person>()
   console.log('[DB:PB] people.list')
   try {
     const pbPeople = await getPocketBasePeople()
     if (pbPeople && pbPeople.length > 0) {
       pbPeopleMap = new Map(pbPeople.map((p) => [p.id, p]))
+      pbPeopleMapByName = new Map(pbPeople.filter(p => !!p.name).map(p => [p.name.trim().toLowerCase(), p]))
     }
   } catch (err) {
     console.error('[DB:PB] people.list failed:', err)
@@ -710,7 +712,7 @@ export async function getPeople(options?: { includeArchived?: boolean }): Promis
   }
 
   const mapped = (profiles as unknown as PersonRow[] | null)?.map(person => {
-    const pbProfile = pbPeopleMap.get(person.id)
+    const pbProfile = pbPeopleMap.get(person.id) || (person.name ? pbPeopleMapByName.get(person.name.trim().toLowerCase()) : undefined)
     const debtInfo = debtAccountMap.get(person.id)
     const subs = subscriptionMap.get(person.id) ?? []
 

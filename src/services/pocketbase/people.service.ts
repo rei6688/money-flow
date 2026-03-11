@@ -143,6 +143,7 @@ export async function getPocketBasePersonDetails(sourceOrPocketBaseId: string): 
         return mapped
       }
 
+      // 1. Base hydration from people table (Wait! PB Schema lacks these config fields, so we MUST fetch from Supabase until schema is updated)
       const supabase = createClient()
       const { data, error } = await supabase
         .from('people')
@@ -152,7 +153,6 @@ export async function getPocketBasePersonDetails(sourceOrPocketBaseId: string): 
 
       const sbPerson = (data || {}) as any
 
-      // 1. Base hydration from people table (Supabase)
       const hydrated = {
         ...mapped,
         sheet_link: mapped.sheet_link ?? sbPerson.sheet_link ?? null,
@@ -167,43 +167,47 @@ export async function getPocketBasePersonDetails(sourceOrPocketBaseId: string): 
       // 2. Fallbacks for missing configurations
       // Fallback for sheet_link (webhook link)
       if (!hydrated.sheet_link) {
-        const { data: webhookDataByName } = await supabase
-          .from('sheet_webhook_links')
-          .select('url, name, created_at')
-          .ilike('name', mapped.name)
-          .order('created_at', { ascending: false })
-          .limit(1)
+        try {
+          const escapedName = mapped.name.replace(/'/g, "\\'")
+          const webhookDataByName = await pocketbaseList<PocketBaseRecord>('sheet_webhook_links', {
+            filter: `name ~ '${escapedName}'`,
+            sort: '-created',
+            perPage: 1
+          })
+          
+          let webhookLink = webhookDataByName.items?.[0] || null
 
-        let webhookLink = Array.isArray(webhookDataByName) && webhookDataByName.length > 0 ? webhookDataByName[0] : null
+          if (!webhookLink) {
+            const webhookDataLatest = await pocketbaseList<PocketBaseRecord>('sheet_webhook_links', {
+              sort: '-created',
+              perPage: 1
+            })
+            webhookLink = webhookDataLatest.items?.[0] || null
+          }
 
-        if (!webhookLink) {
-          const { data: webhookDataLatest } = await supabase
-            .from('sheet_webhook_links')
-            .select('url, name, created_at')
-            .order('created_at', { ascending: false })
-            .limit(1)
-          webhookLink = Array.isArray(webhookDataLatest) && webhookDataLatest.length > 0 ? webhookDataLatest[0] : null
-        }
-
-        if (webhookLink?.url) {
-          hydrated.sheet_link = webhookLink.url
+          if (webhookLink?.url) {
+            hydrated.sheet_link = String(webhookLink.url)
+          }
+        } catch (err) {
+          console.warn('[PB: Fallback] Failed to fetch sheet_webhook_links from PocketBase', err)
         }
       }
 
       // Fallback for google_sheet_url (from cycle sheets)
-      if (!hydrated.google_sheet_url && sourcePersonId) {
-        const { data: cycleSheetRows } = await supabase
-          .from('person_cycle_sheets')
-          .select('sheet_url, updated_at, created_at')
-          .eq('person_id', sourcePersonId)
-          .not('sheet_url', 'is', null)
-          .order('updated_at', { ascending: false, nullsFirst: false })
-          .order('created_at', { ascending: false, nullsFirst: false })
-          .limit(1)
+      if (!hydrated.google_sheet_url && personRecord.id) {
+        try {
+          const cycleSheetRows = await pocketbaseList<PocketBaseRecord>('person_cycle_sheets', {
+            filter: `person_id='${personRecord.id}' && sheet_url != null && sheet_url != ''`,
+            sort: '-updated,-created',
+            perPage: 1
+          })
 
-        const latest = Array.isArray(cycleSheetRows) && cycleSheetRows.length > 0 ? cycleSheetRows[0] : null
-        if (latest?.sheet_url) {
-          hydrated.google_sheet_url = latest.sheet_url
+          const latest = cycleSheetRows.items?.[0] || null
+          if (latest?.sheet_url) {
+            hydrated.google_sheet_url = String(latest.sheet_url)
+          }
+        } catch (err) {
+           console.warn('[PB: Fallback] Failed to fetch person_cycle_sheets from PocketBase', err)
         }
       }
 
