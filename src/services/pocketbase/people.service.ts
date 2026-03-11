@@ -150,7 +150,23 @@ export async function getPocketBasePersonDetails(sourceOrPocketBaseId: string): 
         .eq('id', sourcePersonId)
         .maybeSingle()
 
-      if (error || !data) {
+      const sbPerson = (data || {}) as any
+
+      // 1. Base hydration from people table (Supabase)
+      const hydrated = {
+        ...mapped,
+        sheet_link: mapped.sheet_link ?? sbPerson.sheet_link ?? null,
+        google_sheet_url: mapped.google_sheet_url ?? sbPerson.google_sheet_url ?? null,
+        sheet_full_img: mapped.sheet_full_img ?? sbPerson.sheet_full_img ?? null,
+        sheet_show_bank_account: mapped.sheet_show_bank_account ?? sbPerson.sheet_show_bank_account ?? null,
+        sheet_bank_info: mapped.sheet_bank_info ?? sbPerson.sheet_bank_info ?? null,
+        sheet_linked_bank_id: mapped.sheet_linked_bank_id ?? sbPerson.sheet_linked_bank_id ?? null,
+        sheet_show_qr_image: mapped.sheet_show_qr_image ?? sbPerson.sheet_show_qr_image ?? null,
+      }
+
+      // 2. Fallbacks for missing configurations
+      // Fallback for sheet_link (webhook link)
+      if (!hydrated.sheet_link) {
         const { data: webhookDataByName } = await supabase
           .from('sheet_webhook_links')
           .select('url, name, created_at')
@@ -158,71 +174,23 @@ export async function getPocketBasePersonDetails(sourceOrPocketBaseId: string): 
           .order('created_at', { ascending: false })
           .limit(1)
 
-        let webhookLink = Array.isArray(webhookDataByName) ? webhookDataByName[0] : null
+        let webhookLink = Array.isArray(webhookDataByName) && webhookDataByName.length > 0 ? webhookDataByName[0] : null
+
         if (!webhookLink) {
           const { data: webhookDataLatest } = await supabase
             .from('sheet_webhook_links')
             .select('url, name, created_at')
             .order('created_at', { ascending: false })
             .limit(1)
-          webhookLink = Array.isArray(webhookDataLatest) ? webhookDataLatest[0] : null
+          webhookLink = Array.isArray(webhookDataLatest) && webhookDataLatest.length > 0 ? webhookDataLatest[0] : null
         }
 
-        let cycleSheetUrl: string | null = null
-        const { data: cycleSheetRows } = await supabase
-          .from('person_cycle_sheets')
-          .select('sheet_url, updated_at, created_at')
-          .eq('person_id', sourcePersonId)
-          .not('sheet_url', 'is', null)
-          .order('updated_at', { ascending: false, nullsFirst: false })
-          .order('created_at', { ascending: false, nullsFirst: false })
-          .limit(1)
-
-        const latest = Array.isArray(cycleSheetRows) ? cycleSheetRows[0] : null
-        cycleSheetUrl = (latest?.sheet_url as string | null | undefined) ?? null
-
-        return {
-          ...mapped,
-          sheet_link: mapped.sheet_link ?? (webhookLink?.url ?? null),
-          google_sheet_url: mapped.google_sheet_url ?? cycleSheetUrl,
+        if (webhookLink?.url) {
+          hydrated.sheet_link = webhookLink.url
         }
       }
 
-      const sbPerson = data as any
-
-      const hydrated = {
-        ...mapped,
-        sheet_link: mapped.sheet_link ?? sbPerson.sheet_link,
-        google_sheet_url: mapped.google_sheet_url ?? sbPerson.google_sheet_url,
-        sheet_full_img: mapped.sheet_full_img ?? sbPerson.sheet_full_img,
-        sheet_show_bank_account: mapped.sheet_show_bank_account ?? sbPerson.sheet_show_bank_account,
-        sheet_bank_info: mapped.sheet_bank_info ?? sbPerson.sheet_bank_info,
-        sheet_linked_bank_id: mapped.sheet_linked_bank_id ?? sbPerson.sheet_linked_bank_id,
-        sheet_show_qr_image: mapped.sheet_show_qr_image ?? sbPerson.sheet_show_qr_image,
-      }
-
-      if (hydrated.sheet_link) {
-        return hydrated
-      }
-
-      const { data: webhookDataByName } = await supabase
-        .from('sheet_webhook_links')
-        .select('url, name, created_at')
-        .ilike('name', mapped.name)
-        .order('created_at', { ascending: false })
-        .limit(1)
-
-      let webhookLink = Array.isArray(webhookDataByName) ? webhookDataByName[0] : null
-      if (!webhookLink) {
-        const { data: webhookDataLatest } = await supabase
-          .from('sheet_webhook_links')
-          .select('url, name, created_at')
-          .order('created_at', { ascending: false })
-          .limit(1)
-        webhookLink = Array.isArray(webhookDataLatest) ? webhookDataLatest[0] : null
-      }
-
-      let cycleSheetUrl: string | null = null
+      // Fallback for google_sheet_url (from cycle sheets)
       if (!hydrated.google_sheet_url && sourcePersonId) {
         const { data: cycleSheetRows } = await supabase
           .from('person_cycle_sheets')
@@ -233,15 +201,19 @@ export async function getPocketBasePersonDetails(sourceOrPocketBaseId: string): 
           .order('created_at', { ascending: false, nullsFirst: false })
           .limit(1)
 
-        const latest = Array.isArray(cycleSheetRows) ? cycleSheetRows[0] : null
-        cycleSheetUrl = (latest?.sheet_url as string | null | undefined) ?? null
+        const latest = Array.isArray(cycleSheetRows) && cycleSheetRows.length > 0 ? cycleSheetRows[0] : null
+        if (latest?.sheet_url) {
+          hydrated.google_sheet_url = latest.sheet_url
+        }
       }
 
-      return {
-        ...hydrated,
-        sheet_link: hydrated.sheet_link ?? (webhookLink?.url ?? null),
-        google_sheet_url: hydrated.google_sheet_url ?? cycleSheetUrl,
-      }
+      console.log(`[people.service] Merge config for ${mapped.name}:`, {
+        sheet_link: !!hydrated.sheet_link,
+        google_sheet_url: !!hydrated.google_sheet_url,
+        sheet_linked_bank_id: !!hydrated.sheet_linked_bank_id
+      })
+
+      return hydrated
     },
     async () => {
       logSource('SB', 'people.get fallback', { sourceOrPocketBaseId })

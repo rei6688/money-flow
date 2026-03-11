@@ -367,7 +367,7 @@ export function ServiceDetailsSheet({ open, onOpenChange, service, members, allP
                                         <div
                                             key={member.id || member.person_id}
                                             className="flex items-center justify-between p-4 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 hover:border-slate-300 cursor-pointer transition-all group"
-                                            onClick={() => router.push(`/people/${member.person_id}`)}
+                                            onClick={() => router.push(`/people/${member.person?.pocketbase_id || member.person_id}`)}
                                         >
                                             <div className="flex items-center gap-4 flex-1 min-w-0">
                                                 <div className={cn("h-12 w-12 rounded-lg flex items-center justify-center text-lg font-bold flex-shrink-0",

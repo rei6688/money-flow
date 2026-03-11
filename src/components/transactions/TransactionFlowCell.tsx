@@ -23,8 +23,11 @@ export function TransactionFlowCell({ transaction, className }: TransactionFlowC
     const targetImg = transaction.shop_image_url || transaction.shop?.image_url // Prefer explicit mapped url
     let targetType = transaction.shop_name ? 'shop' : 'category'
     let targetCycleTag = null
+    let personRouteId = transaction.person_id
 
     if (transaction.person_id) {
+        // Fallback to pocketbase_id if person object exists, otherwise use person_id
+        personRouteId = (transaction as any).person?.pocketbase_id || transaction.person_id
         targetName = transaction.person_name || 'Unknown'
         targetType = 'person'
         // Use persisted cycle tag or fallback to transaction tag
@@ -100,7 +103,7 @@ export function TransactionFlowCell({ transaction, className }: TransactionFlowC
             <div className="flex items-center justify-end gap-3 flex-1 min-w-0 text-right">
                 <div className="flex flex-col items-end min-w-0">
                     {targetType === 'person' ? (
-                        <Link href={`/people/${transaction.person_id}/details`} target="_blank" className="hover:underline">
+                        <Link href={`/people/${personRouteId}/details`} target="_blank" className="hover:underline">
                             <span className="text-sm font-medium truncate" title={targetName || ''}>{targetName}</span>
                         </Link>
                     ) : (
@@ -115,7 +118,7 @@ export function TransactionFlowCell({ transaction, className }: TransactionFlowC
                 </div>
 
                 {targetType === 'person' ? (
-                    <Link href={`/people/${transaction.person_id}/details`} target="_blank">
+                    <Link href={`/people/${personRouteId}/details`} target="_blank">
                         <div className="w-8 h-8 rounded-none overflow-hidden bg-indigo-600 cursor-pointer hover:ring-2 hover:ring-indigo-400 shrink-0">
                             {transaction.person_image_url || transaction.person?.image_url ? (
                                 <img

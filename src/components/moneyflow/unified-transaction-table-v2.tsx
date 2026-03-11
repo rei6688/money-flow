@@ -1906,7 +1906,8 @@ export function UnifiedTransactionTableV2({
                           targetName = personNameLink || 'Unknown Person'
                           targetIcon = personAvatar
                           targetId = personId
-                          targetLink = `/people/${personId}/details`
+                          const personRouteId = (txn as any).person_pocketbase_id || personId;
+                          targetLink = `/people/${personRouteId}/details`
                         } else if (targetId) {
                           targetType = 'account'
                           if (targetName === 'Unknown') {
@@ -2048,7 +2049,7 @@ export function UnifiedTransactionTableV2({
                         const personEntity = personId ? {
                           name: personNameLink || 'Unknown Person',
                           icon: personAvatar,
-                          link: `/people/${personId}`,
+                          link: `/people/${(txn as any).person_pocketbase_id || personId}`,
                         } : null
                         const accountEntity = {
                           name: sourceName,

@@ -250,6 +250,7 @@ export type TransactionWithDetails = TransactionRow & {
   original_amount?: number | null;
   type?: 'income' | 'expense' | 'transfer' | 'debt' | 'repayment';
   person_id?: string | null;
+  person_pocketbase_id?: string | null;
   person_name?: string | null;
   person_image_url?: string | null;
   category_id?: string | null;

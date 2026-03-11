@@ -37,6 +37,19 @@ type TransactionStatus =
   | "completed";
 type TransactionType = "income" | "expense" | "transfer" | "debt" | "repayment" | "credit_pay" | "invest";
 
+function revalidatePersonPaths(personId: string | null | undefined) {
+  if (!personId) return;
+  revalidatePath(`/people/${personId}`);
+  revalidatePath(`/people/${personId}/details`);
+  try {
+    const pbId = toPocketBaseId(personId);
+    if (pbId && pbId !== personId) {
+      revalidatePath(`/people/${pbId}`);
+      revalidatePath(`/people/${pbId}/details`);
+    }
+  } catch(e) { /* ignore */ }
+}
+
 export type CreateTransactionInput = {
   occurred_at: string;
   note?: string | null;
@@ -449,6 +462,7 @@ export async function mapTransactionRow(
     destination_image: target?.image_url ?? null,
     person_name: person?.name ?? null,
     person_image_url: person?.image_url ?? null,
+    person_pocketbase_id: (person as any)?.pocketbase_id ?? null,
     shop_name: shop?.name ?? null,
     shop_image_url: shop?.image_url ?? null,
     persisted_cycle_tag:
@@ -781,10 +795,7 @@ export async function createTransaction(
     revalidatePath("/transactions");
     revalidatePath("/accounts");
     revalidatePath("/people");
-    if (input.person_id) {
-      revalidatePath(`/people/${input.person_id}`);
-      revalidatePath(`/people/${input.person_id}/details`);
-    }
+    revalidatePersonPaths(input.person_id);
 
     // CASHBACK INTEGRATION
     if (transactionId) {
@@ -1201,10 +1212,7 @@ export async function updateTransaction(
   revalidatePath("/transactions");
   revalidatePath("/accounts");
   revalidatePath("/people");
-  if (input.person_id) {
-    revalidatePath(`/people/${input.person_id}`);
-    revalidatePath(`/people/${input.person_id}/details`);
-  }
+  revalidatePersonPaths(input.person_id);
 
 
 
@@ -1338,9 +1346,7 @@ export async function deleteTransaction(id: string): Promise<boolean> {
   revalidatePath("/transactions");
   revalidatePath("/accounts");
   revalidatePath("/people");
-  if ((existing as any)?.person_id) {
-    revalidatePath(`/people/${(existing as any).person_id}`);
-  }
+  revalidatePersonPaths((existing as any)?.person_id);
 
   // Phase 7X: Auto-Settle Installment (Delete)
   if ((existing as any)?.installment_plan_id) {
@@ -1475,9 +1481,7 @@ export async function voidTransaction(id: string): Promise<boolean> {
   revalidatePath("/transactions");
   revalidatePath("/accounts");
   revalidatePath("/people");
-  if ((existing as any)?.person_id) {
-    revalidatePath(`/people/${(existing as any).person_id}`);
-  }
+  revalidatePersonPaths((existing as any)?.person_id);
 
   // CASHBACK INTEGRATION
   try {
@@ -1535,9 +1539,7 @@ export async function restoreTransaction(id: string): Promise<boolean> {
   revalidatePath("/transactions");
   revalidatePath("/accounts");
   revalidatePath("/people");
-  if ((existing as any)?.person_id) {
-    revalidatePath(`/people/${(existing as any).person_id}`);
-  }
+  revalidatePersonPaths((existing as any)?.person_id);
 
   // CASHBACK INTEGRATION (Restore)
   try {

@@ -270,7 +270,6 @@ export function TransactionControlBar({
                             }
                             onCycleChange(tag)
                         }}
-                        accountCycleTags={allCycles.map(cycle => cycle.tag)}
                     />
                 </div>
 
