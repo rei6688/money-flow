@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Edit, User, CheckCircle2, HandCoins, Banknote, ExternalLink, RotateCw, FileSpreadsheet, Calendar, RefreshCcw, Landmark, Info } from "lucide-react";
 import { cn, formatMoneyVND, formatVNLongAmount } from "@/lib/utils";
+import { getPersonRouteId } from '@/lib/person-route';
 import { SubscriptionBadges } from "./subscription-badges";
 import { ManageSheetButton } from "@/components/people/manage-sheet-button";
 import { Account } from "@/types/moneyflow.types";
@@ -167,8 +168,8 @@ function renderCell(person: Person, key: string, onEdit: (p: Person) => void, on
                     </Avatar>
                     <div className="flex flex-col min-w-0 flex-1">
                         <div className="flex items-center gap-2 overflow-hidden w-full pr-1">
-                            <Link
-                                href={`/people/${person.id}`}
+                                <Link
+                                    href={`/people/${getPersonRouteId(person)}`}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="font-semibold text-sm leading-none hover:underline hover:text-blue-600 transition-colors truncate flex-1"
@@ -261,7 +262,7 @@ function renderCell(person: Person, key: string, onEdit: (p: Person) => void, on
             );
         case 'balance': // Remains
             // Show TOTAL debt (current + outstanding)
-            const totalDebt = (person.current_debt || 0) + (person.outstanding_debt || 0);
+            const totalDebt = (person.current_cycle_debt || 0) + (person.outstanding_debt || 0);
             return (
                 <div className="flex flex-col items-start gap-1 justify-center py-1">
                     <Badge

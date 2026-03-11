@@ -3,7 +3,6 @@
 import { useState, useMemo, useRef, useEffect, useTransition } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { TransactionWithDetails, Account, Category, Person, Shop } from '@/types/moneyflow.types'
-import { fetchAccountCycleOptionsAction } from '@/actions/cashback.actions'
 import { parseCashbackConfig, getCashbackCycleRange, formatIsoCycleTag } from '@/lib/cashback'
 import { UnifiedTransactionTable } from '@/components/moneyflow/unified-transaction-table'
 import { AddTransactionDropdown } from '@/components/transactions-v2/header/AddTransactionDropdown'
@@ -17,7 +16,7 @@ import { SingleTransactionFormValues } from '@/components/transaction/slide-v2/t
 import { DateRange } from 'react-day-picker'
 import { normalizeMonthTag } from '@/lib/month-tag'
 import { startOfMonth, endOfMonth, isWithinInterval, parseISO, isSameDay, format } from 'date-fns'
-import { Search, FilterX, Filter, Clipboard, ChevronDown, X, Trash2 } from 'lucide-react'
+import { Search, FilterX, Filter, Clipboard, ChevronDown, X, Trash2, Loader2 } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import {
@@ -181,7 +180,7 @@ export function AccountDetailTransactions({
     const [statusFilter, setStatusFilter] = useState<StatusFilter>('active')
     const [date, setDate] = useState<Date>(new Date())
     const [dateRange, setDateRange] = useState<DateRange | undefined>(undefined)
-    const [dateMode, setDateMode] = useState<'all' | 'date' | 'month' | 'range' | 'year' | 'cycle'>(account.type === 'credit_card' ? 'cycle' : 'month')
+    const [dateMode, setDateMode] = useState<'all' | 'date' | 'month' | 'range' | 'year' | 'cycle'>('month')
     const [selectedTargetId, setSelectedTargetId] = useState<string | undefined>()
 
     // Use external state if provided, otherwise use internal
@@ -191,12 +190,14 @@ export function AccountDetailTransactions({
     const [cycles, setCycles] = useState<Array<{ label: string; value: string }>>([])
     const [isCyclesLoading, setIsCyclesLoading] = useState(false)
     const handleCycleChange = (cycle: string | undefined) => {
-        startTransition(() => {
-            setSelectedCycle(cycle)
-            if (cycle) {
-                setDateMode('cycle')
-            }
+        // Update UI state immediately so selected cycle is persistent while loading
+        setIsFilterActive(true)
+        setSelectedCycle(cycle)
+        if (cycle) {
+            setDateMode('cycle')
+        }
 
+        startTransition(() => {
             const params = new URLSearchParams(window.location.search)
             if (cycle) {
                 params.set('tag', cycle)
@@ -206,6 +207,7 @@ export function AccountDetailTransactions({
 
             const newUrl = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ''}`
             router.push(newUrl, { scroll: false })
+            router.refresh()
         })
     }
 
@@ -250,8 +252,14 @@ export function AccountDetailTransactions({
         }
 
         setIsCyclesLoading(true)
-        fetchAccountCycleOptionsAction(account.id).then(options => {
-            const cycleOptions = options.map(opt => ({
+        fetch(`/api/cashback/cycle-options?accountId=${encodeURIComponent(account.id)}&t=${Date.now()}`, {
+            method: 'GET',
+            cache: 'no-store',
+        })
+        .then(res => res.ok ? res.json() : { options: [] })
+        .then(payload => {
+            const options = Array.isArray(payload?.options) ? payload.options : []
+            const cycleOptions = options.map((opt: any) => ({
                 label: opt.label,
                 value: opt.tag
             }))
@@ -276,19 +284,10 @@ export function AccountDetailTransactions({
                 return
             }
 
-            // Auto-select current cycle ONLY on first mount and only if not already set
-            if (!hasAutoSelectedCycle.current && !selectedCycle && account.cashback_config) {
-                if (currentCycleRef.current) {
-                    const currentTag = currentCycleRef.current
-                    const matchingCycle = cycleOptions.find(c => c.value === currentTag)
-                    if (matchingCycle) {
-                        setSelectedCycle(currentTag)
-                        setDateMode('cycle')
-                        hasAutoSelectedCycle.current = true
-                    }
-                }
-            }
-        }).catch(err => {
+            // Do not auto-select cycle on initial load.
+            // Keep default month mode for faster first render; user can opt into cycle mode.
+        })
+        .catch(err => {
             console.error('Failed to fetch cycle options:', err)
             setCycles([])
             setIsCyclesLoading(false)
@@ -397,8 +396,8 @@ export function AccountDetailTransactions({
                 })
             }
 
-            // Cycle filter (credit cards)
-            if (selectedCycle && selectedCycle !== 'all') {
+            // Cycle filter (credit cards) - apply only when cycle mode is selected
+            if (dateMode === 'cycle' && selectedCycle && selectedCycle !== 'all') {
                 result = result.filter(t => {
                     const txCycle = t.persisted_cycle_tag || t.derived_cycle_tag || ''
                     return txCycle === selectedCycle
@@ -425,14 +424,6 @@ export function AccountDetailTransactions({
                     return isWithinInterval(txDate, { start: dateRange.from!, end: rangeEnd })
                 })
             }
-        } else if (account.type === 'credit_card' && currentCycleRef.current && !isFilterActive && selectedCycle !== 'all' && statusFilter === 'active') {
-            // Default behavior for credit cards: always show current cycle for "active" view
-            // BUT skip if user explicitly selected 'all' (even if filter not "active" in standard sense)
-            // AND skip if we are looking at "Void" or "Pending" tabs
-            result = result.filter(t => {
-                const txCycle = t.persisted_cycle_tag || t.derived_cycle_tag || ''
-                return txCycle === currentCycleRef.current
-            })
         }
 
         return result
@@ -447,6 +438,7 @@ export function AccountDetailTransactions({
         // Ignore 'dateFrom/dateTo' as they should be derived from cycle
         if (account.type === 'credit_card' && tag) {
             setSelectedCycle(tag)
+            setDateMode('cycle')
             // If tag is 'all', we still want to activate filter mode
             setIsFilterActive(true)
         }
@@ -619,10 +611,17 @@ export function AccountDetailTransactions({
                             date={date}
                             dateRange={dateRange}
                             mode={dateMode}
-                            onDateChange={setDate}
-                            onRangeChange={setDateRange}
+                            onDateChange={(nextDate) => {
+                                setDate(nextDate)
+                                setIsFilterActive(true)
+                            }}
+                            onRangeChange={(nextRange) => {
+                                setDateRange(nextRange)
+                                setIsFilterActive(true)
+                            }}
                             onModeChange={(mode) => {
                                 setDateMode(mode)
+                                setIsFilterActive(mode !== 'all')
                             }}
                             availableMonths={availableMonths}
                             accountCycleTags={account.type === 'credit_card' ? cycles.map(c => c.value) : undefined}
@@ -630,6 +629,22 @@ export function AccountDetailTransactions({
                             selectedCycleValue={selectedCycle}
                             onCycleSelect={handleCycleChange}
                             isCycleLoading={isCyclesLoading}
+                            resetLoading={isPending}
+                            onResetToCurrent={() => {
+                                setDate(new Date())
+                                setDateRange(undefined)
+                                setDateMode('month')
+                                setIsFilterActive(true)
+                                setSelectedCycle(undefined)
+
+                                startTransition(() => {
+                                    const params = new URLSearchParams(window.location.search)
+                                    params.delete('tag')
+                                    const newUrl = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ''}`
+                                    router.push(newUrl, { scroll: false })
+                                    router.refresh()
+                                })
+                            }}
                         />
 
                         {/* Search with Paste Icon & Search Button */}
@@ -704,6 +719,15 @@ export function AccountDetailTransactions({
             </div>
 
             <div className="flex-1 overflow-hidden relative">
+                {isPending && (
+                    <div className="absolute inset-0 z-[180] bg-white/70 backdrop-blur-[1px] flex items-center justify-center">
+                        <div className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-sm">
+                            <Loader2 className="h-5 w-5 animate-spin text-slate-600" />
+                            <span className="text-sm font-semibold text-slate-700">Fetching cycle data...</span>
+                        </div>
+                    </div>
+                )}
+
                 {/* Add/Duplicate Spinner */}
                 {isSubmittingAdd && (
                     <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[200] pointer-events-none">
@@ -792,7 +816,7 @@ export function AccountDetailTransactions({
                                     handleCycleChange(undefined) // Clear URL param
                                     setDate(new Date())
                                     setDateRange(undefined)
-                                    setDateMode(account.type === 'credit_card' ? 'cycle' : 'month')
+                                    setDateMode('month')
                                     setIsFilterActive(false)
                                     toast.success("Filters cleared")
                                 } else {
@@ -802,7 +826,7 @@ export function AccountDetailTransactions({
                                     handleCycleChange(undefined) // Clear URL param
                                     setDate(new Date())
                                     setDateRange(undefined)
-                                    setDateMode(account.type === 'credit_card' ? 'cycle' : 'month')
+                                    setDateMode('month')
                                     setSearchTerm('')
                                     setIsFilterActive(false)
                                     toast.success("All filters and search cleared")

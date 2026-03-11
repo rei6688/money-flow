@@ -12,7 +12,7 @@ import {
 import { AccountSpendingStats } from '@/types/cashback.types'
 import { AccountDetailHeaderV2 } from './AccountDetailHeaderV2'
 import { AccountDetailTransactions } from './AccountDetailTransactions'
-
+import { getAccountCashbackStatsAction } from '@/actions/account-cashback-actions'
 import { AccountContentWrapper } from '@/components/moneyflow/account-content-wrapper'
 import { normalizeMonthTag } from '@/lib/month-tag'
 import { useRecentItems } from '@/hooks/use-recent-items'
@@ -49,6 +49,9 @@ export function AccountDetailViewV2({
     const router = useRouter()
     const searchParams = useSearchParams()
     const [isPending, startTransition] = useTransition()
+    const [isCashbackLoading, setIsCashbackLoading] = useState(false)
+    const [cashbackStats, setCashbackStats] = useState<AccountSpendingStats | null>(initialCashbackStats)
+    const [cycleApplyTick, setCycleApplyTick] = useState(0)
 
     // Dynamic Icon for Account Detail (Shows Bank Logo on Tab)
     useAppFavicon(isPending, account.image_url ?? undefined)
@@ -59,12 +62,44 @@ export function AccountDetailViewV2({
     // Selected Cycle State (for cashback badge in header)
     const [selectedCycle, setSelectedCycle] = useState<string | undefined>()
 
+    const handleCycleChange = useCallback((cycle: string | undefined) => {
+        // Trigger cashback loading immediately so health spinner starts together with txn spinner
+        if (cycle && cycle !== 'all') {
+            setIsCashbackLoading(true)
+        } else {
+            setIsCashbackLoading(false)
+        }
+        setSelectedCycle(cycle)
+        setCycleApplyTick((prev) => prev + 1)
+    }, [])
+
+       // Sync cycle from URL
     useEffect(() => {
         const tag = searchParams.get('tag')
         if (tag && tag !== selectedCycle) {
             setSelectedCycle(tag)
         }
-    }, [searchParams, selectedCycle])
+       }, [searchParams, selectedCycle])
+
+       // Fetch cashback when cycle changes (from any source: URL or dropdown)
+       useEffect(() => {
+           if (!selectedCycle) return
+       
+           setIsCashbackLoading(true)
+           getAccountCashbackStatsAction(account.id, selectedCycle).then(result => {
+               setIsCashbackLoading(false)
+               if (result.success && result.data) {
+                   setCashbackStats(result.data)
+               }
+           }).catch(err => {
+               setIsCashbackLoading(false)
+               console.warn('Failed to fetch cashback stats:', err)
+           })
+       }, [selectedCycle, account.id, cycleApplyTick])
+
+    useEffect(() => {
+        setCashbackStats(initialCashbackStats)
+    }, [initialCashbackStats])
 
     // Batch Stats State
     const [pendingItems, setPendingItems] = useState<PendingBatchItem[]>([])
@@ -329,7 +364,8 @@ export function AccountDetailViewV2({
                 account={account}
                 allAccounts={allAccounts}
                 categories={categories}
-                cashbackStats={initialCashbackStats}
+                cashbackStats={cashbackStats}
+                isCashbackLoading={isCashbackLoading}
                 initialTransactions={initialTransactions}
                 selectedYear={selectedYear}
                 availableYears={availableYears}
@@ -363,7 +399,7 @@ export function AccountDetailViewV2({
                     people={people}
                     shops={shops}
                     selectedCycle={selectedCycle}
-                    onCycleChange={setSelectedCycle}
+                    onCycleChange={handleCycleChange}
                     onSuccess={syncPendingStats}
                 />
             </div>

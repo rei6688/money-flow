@@ -2,9 +2,9 @@ import { notFound, redirect } from 'next/navigation'
 import {
   getPocketBaseAccounts,
   getPocketBaseCategories,
-  getPocketBasePeople,
   getPocketBaseShops,
 } from '@/services/pocketbase/account-details.service'
+import { getPocketBasePeople, getPocketBasePersonDetails, resolvePocketBasePersonRecord } from '@/services/pocketbase/people.service'
 import { getDebtByTags } from '@/services/debt.service'
 import { getUnifiedTransactions, getTransactionsByPeople } from '@/services/transaction.service'
 import { getPersonCycleSheets } from '@/services/person-cycle-sheet.service'
@@ -19,6 +19,8 @@ import Loading from './loading'
 
 export const dynamic = 'force-dynamic'
 
+const isUuid = (value: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
+
 export async function generateMetadata({
   params,
   searchParams
@@ -29,7 +31,7 @@ export async function generateMetadata({
   const { id } = await params
   if (id === 'details') return { title: 'Redirecting...' }
   const { tab } = await searchParams
-  const person = await getPersonWithSubs(id)
+  const person = (await getPocketBasePersonDetails(id)) ?? (await getPersonWithSubs(id))
 
   if (!person) return { title: 'Person Not Found' }
 
@@ -103,15 +105,27 @@ async function PeopleDetailContent({
   const resolvedParams = await params
   const personId = resolvedParams.id
 
+  const canonicalRecord = await resolvePocketBasePersonRecord(personId)
+  const canonicalPersonId = canonicalRecord?.id ? String(canonicalRecord.id) : null
+  const canonicalSourcePersonId = typeof canonicalRecord?.slug === 'string' ? canonicalRecord.slug : null
+  if (canonicalPersonId && canonicalPersonId !== personId) {
+    const resolvedSearchParams = await searchParams
+    const query = new URLSearchParams(resolvedSearchParams as Record<string, string>)
+    const qs = query.toString()
+    redirect(`/people/${canonicalPersonId}${qs ? `?${qs}` : ''}`)
+  }
+
   // Fetch person details
-  const person = await getPersonWithSubs(personId)
+  const person = (await getPocketBasePersonDetails(personId)) ?? (await getPersonWithSubs(personId))
 
   if (!person) {
     notFound()
   }
 
-  const actualAccountId = person.id
-  const sheetProfileId = person.id
+  const sourcePersonId = isUuid(person.id)
+    ? person.id
+    : (canonicalSourcePersonId && isUuid(canonicalSourcePersonId) ? canonicalSourcePersonId : person.id)
+  const sheetProfileId = sourcePersonId
 
   // Fetch all required data in parallel
   const [accounts, categories, people, shops, debtTags, cycleSheets, subscriptions] = await Promise.all([
@@ -119,7 +133,7 @@ async function PeopleDetailContent({
     getPocketBaseCategories(),
     getPocketBasePeople(),
     getPocketBaseShops(),
-    getDebtByTags(personId),
+    getDebtByTags(sourcePersonId),
     getPersonCycleSheets(sheetProfileId),
     getServices(),
   ]) as any
@@ -141,8 +155,7 @@ async function PeopleDetailContent({
   const transactions = isGroupProfile
     ? await getTransactionsByPeople(groupPersonIds, 2000)
     : await getUnifiedTransactions({
-      accountId: actualAccountId,
-      personId: person.id,
+      personId: sourcePersonId,
       limit: 2000,
       context: 'person',
     })

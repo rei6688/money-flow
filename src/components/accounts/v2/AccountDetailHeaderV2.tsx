@@ -51,6 +51,7 @@ interface AccountDetailHeaderV2Props {
     allAccounts: Account[]
     categories: Category[]
     cashbackStats: AccountSpendingStats | null
+    isCashbackLoading?: boolean
     initialTransactions: Transaction[]
 
     selectedYear: string | null
@@ -93,6 +94,7 @@ export function AccountDetailHeaderV2({
     allAccounts,
     categories,
     cashbackStats,
+    isCashbackLoading,
     initialTransactions,
 
     selectedYear,
@@ -107,7 +109,8 @@ export function AccountDetailHeaderV2({
     const searchParams = useSearchParams()
     const [isSlideOpen, setIsSlideOpen] = React.useState(false)
     const [dynamicCashbackStats, setDynamicCashbackStats] = React.useState<AccountSpendingStats | null>(cashbackStats)
-    const [isCashbackLoading, setIsCashbackLoading] = React.useState(false)
+    // Use passed loading prop or fall back to false
+    const effectiveIsCashbackLoading = isCashbackLoading ?? false
     const [isSyncing, setIsSyncing] = React.useState(false)
 
     // Sync selected year with URL
@@ -145,32 +148,6 @@ export function AccountDetailHeaderV2({
     const mainAccountBalance = isParent ? (account.current_balance || 0) : (allAccounts.find(a => a.id === parentId)?.current_balance || 0)
     const familyDebtAbs = Math.abs(mainAccountBalance + childrenBalancesSum)
     const soloDebtAbs = Math.abs(account.current_balance || 0)
-
-    // Recalculate cashback stats when selectedCycle changes
-    React.useEffect(() => {
-        if (!selectedCycle || selectedCycle === 'all' || !isCreditCard) {
-            setDynamicCashbackStats(cashbackStats)
-            return
-        }
-
-        const fetchCashbackStats = async () => {
-            setIsCashbackLoading(true)
-            try {
-                const response = await fetch(`/api/cashback/stats?accountId=${account.id}&cycleTag=${encodeURIComponent(selectedCycle)}&mode=snapshot`)
-                if (response.ok) {
-                    const data = await response.json()
-                    setDynamicCashbackStats(data)
-                }
-            } catch (error) {
-                console.error('Failed to fetch cashback stats:', error)
-                setDynamicCashbackStats(cashbackStats)
-            } finally {
-                setIsCashbackLoading(false)
-            }
-        }
-
-        fetchCashbackStats()
-    }, [selectedCycle, account.id, isCreditCard, cashbackStats])
 
     // Cleanup 'tab' param if present (fix for persistent url)
     React.useEffect(() => {
@@ -217,23 +194,12 @@ export function AccountDetailHeaderV2({
         // Calculate shared from share fields
         const shared = cycleSpendRows.reduce((sum: number, tx: any) => {
             const sharedFixed = Number(tx.cashback_share_fixed || 0)
-            if (sharedFixed > 0) return sum + sharedFixed
-
-            const sharePercent = Number(tx.cashback_share_percent || 0)
-            if (sharePercent > 0) {
-                // Use transaction amount as base for percentage calculation
-                const txAmount = Math.abs(Number(tx.amount || 0))
-                // Get earned for this transaction
-                const entries = Array.isArray(tx.cashback_entries) ? tx.cashback_entries : []
-                const txEarned = entries.reduce((s: number, e: any) => {
-                    if (e.mode === 'virtual' || e.mode === 'real') {
-                        return s + Math.abs(Number(e.amount || 0))
-                    }
-                    return s
-                }, 0)
-                return sum + (txEarned > 0 ? txEarned * sharePercent : 0)
-            }
-            return sum
+            const rawSharePercent = Number(tx.cashback_share_percent || 0)
+            const sharePercent = rawSharePercent > 1 ? rawSharePercent / 100 : rawSharePercent
+            const txAmount = Math.abs(Number(tx.amount || 0))
+            const computedShared = (txAmount * sharePercent) + sharedFixed
+            const sharedAmount = Number(tx.cashback_share_amount ?? computedShared)
+            return sum + (isNaN(sharedAmount) ? 0 : sharedAmount)
         }, 0)
 
         const actual = cycleTransactions.reduce((sum: number, tx: any) => {
@@ -1066,7 +1032,50 @@ export function AccountDetailHeaderV2({
                 )
             }
 
-            {/* Section 3: Cashback Performance - Only show when cycle selected */}
+            {/* Section 3: Cashback Performance - Prompt when cycle is not selected */}
+            {isCreditCard && (!selectedCycle || selectedCycle === 'all') && (
+                <div className="flex flex-1 min-w-0 lg:flex-[5]">
+                    <HeaderSection
+                        label="Cashback Performance"
+                        borderColor="border-emerald-100"
+                        className="w-full bg-emerald-50/10"
+                        hideHintInHeader
+                    >
+                        <div className="flex h-full min-h-[92px] w-full items-center justify-center p-2.5">
+                            <div className="flex items-center gap-3 rounded-lg border border-emerald-200 bg-white/70 px-4 py-2.5">
+                                <svg className="h-8 w-8 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                                </svg>
+                                <div className="flex flex-col">
+                                    <span className="text-xs font-black uppercase tracking-wide text-emerald-700">Select a cycle to view cashback details</span>
+                                    <span className="text-[11px] font-medium text-slate-500">Open Cycle tab, choose month/year, then click Apply</span>
+                                </div>
+                            </div>
+                        </div>
+                    </HeaderSection>
+                </div>
+            )}
+
+            {/* Section 3: Cashback Performance - Loading state when cycle selected */}
+            {isCreditCard && selectedCycle && selectedCycle !== 'all' && !dynamicCashbackStats && effectiveIsCashbackLoading && (
+                <div className="flex flex-1 min-w-0 lg:flex-[5]">
+                    <HeaderSection
+                        label="Cashback Performance"
+                        borderColor="border-emerald-100"
+                        className="w-full bg-emerald-50/10"
+                        hideHintInHeader
+                    >
+                        <div className="flex h-full min-h-[92px] w-full items-center justify-center p-2.5">
+                            <div className="flex items-center gap-3 rounded-lg border border-emerald-200 bg-white/70 px-4 py-2.5">
+                                <Loader2 className="h-5 w-5 animate-spin text-emerald-600" />
+                                <span className="text-xs font-semibold text-slate-700">Fetching cycle data...</span>
+                            </div>
+                        </div>
+                    </HeaderSection>
+                </div>
+            )}
+
+            {/* Section 3: Cashback Performance - Detailed view when cycle selected */}
             {isCreditCard && dynamicCashbackStats && selectedCycle && selectedCycle !== 'all' && (
                 <div className="flex flex-1 min-w-0 lg:flex-[5]">
                     <HeaderSection
@@ -1075,6 +1084,13 @@ export function AccountDetailHeaderV2({
                         className="w-full bg-emerald-50/10"
                         hideHintInHeader
                     >
+                                    {/* Loading overlay during async fetch */}
+                                    {effectiveIsCashbackLoading && (
+                                        <div className="absolute inset-0 bg-white/40 backdrop-blur-sm rounded-md flex items-center justify-center z-10 flex-col gap-2 pointer-events-auto">
+                                            <Loader2 className="h-6 w-6 animate-spin text-emerald-600" />
+                                            <span className="text-xs font-semibold text-slate-700">Fetching cycle data...</span>
+                                        </div>
+                                    )}
                                     <div className="flex flex-col w-full h-full p-2.5 gap-2">
                                         {/* Main Layout: Circular Progress (Left) + 2x2 Metrics Grid (Right) */}
                                         <div className="flex items-start gap-3 w-full">

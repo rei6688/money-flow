@@ -8,7 +8,7 @@ import {
 } from '@/components/ui/popover'
 import { Button } from '@/components/ui/button'
 import { Calendar } from '@/components/ui/calendar'
-import { CalendarIcon, ChevronDown, ChevronLeft, ChevronRight, X, Loader2 } from 'lucide-react'
+import { CalendarIcon, ChevronDown, ChevronLeft, ChevronRight, X, Loader2, RotateCcw } from 'lucide-react'
 import { format, isSameMonth, startOfYear, endOfYear } from 'date-fns'
 import { DateRange } from 'react-day-picker'
 import { cn } from '@/lib/utils'
@@ -33,6 +33,8 @@ interface MonthYearPickerV2Props {
   fullWidth?: boolean
   locked?: boolean
   disabled?: boolean // New: disable entire picker
+  onResetToCurrent?: () => void
+  resetLoading?: boolean
 }
 
 export function MonthYearPickerV2({
@@ -53,6 +55,8 @@ export function MonthYearPickerV2({
   fullWidth,
   locked,
   disabled = false,
+  onResetToCurrent,
+  resetLoading = false,
 }: MonthYearPickerV2Props) {
   const [open, setOpen] = useState(false)
   const hoverTimeoutRef = useRef<NodeJS.Timeout | null>(null)
@@ -74,6 +78,7 @@ export function MonthYearPickerV2({
   const [localRange, setLocalRange] = useState<DateRange | undefined>(dateRange)
   const [localCycle, setLocalCycle] = useState<string | undefined>(selectedCycleValue)
   const [cycleSearch, setCycleSearch] = useState('')
+  const [cycleYearFilter, setCycleYearFilter] = useState<string>(String(new Date().getFullYear()))
   const hasCycleContext = accountCycleTags !== undefined || mode === 'cycle' || selectedCycleValue !== undefined
   const filteredCycles = useMemo(() => {
     const q = cycleSearch.trim().toLowerCase()
@@ -89,13 +94,31 @@ export function MonthYearPickerV2({
     return hasAll ? base : [{ label: 'All cycles', value: 'all' }, ...base]
   }, [cycles])
 
+  const cycleYears = useMemo(() => {
+    const years = new Set<string>()
+    ;(cycles || []).forEach((cycle) => {
+      const yearMatch = cycle.value.match(/^(\d{4})-/)
+      if (yearMatch?.[1]) years.add(yearMatch[1])
+    })
+
+    const sorted = Array.from(years).sort((a, b) => Number(b) - Number(a))
+    return sorted
+  }, [cycles])
+
   const filteredCyclesWithAll = useMemo(() => {
     const q = cycleSearch.trim().toLowerCase()
-    if (!q) return cyclesWithAll
-    return cyclesWithAll.filter(cycle =>
+    const byYear = cyclesWithAll.filter((cycle) => {
+      if (cycle.value === 'all') return true
+      if (cycleYearFilter === 'all') return true
+      const yearMatch = cycle.value.match(/^(\d{4})-/)
+      return yearMatch?.[1] === cycleYearFilter
+    })
+
+    if (!q) return byYear
+    return byYear.filter(cycle =>
       cycle.label.toLowerCase().includes(q) || cycle.value.toLowerCase().includes(q)
     )
-  }, [cyclesWithAll, cycleSearch])
+  }, [cyclesWithAll, cycleSearch, cycleYearFilter])
 
   const availableYears = useMemo(() => {
     const years = new Set<number>()
@@ -146,8 +169,14 @@ export function MonthYearPickerV2({
       setLocalDate(date)
       setLocalRange(dateRange)
       setLocalCycle(selectedCycleValue)
+      if (cycleYears.length > 0) {
+        const currentYear = String(new Date().getFullYear())
+        setCycleYearFilter(cycleYears.includes(currentYear) ? currentYear : cycleYears[0])
+      } else {
+        setCycleYearFilter('all')
+      }
     }
-  }, [open, mode, date, dateRange, selectedCycleValue, hasCycleContext])
+  }, [open, mode, date, dateRange, selectedCycleValue, hasCycleContext, cycleYears])
 
   const handleOpenChange = (newOpen: boolean) => {
     if (locked && newOpen) {
@@ -165,6 +194,12 @@ export function MonthYearPickerV2({
       setLocalDate(date)
       setLocalRange(dateRange)
       setLocalCycle(selectedCycleValue)
+      if (cycleYears.length > 0) {
+        const currentYear = String(new Date().getFullYear())
+        setCycleYearFilter(cycleYears.includes(currentYear) ? currentYear : cycleYears[0])
+      } else {
+        setCycleYearFilter('all')
+      }
       setCycleSearch('')
     }
   }
@@ -221,27 +256,48 @@ export function MonthYearPickerV2({
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={disabled}
-          onMouseEnter={handleMouseEnter}
-          onMouseLeave={handleMouseLeave}
-          className={cn(
-            "gap-2 justify-between font-medium transition-all",
-            fullWidth ? 'w-full h-10' : 'w-[200px] h-9',
-            (locked || disabled) && "opacity-50 cursor-not-allowed bg-muted/50",
-            mode !== 'all' && "border-primary/50 bg-primary/5 text-primary"
-          )}
-        >
-          <div className="flex items-center gap-1.5 truncate pointer-events-none">
-            <CalendarIcon className={cn("w-3.5 h-3.5 shrink-0", mode !== 'all' ? "text-primary" : "text-slate-500")} />
-            <span className="truncate">{displayText}</span>
-          </div>
-          <ChevronDown className={cn("w-3 h-3 opacity-50 transition-transform pointer-events-none", open && "rotate-180")} />
-        </Button>
-      </PopoverTrigger>
+      <div className={cn("flex items-center gap-1.5", fullWidth && "w-full")}>
+        <PopoverTrigger asChild>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={disabled || resetLoading}
+            onMouseEnter={handleMouseEnter}
+            onMouseLeave={handleMouseLeave}
+            className={cn(
+              "gap-2 justify-between font-medium transition-all",
+              fullWidth ? 'flex-1 h-10' : 'w-[200px] h-9',
+              (locked || disabled) && "opacity-50 cursor-not-allowed bg-muted/50",
+              mode !== 'all' && "border-primary/50 bg-primary/5 text-primary"
+            )}
+          >
+            <div className="flex items-center gap-1.5 truncate pointer-events-none">
+              <CalendarIcon className={cn("w-3.5 h-3.5 shrink-0", mode !== 'all' ? "text-primary" : "text-slate-500")} />
+              <span className="truncate">{displayText}</span>
+            </div>
+            <ChevronDown className={cn("w-3 h-3 opacity-50 transition-transform pointer-events-none", open && "rotate-180")} />
+          </Button>
+        </PopoverTrigger>
+        {onResetToCurrent && (
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            disabled={disabled || resetLoading}
+            onClick={(e) => {
+              e.stopPropagation()
+              onResetToCurrent()
+            }}
+            className={cn(
+              "h-9 w-9 text-slate-500 hover:text-slate-700",
+              fullWidth && "h-10 w-10"
+            )}
+            title="Reset to current month"
+          >
+            {resetLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+          </Button>
+        )}
+      </div>
       <PopoverContent
         className="w-auto p-0 border-primary/20 shadow-xl"
         align="start"
@@ -296,23 +352,35 @@ export function MonthYearPickerV2({
                   </div>
                 ) : cyclesWithAll.length > 0 ? (
                   <div className="space-y-2">
-                    <div className="relative">
-                      <input
-                        type="text"
-                        value={cycleSearch}
-                        onChange={(e) => setCycleSearch(e.target.value)}
-                        placeholder="Search cycle..."
-                        className="w-full h-8 rounded-md border border-slate-200 bg-white px-2.5 pr-8 text-xs outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20"
-                      />
-                      {cycleSearch && (
-                        <button
-                          type="button"
-                          onClick={() => setCycleSearch('')}
-                          className="absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 rounded hover:bg-slate-100"
-                        >
-                          <X className="h-3 w-3 text-slate-400" />
-                        </button>
-                      )}
+                    <div className="flex gap-2">
+                      <div className="relative flex-1">
+                        <input
+                          type="text"
+                          value={cycleSearch}
+                          onChange={(e) => setCycleSearch(e.target.value)}
+                          placeholder="Search cycle..."
+                          className="w-full h-8 rounded-md border border-slate-200 bg-white px-2.5 pr-8 text-xs outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20"
+                        />
+                        {cycleSearch && (
+                          <button
+                            type="button"
+                            onClick={() => setCycleSearch('')}
+                            className="absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 rounded hover:bg-slate-100"
+                          >
+                            <X className="h-3 w-3 text-slate-400" />
+                          </button>
+                        )}
+                      </div>
+                      <select
+                        value={cycleYearFilter}
+                        onChange={(e) => setCycleYearFilter(e.target.value)}
+                        className="h-8 min-w-[86px] rounded-md border border-slate-200 bg-white px-2 text-xs outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20"
+                      >
+                        {cycleYears.map((year) => (
+                          <option key={year} value={year}>{year}</option>
+                        ))}
+                        {cycleYears.length === 0 && <option value="all">All</option>}
+                      </select>
                     </div>
 
                     <div className="space-y-1.5 max-h-[220px] overflow-y-auto pr-1">

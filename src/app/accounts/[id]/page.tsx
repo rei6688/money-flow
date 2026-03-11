@@ -11,7 +11,8 @@ import {
 import { TagFilterProvider } from '@/context/tag-filter-context'
 import { AccountDetailViewV2 } from '@/components/accounts/v2/AccountDetailViewV2'
 import { Metadata } from 'next'
-import { notFound } from 'next/navigation'
+import { notFound, redirect } from 'next/navigation'
+import { Loader2 } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
 
@@ -65,6 +66,20 @@ export default async function AccountPage({ params, searchParams }: PageProps) {
   if (!account) {
     notFound()
   }
+
+  // Canonicalize account URL to PocketBase ID (prevents old UUID URLs from spreading)
+  if (id !== account.id) {
+    const query = new URLSearchParams()
+    if (tab) query.set('tab', tab)
+    if (tag) query.set('tag', tag)
+    const queryString = query.toString()
+    const target = queryString
+      ? `/accounts/${account.id}?${queryString}`
+      : `/accounts/${account.id}`
+    redirect(target)
+  }
+
+  const pocketBaseAccountId = account.id
 
   const resolvedDate = new Date() // Fallback
 
@@ -127,7 +142,14 @@ export default async function AccountPage({ params, searchParams }: PageProps) {
 
   return (
     <TagFilterProvider>
-      <Suspense fallback={<div className="flex h-screen items-center justify-center text-slate-400">Loading Account Details...</div>}>
+      <Suspense fallback={
+        <div className="flex h-screen items-center justify-center">
+          <div className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-sm">
+            <Loader2 className="h-5 w-5 animate-spin text-slate-600" />
+            <span className="text-sm font-semibold text-slate-700">Loading account details...</span>
+          </div>
+        </div>
+      }>
         <AccountDetailViewV2
           account={accountWithStats}
           allAccounts={allAccounts}

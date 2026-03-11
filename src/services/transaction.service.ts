@@ -474,14 +474,23 @@ export async function mapTransactionRow(
 
 const isUuid = (id: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
 
-async function resolveSupabaseId(id: string, collection: 'transactions' | 'accounts' = 'transactions'): Promise<string> {
+async function resolveSupabaseId(id: string, collection: 'transactions' | 'accounts' | 'people' = 'transactions'): Promise<string> {
   if (isUuid(id)) return id
 
   // Try to find in PocketBase to get source_id
   try {
-    const record = await (collection === 'accounts' ? pocketbaseGetById<any>('accounts', id) : pocketbaseGetById<any>('transactions', id))
-    if (record?.metadata?.source_id && isUuid(record.metadata.source_id)) {
+    const record = await (
+      collection === 'accounts'
+        ? pocketbaseGetById<any>('accounts', id)
+        : collection === 'people'
+          ? pocketbaseGetById<any>('people', id)
+          : pocketbaseGetById<any>('transactions', id)
+    )
+    if (collection === 'transactions' && record?.metadata?.source_id && isUuid(record.metadata.source_id)) {
       return record.metadata.source_id
+    }
+    if ((collection === 'accounts' || collection === 'people') && typeof record?.slug === 'string' && isUuid(record.slug)) {
+      return record.slug
     }
   } catch (err) {
     console.error(`[resolveSupabaseId] Failed to resolve ${id} from PB:`, err)
@@ -514,6 +523,26 @@ export async function loadTransactions(options: {
 
   console.log('[DB:SB] transactions.select', options)
   const supabase = createClient();
+  const resolvedTransactionId = options.transactionId
+    ? await resolveSupabaseId(options.transactionId, 'transactions')
+    : undefined
+  const resolvedAccountId = options.accountId
+    ? await resolveSupabaseId(options.accountId, 'accounts')
+    : undefined
+  const resolvedPersonId = options.personId
+    ? await resolveSupabaseId(options.personId, 'people')
+    : undefined
+  const resolvedPersonIds = options.personIds && options.personIds.length > 0
+    ? (await Promise.all(options.personIds.map((id) => resolveSupabaseId(id, 'people')))).filter(isUuid)
+    : undefined
+
+  if (options.transactionId && (!resolvedTransactionId || !isUuid(resolvedTransactionId))) {
+    console.warn('[DB:SB] Skip transactions.select for non-UUID transactionId', {
+      transactionId: options.transactionId,
+      resolvedTransactionId,
+    })
+    return []
+  }
 
   let query = supabase
     .from("transactions")
@@ -527,16 +556,22 @@ export async function loadTransactions(options: {
   }
 
   if (options.transactionId) {
-    query = query.eq("id", options.transactionId);
+    query = query.eq("id", resolvedTransactionId!);
   } else {
-    if (options.personIds && options.personIds.length > 0) {
-      query = query.in("person_id", options.personIds);
+    if (resolvedPersonIds && resolvedPersonIds.length > 0) {
+      query = query.in("person_id", resolvedPersonIds);
+    } else if (options.personIds && options.personIds.length > 0) {
+      return [];
+    } else if (resolvedPersonId && isUuid(resolvedPersonId)) {
+      query = query.eq("person_id", resolvedPersonId);
     } else if (options.personId) {
-      query = query.eq("person_id", options.personId);
-    } else if (options.accountId) {
+      return [];
+    } else if (resolvedAccountId && isUuid(resolvedAccountId)) {
       query = query.or(
-        `account_id.eq.${options.accountId},target_account_id.eq.${options.accountId}`,
+        `account_id.eq.${resolvedAccountId},target_account_id.eq.${resolvedAccountId}`,
       );
+    } else if (options.accountId) {
+      return [];
     }
   }
 

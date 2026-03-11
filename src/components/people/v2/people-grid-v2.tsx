@@ -1,3 +1,4 @@
+import { getPersonRouteId } from '@/lib/person-route'
 "use client";
 
 import React from "react";
@@ -75,7 +76,7 @@ function PersonCard({ person, onEdit, onLend, onRepay }: { person: Person; onEdi
                 </div>
 
                 <Link
-                    href={`/people/${person.id}`}
+                    href={`/people/${getPersonRouteId(person)}`}
                     className="font-bold text-slate-900 text-lg hover:text-blue-600 transition-colors leading-tight mb-1"
                 >
                     {person.name}
@@ -161,7 +162,7 @@ function PersonCard({ person, onEdit, onLend, onRepay }: { person: Person; onEdi
                             >
                                 <Edit className="h-4 w-4" />
                             </Button>
-                            <Link href={`/people/${person.id}`}>
+                            <Link href={`/people/${getPersonRouteId(person)}`}>
                                 <Button
                                     variant="ghost"
                                     size="icon"

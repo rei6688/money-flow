@@ -7,6 +7,7 @@ import { PersonDetailTransactions } from "./PersonDetailTransactions";
 import { useSearchParams, useRouter } from "next/navigation";
 import { DebtCycleList } from "@/components/moneyflow/debt-cycle-list";
 import { SplitBillManager } from "@/components/people/split-bill-manager";
+import { getPersonRouteId } from '@/lib/person-route';
 
 interface PersonDetailViewV2Props {
     person: Person;
@@ -51,7 +52,7 @@ export function PersonDetailViewV2({
         setActiveTab(tab);
         const params = new URLSearchParams(searchParams.toString());
         params.set('tab', tab);
-        router.push(`/people/${person.id}?${params.toString()}`);
+        router.push(`/people/${getPersonRouteId(person)}?${params.toString()}`);
     };
 
     useEffect(() => {

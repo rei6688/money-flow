@@ -288,8 +288,18 @@
                 "required": true
             },
             {
+                "id": "f_occ_01",
+                "name": "occurred_at",
+                "type": "date"
+            },
+            {
                 "id": "f_desc_01",
                 "name": "description",
+                "type": "text"
+            },
+            {
+                "id": "f_note_01",
+                "name": "note",
                 "type": "text"
             },
             {
@@ -309,6 +319,18 @@
                         "transfer",
                         "debt",
                         "repayment"
+                    ]
+                }
+            },
+            {
+                "id": "f_stat_01",
+                "name": "status",
+                "type": "select",
+                "options": {
+                    "values": [
+                        "posted",
+                        "pending",
+                        "void"
                     ]
                 }
             },
@@ -368,6 +390,31 @@
                 "type": "number"
             },
             {
+                "id": "f_cbshpct_01",
+                "name": "cashback_share_percent",
+                "type": "number"
+            },
+            {
+                "id": "f_cbshfix_01",
+                "name": "cashback_share_fixed",
+                "type": "number"
+            },
+            {
+                "id": "f_cbmode_01",
+                "name": "cashback_mode",
+                "type": "text"
+            },
+            {
+                "id": "f_debtcyc_01",
+                "name": "debt_cycle_tag",
+                "type": "text"
+            },
+            {
+                "id": "f_pcyc_01",
+                "name": "persisted_cycle_tag",
+                "type": "text"
+            },
+            {
                 "id": "f_isinst_01",
                 "name": "is_installment",
                 "type": "bool"
@@ -375,7 +422,11 @@
             {
                 "id": "f_partxn_01",
                 "name": "parent_transaction_id",
-                "type": "text"
+                "type": "relation",
+                "options": {
+                    "collectionId": "pvl_txn_001",
+                    "maxSelect": 1
+                }
             },
             {
                 "id": "f_meta_01",

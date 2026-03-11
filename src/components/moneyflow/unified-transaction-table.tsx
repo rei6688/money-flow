@@ -100,6 +100,7 @@ import { cn } from "@/lib/utils"
 import { parseCashbackConfig, getCashbackCycleRange } from '@/lib/cashback'
 import { formatCycleTag } from '@/lib/cycle-utils'
 import { normalizeMonthTag } from '@/lib/month-tag'
+import { getPersonRouteId } from '@/lib/person-route'
 import { resolveCashbackPolicy } from "@/services/cashback/policy-resolver"
 
 import { ConfirmRefundDialogV2 } from "./confirm-refund-dialog-v2"
@@ -509,6 +510,55 @@ export const UnifiedTransactionTable = React.forwardRef<UnifiedTransactionTableR
     }
   }, [isExcelMode])
 
+  const resolveCashbackFields = useCallback((txn: TransactionWithDetails) => {
+    const metadata = parseMetadata((txn as any).metadata)
+    const fromMetadata = (key: string) => {
+      const direct = (metadata as any)?.[key]
+      if (direct !== undefined && direct !== null) return Number(direct)
+      const nested = (metadata as any)?.cashback?.[key]
+      if (nested !== undefined && nested !== null) return Number(nested)
+      return undefined
+    }
+
+    const percentRaw = Number(
+      txn.cashback_share_percent ??
+      fromMetadata('cashback_share_percent') ??
+      fromMetadata('share_percent') ??
+      0
+    )
+    const fixedRaw = Number(
+      txn.cashback_share_fixed ??
+      fromMetadata('cashback_share_fixed') ??
+      fromMetadata('share_fixed') ??
+      0
+    )
+
+    const amountAbs = Math.abs(Number(txn.original_amount ?? txn.amount ?? 0))
+    const normalizedPercent = percentRaw > 1 ? percentRaw / 100 : percentRaw
+    const shareComputed = (amountAbs * normalizedPercent) + fixedRaw
+
+    const shareAmountRaw = Number(
+      txn.cashback_share_amount ??
+      fromMetadata('cashback_share_amount') ??
+      fromMetadata('share_amount') ??
+      (shareComputed > 0 ? shareComputed : 0)
+    )
+
+    const bankBackRaw = Number(
+      (txn as any).bank_back ??
+      fromMetadata('bank_back') ??
+      fromMetadata('estimated_cashback') ??
+      0
+    )
+
+    return {
+      percentRaw: Number.isFinite(percentRaw) ? percentRaw : 0,
+      fixedRaw: Number.isFinite(fixedRaw) ? fixedRaw : 0,
+      shareAmount: Number.isFinite(shareAmountRaw) ? shareAmountRaw : 0,
+      bankBack: Number.isFinite(bankBackRaw) ? bankBackRaw : 0,
+    }
+  }, [])
+
   const selectedStats = useMemo(() => {
     if (selectedCells.size === 0 || !selectedColumn) return { totalIn: 0, totalOut: 0, average: 0, count: 0 }
 
@@ -523,14 +573,11 @@ export const UnifiedTransactionTable = React.forwardRef<UnifiedTransactionTableR
         if (selectedColumn === 'amount') {
           // Use final price if has cashback, otherwise use original amount
           const originalAmount = typeof txn.original_amount === "number" ? txn.original_amount : txn.amount
-          const percentDisp = Number(txn.cashback_share_percent ?? 0)
-          const fixedDisp = Number(txn.cashback_share_fixed ?? 0)
-          const hasCashback = percentDisp > 0 || fixedDisp > 0
+          const { percentRaw, fixedRaw, shareAmount } = resolveCashbackFields(txn)
+          const hasCashback = percentRaw > 0 || fixedRaw > 0 || shareAmount > 0
 
           if (hasCashback) {
-            const rate = percentDisp > 1 ? percentDisp / 100 : percentDisp
-            const cashbackCalc = (Math.abs(Number(originalAmount ?? 0)) * rate) + fixedDisp
-            const cashbackAmount = txn.cashback_share_amount ?? (cashbackCalc > 0 ? cashbackCalc : 0)
+            const cashbackAmount = shareAmount
             const baseAmount = Math.abs(Number(originalAmount ?? 0))
             const finalDisp = (typeof txn.final_price === 'number')
               ? Math.abs(txn.final_price)
@@ -561,8 +608,7 @@ export const UnifiedTransactionTable = React.forwardRef<UnifiedTransactionTableR
       average: count > 0 ? (totalIn - totalOut) / count : 0,
       count
     }
-  }, [selectedCells, selectedColumn, tableData])
-
+  }, [resolveCashbackFields, selectedCells, selectedColumn, tableData])
   useEffect(() => {
     setVisibleColumns(prev => {
       const next = { ...prev }
@@ -1227,6 +1273,65 @@ export const UnifiedTransactionTable = React.forwardRef<UnifiedTransactionTableR
     return { incomeSummary, expenseSummary }
   }, [selection, tableData])
 
+  const inferTieredPolicyByCategoryName = useCallback((account: Account | undefined, categoryName: string | undefined) => {
+    if (!account || account.type !== 'credit_card' || account.cb_type !== 'tiered' || !categoryName) return null
+    const tiers = Array.isArray((account.cb_rules_json as any)?.tiers) ? (account.cb_rules_json as any).tiers : []
+    const policies = (tiers[0]?.policies || []) as Array<{ rate?: number; max?: number }>
+    if (policies.length === 0) return null
+
+    const normalizedPolicies = policies
+      .map((item) => ({ rate: Number(item.rate || 0), maxReward: item.max != null ? Number(item.max) : undefined }))
+      .filter((item) => item.rate > 0)
+
+    if (normalizedPolicies.length === 0) return null
+
+    const lowerName = categoryName.toLowerCase()
+    const byRateAsc = [...normalizedPolicies].sort((left, right) => left.rate - right.rate)
+    const byRateDesc = [...normalizedPolicies].sort((left, right) => right.rate - left.rate)
+
+    if (lowerName.includes('online')) return byRateAsc[0]
+    if (lowerName.includes('offline') || lowerName.includes('utilities') || lowerName.includes('utility')) return byRateDesc[0]
+
+    return null
+  }, [])
+
+  const estimateTxnCashback = useCallback((txn: TransactionWithDetails) => {
+    const scopedAccount = context === 'account' && contextId
+      ? accounts.find(a => a.id === contextId)
+      : undefined
+
+    const account = scopedAccount
+      ?? accounts.find(a =>
+        a.id === txn.account_id
+        || a.id === txn.source_account_id
+        || a.id === txn.target_account_id
+      )
+
+    if (!account || account.type !== 'credit_card') return { estimated: 0, rate: 0, maxReward: undefined as number | undefined, isFallback: false }
+
+    const amountAbs = Math.abs(txn.amount)
+    const categoryName = txn.category_name || categories.find(c => c.id === txn.category_id)?.name || undefined
+    const policy = resolveCashbackPolicy({
+      account: account as any,
+      categoryId: txn.category_id,
+      amount: amountAbs,
+      categoryName,
+      cycleTotals: { spent: 0 }
+    })
+
+    const fallback = inferTieredPolicyByCategoryName(account, categoryName)
+    const shouldUseFallback = Boolean(fallback) && (policy.metadata?.policySource === 'program_default' || policy.metadata?.policySource === 'level_default')
+    const effectiveRate = shouldUseFallback ? Number(fallback?.rate || policy.rate || 0) : Number(policy.rate || 0)
+    const effectiveMaxReward = shouldUseFallback ? fallback?.maxReward : policy.maxReward
+
+    const baseVal = amountAbs * effectiveRate
+    const estimated = (effectiveMaxReward !== undefined && effectiveMaxReward !== null)
+      ? Math.min(baseVal, effectiveMaxReward)
+      : baseVal
+
+    return { estimated, rate: effectiveRate, maxReward: effectiveMaxReward, isFallback: shouldUseFallback }
+  }, [accounts, categories, inferTieredPolicyByCategoryName])
+
   const tableTotals = useMemo(() => {
     let base = 0, net = 0, back = 0, estCb = 0, shared = 0, profit = 0;
 
@@ -1241,44 +1346,31 @@ export const UnifiedTransactionTable = React.forwardRef<UnifiedTransactionTableR
       const amount = Math.abs(txn.amount ?? 0);
       const originalAmount = typeof txn.original_amount === 'number' ? Math.abs(txn.original_amount) : amount;
 
-      const percentDisp = Number(txn.cashback_share_percent ?? 0);
-      const fixedDisp = Number(txn.cashback_share_fixed ?? 0);
-      const rate = percentDisp > 1 ? percentDisp / 100 : percentDisp;
-      const calcBack = (originalAmount * rate) + fixedDisp;
-      const cashbackAmount = txn.cashback_share_amount ?? (calcBack > 0 ? calcBack : 0);
+      const { percentRaw, fixedRaw, shareAmount } = resolveCashbackFields(txn);
+      const rate = percentRaw > 1 ? percentRaw / 100 : percentRaw;
+      const cashbackAmount = shareAmount;
 
       const finalPrice = typeof txn.final_price === 'number' ? Math.abs(txn.final_price) : Math.max(0, originalAmount - cashbackAmount);
 
       // Est Cashback (From Policy)
       let est_cb = 0;
-      const isExpense = txn.type === 'expense';
-      const account = accounts.find(a => a.id === txn.account_id);
-      if (isExpense && account?.type === 'credit_card') {
-        const policy = resolveCashbackPolicy({
-          account: account as any,
-          categoryId: txn.category_id,
-          amount: originalAmount,
-          categoryName: txn.category_name,
-          cycleTotals: { spent: 0 }
-        });
-        const policyRate = policy?.rate ?? 0;
-        const baseVal = originalAmount * policyRate;
-        est_cb = (policy?.maxReward !== undefined && policy.maxReward !== null)
-          ? Math.min(baseVal, policy.maxReward)
-          : baseVal;
+      const isSpendType = txn.type === 'expense' || txn.type === 'debt' || txn.type === 'service';
+      if (isSpendType) {
+        est_cb = estimateTxnCashback(txn).estimated;
       }
 
       base += originalAmount;
       back += cashbackAmount;
       net += finalPrice;
       estCb += est_cb;
-      shared += (txn.cashback_share_amount ?? 0);
-      profit += (est_cb - (txn.cashback_share_amount ?? 0));
+      const computedShared = (originalAmount * rate) + fixedRaw;
+      const sharedAmount = shareAmount > 0 ? shareAmount : computedShared;
+      shared += sharedAmount;
+      profit += (est_cb - sharedAmount);
     });
 
     return { base, net, back, estCb, shared, profit };
-  }, [paginatedTransactions, statusOverrides, accounts]);
-
+  }, [paginatedTransactions, statusOverrides, estimateTxnCashback, resolveCashbackFields]);
   const renderActionMenuItems = (
     txn: TransactionWithDetails,
     isVoided: boolean,
@@ -1511,18 +1603,6 @@ export const UnifiedTransactionTable = React.forwardRef<UnifiedTransactionTableR
             onClick={(e) => { e.stopPropagation(); externalOnDuplicate?.(txn); }}
           >
             <Files className="h-3.5 w-3.5" />
-          </button>
-        </CustomTooltip>
-
-        <CustomTooltip content="Open in new tab">
-          <button
-            className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-md transition-colors"
-            onClick={(e) => {
-              e.stopPropagation();
-              window.open(`/transactions?highlight=${txn.id}`, '_blank');
-            }}
-          >
-            <ArrowUpRight className="h-3.5 w-3.5" />
           </button>
         </CustomTooltip>
 
@@ -1769,7 +1849,7 @@ export const UnifiedTransactionTable = React.forwardRef<UnifiedTransactionTableR
                     </TableCell>
                   </TableRow>
                 ) : (
-                  paginatedTransactions.map(txn => {
+                  paginatedTransactions.map((txn, rowIndex) => {
                     const isRepayment = txn.type === 'repayment';
                     const visualType = (txn as any).displayType ?? txn.type;
                     const amountClass =
@@ -1787,6 +1867,7 @@ export const UnifiedTransactionTable = React.forwardRef<UnifiedTransactionTableR
                     const effectiveStatus = statusOverrides[txn.id] ?? txn.status
                     const isVoided = effectiveStatus === 'void'
                     const isMenuOpen = actionMenuOpen === txn.id
+                    const sequenceNumber = ((currentPage - 1) * pageSize) + rowIndex + 1
                     const txnMetadata = parseMetadata(txn.metadata)
                     // Refund SEQ Logic (Global for row)
                     let refundSeq = 0;
@@ -1843,7 +1924,7 @@ export const UnifiedTransactionTable = React.forwardRef<UnifiedTransactionTableR
                               <CustomTooltip content={fullDateStr}>
                                 <div className="flex flex-col items-start justify-center cursor-help rounded px-0.5 group min-w-[34px]">
                                   <span className="text-sm font-bold text-slate-700 leading-none group-hover:text-blue-600 transition-colors">
-                                    {day}.{month}
+                                    {sequenceNumber} | {day}.{month}
                                   </span>
                                   <span className="text-[10px] text-slate-400 font-medium leading-tight mt-0.5 group-hover:text-blue-500 transition-colors">
                                     {timeStr}
@@ -1889,27 +1970,15 @@ export const UnifiedTransactionTable = React.forwardRef<UnifiedTransactionTableR
                             return <span className="text-slate-300">-</span>;
                           }
 
-                          const account = accounts.find(a => a.id === txn.account_id);
-                          if (!account || account.type !== 'credit_card') return <span className="text-slate-300">-</span>;
-
-                          const policy = resolveCashbackPolicy({
-                            account: account as any,
-                            categoryId: txn.category_id,
-                            amount: amountAbs,
-                            categoryName: txn.category_name,
-                            cycleTotals: { spent: 0 }
-                          });
-
-                          const policyRate = policy?.rate ?? 0;
+                          const estimate = estimateTxnCashback(txn)
+                          const policyRate = estimate.rate
                           const baseVal = amountAbs * policyRate;
-                          const val = (policy?.maxReward !== undefined && policy.maxReward !== null)
-                            ? Math.min(baseVal, policy.maxReward)
-                            : baseVal;
+                          const val = estimate.estimated
 
                           if (val === 0) return <span className="text-slate-300">-</span>;
 
                           const effectiveRate = amountAbs > 0 ? (val / amountAbs) : 0;
-                          const isCapped = policy?.maxReward !== undefined && policy.maxReward !== null && baseVal > policy.maxReward;
+                          const isCapped = estimate.maxReward !== undefined && estimate.maxReward !== null && baseVal > estimate.maxReward;
 
                           return (
                             <CustomTooltip content={
@@ -1920,12 +1989,17 @@ export const UnifiedTransactionTable = React.forwardRef<UnifiedTransactionTableR
                                 </div>
                                 {isCapped && (
                                   <div className="text-rose-400 font-bold border-t border-white/10 pt-1">
-                                    Config card max = {numberFormatter.format(policy.maxReward || 0)}
+                                    Config card max = {numberFormatter.format(estimate.maxReward || 0)}
                                   </div>
                                 )}
-                                {policy?.metadata?.reason && (
+                                {estimate.isFallback && (
+                                  <div className="text-[10px] italic border-t border-white/5 pt-1 mt-1 text-amber-500">
+                                    Rule fallback: mapped by category name
+                                  </div>
+                                )}
+                                {!estimate.isFallback && (
                                   <div className="text-[10px] italic border-t border-white/5 pt-1 mt-1 text-slate-500">
-                                    Rule: {policy.metadata.reason}
+                                    Rule: policy-based category match
                                   </div>
                                 )}
                               </div>
@@ -1956,12 +2030,20 @@ export const UnifiedTransactionTable = React.forwardRef<UnifiedTransactionTableR
                             return <span className="text-slate-300">-</span>;
                           }
 
-                          const val = txn.cashback_share_amount ?? 0;
+                          const { fixedRaw, percentRaw, shareAmount } = resolveCashbackFields(txn);
+                          const shareRate = percentRaw > 1 ? percentRaw / 100 : percentRaw;
+                          const amountAbs = Math.abs(txn.amount);
+                          const computedShared = (amountAbs * shareRate) + fixedRaw;
+                          const val = shareAmount > 0 ? shareAmount : computedShared;
                           if (val === 0) return <span className="text-slate-300">-</span>;
 
-                          const shareFixed = txn.cashback_share_fixed ?? 0;
-                          const shareRate = txn.cashback_share_percent ?? 0;
-                          const amountAbs = Math.abs(txn.amount);
+                          const formulaLabelParts: string[] = [];
+                          if (fixedRaw > 0) formulaLabelParts.push(numberFormatter.format(fixedRaw));
+                          if (shareRate > 0) {
+                            const percentLabel = (shareRate * 100).toFixed((shareRate * 100) % 1 === 0 ? 0 : 2);
+                            formulaLabelParts.push(`${percentLabel}%`);
+                          }
+                          const formulaLabel = formulaLabelParts.length > 0 ? formulaLabelParts.join(' + ') : numberFormatter.format(val);
 
                           return (
                             <CustomTooltip content={
@@ -1969,18 +2051,18 @@ export const UnifiedTransactionTable = React.forwardRef<UnifiedTransactionTableR
                                 <div className="font-bold text-orange-400">Cashback Shared</div>
                                 <div className="text-slate-400">
                                   {shareRate > 0 && (
-                                    <span>{numberFormatter.format(amountAbs)} × {(shareRate * 100).toFixed(shareRate * 100 % 1 === 0 ? 0 : 2)}%</span>
+                                    <span>{numberFormatter.format(amountAbs)} × {(shareRate * 100).toFixed((shareRate * 100) % 1 === 0 ? 0 : 2)}%</span>
                                   )}
-                                  {shareRate > 0 && shareFixed > 0 && <span> + </span>}
-                                  {shareFixed > 0 && (
-                                    <span>{numberFormatter.format(shareFixed)} (fixed)</span>
+                                  {shareRate > 0 && fixedRaw > 0 && <span> + </span>}
+                                  {fixedRaw > 0 && (
+                                    <span>{numberFormatter.format(fixedRaw)} (fixed)</span>
                                   )}
                                   <span> = {numberFormatter.format(val)}</span>
                                 </div>
                               </div>
                             }>
                               <span className="text-orange-600 cursor-help border-b border-dotted border-orange-200">
-                                {numberFormatter.format(val)}
+                                {formulaLabel}
                               </span>
                             </CustomTooltip>
                           );
@@ -2004,34 +2086,23 @@ export const UnifiedTransactionTable = React.forwardRef<UnifiedTransactionTableR
                           }
 
                           const amountAbs = Math.abs(txn.amount);
-                          const account = accounts.find(a => a.id === txn.account_id);
+                          const estimate = estimateTxnCashback(txn)
+                          const { fixedRaw, percentRaw, shareAmount, bankBack } = resolveCashbackFields(txn);
+                          const estimateBack = Math.max(Number(estimate.estimated || 0), bankBack);
 
-                          // Use same re-calculation logic as actual_cashback
-                          const policy = account?.type === 'credit_card' ? resolveCashbackPolicy({
-                            account: account as any,
-                            categoryId: txn.category_id,
-                            amount: amountAbs,
-                            categoryName: txn.category_name,
-                            cycleTotals: { spent: 0 }
-                          }) : null;
+                          const shareRate = percentRaw > 1 ? percentRaw / 100 : percentRaw;
+                          const computedShared = (amountAbs * shareRate) + fixedRaw;
+                          const share = shareAmount > 0 ? shareAmount : computedShared;
+                          const profit = estimateBack - share;
 
-                          const policyRate = policy?.rate ?? 0;
-                          const baseBankBack = amountAbs * policyRate;
-                          const bankBack = (policy?.maxReward !== undefined && policy.maxReward !== null)
-                            ? Math.min(baseBankBack, policy.maxReward)
-                            : baseBankBack;
-
-                          const share = txn.cashback_share_amount ?? 0;
-                          const profit = bankBack - share;
-
-                          if (profit === 0 && bankBack === 0 && share === 0) return <span className="text-slate-300">-</span>;
+                          if (profit === 0 && estimateBack === 0 && share === 0) return <span className="text-slate-300">-</span>;
 
                           return (
                             <CustomTooltip content={
                               <div className="text-xs space-y-1">
                                 <div className="font-bold text-indigo-400">Profit Calculation</div>
                                 <div className="text-slate-400">
-                                  {numberFormatter.format(bankBack)} (est) - {numberFormatter.format(share)} (share) = <span className={profit > 0 ? "text-emerald-400" : "text-rose-400"}>{numberFormatter.format(profit)}</span>
+                                  {numberFormatter.format(estimateBack)} (est) - {numberFormatter.format(share)} (share) = <span className={profit > 0 ? "text-emerald-400" : "text-rose-400"}>{numberFormatter.format(profit)}</span>
                                 </div>
                               </div>
                             }>
@@ -2050,7 +2121,8 @@ export const UnifiedTransactionTable = React.forwardRef<UnifiedTransactionTableR
 
 
                         case "shop": {
-                          let shopLogo = txn.shop_image_url;
+                          const resolvedShop = txn.shop_id ? shops.find((shop) => shop.id === txn.shop_id) : null
+                          let shopLogo = txn.shop_image_url || resolvedShop?.image_url || null;
 
                           // ROLLOVER IMAGE OVERRIDE: If category is Rollover, use Category Image (takes precedence over Shop/Bank)
                           if (txn.category_name === 'Rollover' || txn.category_id === '71e71711-83e5-47ba-8ff5-85590f45a70c') {
@@ -2240,6 +2312,19 @@ export const UnifiedTransactionTable = React.forwardRef<UnifiedTransactionTableR
                                     </button>
                                   </CustomTooltip>
 
+                                  <CustomTooltip content="Open in new tab">
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        window.open(`/transactions?highlight=${txn.id}`, '_blank', 'noopener,noreferrer')
+                                      }}
+                                      className="p-1 hover:bg-slate-100 rounded text-slate-500 hover:text-emerald-600 transition-colors shrink-0"
+                                      title="Open in new tab"
+                                    >
+                                      <ArrowUpRight className="h-3 w-3" />
+                                    </button>
+                                  </CustomTooltip>
+
                                   {(() => {
                                     const note = txn.note || '';
                                     const isConfirmed = note.startsWith('[C] ');
@@ -2410,7 +2495,7 @@ export const UnifiedTransactionTable = React.forwardRef<UnifiedTransactionTableR
                         case "note": {
                           const linkedIdForCopy = (refundSeq === 2 || refundSeq === 3) ? displayIdForBadge : null;
                           return (
-                            <div className="flex items-center gap-2 max-w-[250px] group/note justify-between w-full">
+                            <div className="flex items-center gap-2 max-w-none group/note justify-between w-full min-w-0">
                               {/* Left: Note + Linked ID */}
                               <div className="flex items-center gap-1.5 min-w-0 flex-1">
                                 {linkedIdForCopy && linkedIdForCopy !== txn.id && (
@@ -2448,7 +2533,7 @@ export const UnifiedTransactionTable = React.forwardRef<UnifiedTransactionTableR
                               </div>
 
                               {/* Right: Copy Icon Only */}
-                              <div className="flex items-center gap-1 ml-auto shrink-0">
+                              <div className="flex items-center gap-1 ml-auto shrink-0 pl-1 border-l border-slate-100">
                                 {/* Transaction ID Copy */}
                                 <button
                                   onClick={(e) => {
@@ -2460,13 +2545,26 @@ export const UnifiedTransactionTable = React.forwardRef<UnifiedTransactionTableR
                                     })
                                   }}
                                   className={cn(
-                                    "p-1 hover:bg-slate-100 rounded text-slate-300 hover:text-slate-600 transition-colors shrink-0",
+                                    "p-1 hover:bg-slate-100 rounded text-slate-500 hover:text-slate-700 transition-colors shrink-0",
                                     copiedId === txn.id && "text-emerald-500"
                                   )}
                                   title={`Copy Transaction ID: ${txn.id}`}
                                 >
                                   {copiedId === txn.id ? <CheckCheck className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
                                 </button>
+
+                                <CustomTooltip content="Open in new tab">
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      window.open(`/transactions?highlight=${txn.id}`, '_blank', 'noopener,noreferrer')
+                                    }}
+                                    className="p-1 hover:bg-slate-100 rounded text-slate-500 hover:text-emerald-600 transition-colors shrink-0"
+                                    title="Open in new tab"
+                                  >
+                                    <ArrowUpRight className="h-3.5 w-3.5" />
+                                  </button>
+                                </CustomTooltip>
                               </div>
                             </div>
                           );
@@ -2515,17 +2613,20 @@ export const UnifiedTransactionTable = React.forwardRef<UnifiedTransactionTableR
                           // FLOW COLUMN WITH CYCLE BADGES
                           // ==============================
                           // Extract data
-                          const sourceName = txn.source_name || txn.account_name || 'Unknown'
-                          const sourceIcon = txn.source_image
                           const sourceId = txnSourceId
+                          const sourceAccountFromId = sourceId ? accounts.find(a => a.id === sourceId) : null
+                          const sourceName = txn.source_name || txn.account_name || sourceAccountFromId?.name || 'Unknown'
+                          const sourceIcon = txn.source_image || sourceAccountFromId?.image_url || null
 
                           const personId = (txn as any).person_id
-                          const personName = (txn as any).person_name
-                          const personImage = (txn as any).person_image_url
+                          const resolvedPerson = personId ? people.find((person) => person.id === personId) : null
+                          const personName = (txn as any).person_name || resolvedPerson?.name || 'Unknown'
+                          const personImage = (txn as any).person_image_url || resolvedPerson?.image_url || null
 
-                          const destName = destNameRaw
-                          const destIcon = txn.destination_image
                           const destId = txnDestId
+                          const destAccountFromId = destId ? accounts.find(a => a.id === destId) : null
+                          const destName = txn.destination_name || destAccountFromId?.name || destNameRaw
+                          const destIcon = txn.destination_image || destAccountFromId?.image_url || null
 
                           // Determine what to display
                           const hasPerson = !!personId
@@ -2572,7 +2673,10 @@ export const UnifiedTransactionTable = React.forwardRef<UnifiedTransactionTableR
                           ) : null
 
                           // People debt tag badge with click/hover logic
-                          const person = people.find(p => p.id === personId);
+                          const person = resolvedPerson;
+                          const personRouteId = personId
+                            ? getPersonRouteId(person ?? { id: personId, pocketbase_id: null })
+                            : null
                           const cycleSheet = person?.cycle_sheets?.find(s => s.cycle_tag === debtTag);
                           const sheetUrl = cycleSheet?.sheet_url || person?.google_sheet_url || person?.sheet_link;
 
@@ -2597,7 +2701,7 @@ export const UnifiedTransactionTable = React.forwardRef<UnifiedTransactionTableR
                                   onClick={(e) => {
                                     e.stopPropagation()
                                     e.preventDefault()
-                                    window.open(`/people/${personId}?tag=${debtTag}`, '_blank', 'noopener,noreferrer')
+                                    window.open(`/people/${personRouteId}?tag=${debtTag}`, '_blank', 'noopener,noreferrer')
                                   }}
                                   className="inline-flex items-center justify-center gap-1 rounded-[4px] bg-blue-50 border border-blue-200 text-blue-700 px-2 h-6 text-[10px] font-extrabold whitespace-nowrap min-w-[110px] cursor-pointer hover:bg-blue-100 transition-colors shadow-sm"
                                 >
@@ -2653,7 +2757,7 @@ export const UnifiedTransactionTable = React.forwardRef<UnifiedTransactionTableR
                             if (entityToShow === 'person') {
                               displayName = personName
                               displayImage = personImage
-                              displayLink = `/people/${personId}`
+                              displayLink = personRouteId ? `/people/${personRouteId}` : null
                               badgeToDisplay = peopleDebtTag
                               isCycleBadge = false
                             } else if (entityToShow === 'dest') {
@@ -2765,7 +2869,7 @@ export const UnifiedTransactionTable = React.forwardRef<UnifiedTransactionTableR
                           const targetEntity = {
                             name: hasPerson ? personName : destName,
                             icon: hasPerson ? personImage : destIcon,
-                            link: hasPerson ? `/people/${personId}` : (destId ? `/accounts/${destId}` : null),
+                            link: hasPerson ? (personRouteId ? `/people/${personRouteId}` : null) : (destId ? `/accounts/${destId}` : null),
                             isAccount: !hasPerson
                           }
 
@@ -2835,8 +2939,9 @@ export const UnifiedTransactionTable = React.forwardRef<UnifiedTransactionTableR
                         }
                         case "people": {
                           const personId = (txn as any).person_id
-                          const personName = (txn as any).person_name
-                          const personImage = (txn as any).person_image_url
+                          const resolvedPerson = personId ? people.find((person) => person.id === personId) : null
+                          const personName = (txn as any).person_name || resolvedPerson?.name || 'Unknown'
+                          const personImage = (txn as any).person_image_url || resolvedPerson?.image_url || null
 
                           if (!personId) return <span className="text-slate-300 italic text-xs">-</span>
 
@@ -2887,18 +2992,25 @@ export const UnifiedTransactionTable = React.forwardRef<UnifiedTransactionTableR
                         case "amount": {
                           const amount = typeof txn.amount === "number" ? txn.amount : 0
                           const originalAmount = typeof txn.original_amount === "number" ? txn.original_amount : amount
-                          // Amount logic: if >= 0 income/in, < 0 expense/out
-                          const isIncome = amount >= 0
 
                           // Calculate Cashback/Fee for display
-                          const cashbackVal = txn.cashback_share_amount ?? 0
-                          const percentDisp = Number(txn.cashback_share_percent ?? 0)
-                          const fixedDisp = Number(txn.cashback_share_fixed ?? 0)
+                          const { percentRaw, fixedRaw, shareAmount } = resolveCashbackFields(txn)
+                          const cashbackVal = shareAmount
+                          const percentDisp = percentRaw
+                          const fixedDisp = fixedRaw
+                          const rate = percentDisp > 1 ? percentDisp / 100 : percentDisp
+
+                          const isRepayment = txn.type === 'repayment';
+                          const visualType = (txn as any).displayType ?? txn.type;
+                          const amountClass =
+                            visualType === "income" || isRepayment
+                              ? "text-emerald-700"
+                              : visualType === "expense"
+                                ? "text-red-500"
+                                : "text-slate-600"
 
                           // Calculate final price
-                          const rate = percentDisp > 1 ? percentDisp / 100 : percentDisp
-                          const cashbackCalc = (Math.abs(Number(originalAmount ?? 0)) * rate) + fixedDisp
-                          const cashbackAmount = txn.cashback_share_amount ?? (cashbackCalc > 0 ? cashbackCalc : 0);
+                          const cashbackAmount = cashbackVal;
                           const baseAmount = Math.abs(Number(originalAmount ?? 0));
                           const finalDisp = (typeof txn.final_price === 'number')
                             ? Math.abs(txn.final_price)
@@ -2935,12 +3047,24 @@ export const UnifiedTransactionTable = React.forwardRef<UnifiedTransactionTableR
 
                           return (
                             <div className="flex flex-col items-end gap-1 w-full">
-                              <span
-                                className={cn("font-bold tabular-nums tracking-tight truncate", amountClass)}
-                                style={{ fontSize: `0.9em` }}
-                              >
-                                {numberFormatter.format(Math.abs(amount))}
-                              </span>
+                              <div className="flex items-center gap-1.5 justify-end">
+                                {percentDisp > 0 && !visibleColumns.total_back && (
+                                  <span className="inline-flex items-center px-1 py-0.5 rounded text-[9px] font-bold bg-green-100 text-green-700 border border-green-200">
+                                    -{(percentDisp > 1 ? percentDisp : percentDisp * 100).toFixed(0)}%
+                                  </span>
+                                )}
+                                {fixedDisp > 0 && (
+                                  <span className="inline-flex items-center px-1 py-0.5 rounded text-[9px] font-bold bg-green-100 text-green-700 border border-green-200">
+                                    -{numberFormatter.format(fixedDisp)}
+                                  </span>
+                                )}
+                                <span
+                                  className={cn("font-bold tabular-nums tracking-tight truncate", amountClass)}
+                                  style={{ fontSize: `0.9em` }}
+                                >
+                                  {numberFormatter.format(Math.abs(amount))}
+                                </span>
+                              </div>
                             </div>
                           )
                         }
@@ -2948,15 +3072,17 @@ export const UnifiedTransactionTable = React.forwardRef<UnifiedTransactionTableR
                           const amount = typeof txn.amount === "number" ? txn.amount : 0
                           const originalAmount = typeof txn.original_amount === "number" ? txn.original_amount : amount
 
-                          const percentDisp = Number(txn.cashback_share_percent ?? 0)
-                          const fixedDisp = Number(txn.cashback_share_fixed ?? 0)
-                          const rate = percentDisp > 1 ? percentDisp / 100 : percentDisp
-                          const cashbackCalc = (Math.abs(Number(originalAmount ?? 0)) * rate) + fixedDisp
-                          const cashbackAmount = txn.cashback_share_amount ?? (cashbackCalc > 0 ? cashbackCalc : 0);
+                          const { percentRaw, fixedRaw, shareAmount } = resolveCashbackFields(txn)
+                          const percentDisp = percentRaw
+                          const fixedDisp = fixedRaw
+                          const cashbackAmount = shareAmount;
                           const baseAmount = Math.abs(Number(originalAmount ?? 0));
                           const finalDisp = (typeof txn.final_price === 'number')
                             ? Math.abs(txn.final_price)
                             : (cashbackAmount > baseAmount ? baseAmount : Math.max(0, baseAmount - cashbackAmount));
+                          const estimatedRewardDisplay = cashbackAmount > 0
+                            ? cashbackAmount
+                            : Math.max(0, baseAmount - finalDisp)
 
                           const hasCashback = percentDisp > 0 || fixedDisp > 0 || cashbackAmount > 0;
                           const isRepayment = txn.type === 'repayment';
@@ -2990,7 +3116,7 @@ export const UnifiedTransactionTable = React.forwardRef<UnifiedTransactionTableR
                                     </div>
                                     <div className="flex justify-between gap-4 text-emerald-600">
                                       <span>Est. Refund/Bank Reward:</span>
-                                      <span className="font-bold">{numberFormatter.format(cashbackAmount)}</span>
+                                      <span className="font-bold">{numberFormatter.format(estimatedRewardDisplay)}</span>
                                     </div>
                                     <div className="flex justify-between gap-4 font-bold border-t border-slate-200 pt-1 mt-1">
                                       <span>Net Result:</span>
@@ -3027,11 +3153,10 @@ export const UnifiedTransactionTable = React.forwardRef<UnifiedTransactionTableR
                           const originalAmount = typeof txn.original_amount === "number" ? txn.original_amount : amount
                           const baseAmount = Math.abs(Number(originalAmount ?? 0));
 
-                          const percentDisp = Number(txn.cashback_share_percent ?? 0)
-                          const fixedDisp = Number(txn.cashback_share_fixed ?? 0)
-                          const rate = percentDisp > 1 ? percentDisp / 100 : percentDisp
-                          const cashbackCalc = (baseAmount * rate) + fixedDisp
-                          const cashbackAmount = txn.cashback_share_amount ?? (cashbackCalc > 0 ? cashbackCalc : 0);
+                          const { percentRaw, fixedRaw, shareAmount, bankBack } = resolveCashbackFields(txn)
+                          const percentDisp = percentRaw
+                          const fixedDisp = fixedRaw
+                          const cashbackAmount = shareAmount > 0 ? shareAmount : bankBack;
 
                           if (cashbackAmount === 0 && !percentDisp && !fixedDisp) return <span className="text-slate-300">-</span>;
 
@@ -3070,9 +3195,10 @@ export const UnifiedTransactionTable = React.forwardRef<UnifiedTransactionTableR
                           )
                         }
                         case "back_info": {
-                          const cashbackAmount = Number(txn.bank_back ?? 0) + Number(txn.cashback_share_amount ?? 0)
-                          const pRaw = Number(txn.cashback_share_percent ?? 0)
-                          const fRaw = Number(txn.cashback_share_fixed ?? 0)
+                          const { percentRaw, fixedRaw, shareAmount, bankBack } = resolveCashbackFields(txn)
+                          const cashbackAmount = bankBack + shareAmount
+                          const pRaw = percentRaw
+                          const fRaw = fixedRaw
                           if (!pRaw && !fRaw && typeof txn.profit !== 'number') return <span className="text-slate-300">-</span>
                           return (
                             <div className="flex flex-col text-[1em]">

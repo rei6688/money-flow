@@ -12,7 +12,6 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select-shadcn'
 import { Combobox, ComboboxItem } from '@/components/ui/combobox'
 import { Search, ChevronDown, Check, ChevronsUpDown } from 'lucide-react'
 import { isYYYYMM } from '@/lib/month-tag'
@@ -25,6 +24,24 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 interface DebtCycle {
   tag: string
   remains: number
+}
+
+function extractCycleTagFromUrl(input?: string | null): string | null {
+  if (!input) return null
+  const raw = input.trim()
+  if (!raw) return null
+
+  try {
+    const parsed = new URL(raw)
+    const haystack = `${parsed.pathname} ${parsed.search} ${parsed.hash}`
+    const match = haystack.match(/(20\d{2})[-_./](0[1-9]|1[0-2])/)
+    if (!match) return null
+    return `${match[1]}-${match[2]}`
+  } catch {
+    const match = raw.match(/(20\d{2})[-_./](0[1-9]|1[0-2])/)
+    if (!match) return null
+    return `${match[1]}-${match[2]}`
+  }
 }
 
 function isValidLink(value: string | null | undefined): boolean {
@@ -76,9 +93,7 @@ const numberFormatter = new Intl.NumberFormat('en-US', {
 })
 
 function getMonthDisplayName(tag: string) {
-  if (!tag.includes('-')) return tag
-  const [year, month] = tag.split('-')
-  return `${month}/${year}`
+  return tag
 }
 
 export function ManageSheetButton({
@@ -118,6 +133,8 @@ export function ManageSheetButton({
   setLoadingMessage,
 }: ManageSheetButtonProps) {
   const [activeTab, setActiveTab] = useState<'history' | 'settings'>('history')
+  const [historySearch, setHistorySearch] = useState('')
+  const [historyYear, setHistoryYear] = useState<string>('all')
   const [sheetUrl, setSheetUrl] = useState<string | null>(initialSheetUrl ?? null)
   const [isManaging, startManageTransition] = useTransition()
   const [isSaving, startSaveTransition] = useTransition()
@@ -129,13 +146,14 @@ export function ManageSheetButton({
 
   // State for all settings
   const [currentScriptLink, setCurrentScriptLink] = useState(scriptLink ?? '')
-  const [currentSheetUrl, setCurrentSheetUrl] = useState(googleSheetUrl ?? '')
+  const [currentSheetUrl, setCurrentSheetUrl] = useState(googleSheetUrl ?? initialSheetUrl ?? '')
   const [currentSheetImg, setCurrentSheetImg] = useState(sheetFullImg ?? '')
   const [currentShowBankAccount, setCurrentShowBankAccount] = useState(showBankAccount)
   const [currentBankInfo, setCurrentBankInfo] = useState(sheetBankInfo ?? '')
   const [currentLinkedBankId, setCurrentLinkedBankId] = useState<string | null>(sheetLinkedBankId ?? null)
   const [currentShowQrImage, setCurrentShowQrImage] = useState(showQrImage)
   const [accountSearch, setAccountSearch] = useState('')
+  const [lastAutoDetectedCycle, setLastAutoDetectedCycle] = useState<string | null>(null)
 
   const router = useRouter()
 
@@ -147,13 +165,17 @@ export function ManageSheetButton({
   useEffect(() => {
     if (!showPopover) return
     setCurrentScriptLink(scriptLink ?? '')
-    setCurrentSheetUrl(googleSheetUrl ?? '')
+    setCurrentSheetUrl(googleSheetUrl ?? initialSheetUrl ?? '')
     setCurrentSheetImg(sheetFullImg ?? '')
     setCurrentShowBankAccount(showBankAccount)
     setCurrentBankInfo(sheetBankInfo ?? '')
     setCurrentLinkedBankId(sheetLinkedBankId ?? null)
     setCurrentShowQrImage(showQrImage)
-  }, [scriptLink, googleSheetUrl, sheetFullImg, showBankAccount, sheetBankInfo, sheetLinkedBankId, showQrImage, showPopover])
+  }, [scriptLink, googleSheetUrl, initialSheetUrl, sheetFullImg, showBankAccount, sheetBankInfo, sheetLinkedBankId, showQrImage, showPopover])
+
+  useEffect(() => {
+    setHistoryYear(selectedYear ?? 'all')
+  }, [selectedYear, showPopover])
 
   // AUTO-FILL Bank Info if missing
   useEffect(() => {
@@ -166,6 +188,49 @@ export function ManageSheetButton({
     }
   }, [currentLinkedBankId, accounts, currentBankInfo])
 
+  useEffect(() => {
+    if (!showPopover) return
+    if (currentLinkedBankId) return
+
+    const bankAccounts = (accounts || []).filter((acc) => acc.type === 'bank')
+    if (bankAccounts.length === 0) return
+
+    const normalizedInfo = (currentBankInfo || '').toLowerCase()
+    if (normalizedInfo) {
+      const matched = bankAccounts.find((acc) => {
+        const name = (acc.name || '').toLowerCase()
+        const accountNumber = (acc.account_number || '').toLowerCase()
+        const receiver = (acc.receiver_name || '').toLowerCase()
+        return [name, accountNumber, receiver].some((item) => item && normalizedInfo.includes(item))
+      })
+      if (matched) {
+        setCurrentLinkedBankId(matched.id)
+        return
+      }
+    }
+
+    if (bankAccounts.length === 1) {
+      setCurrentLinkedBankId(bankAccounts[0].id)
+    }
+  }, [showPopover, currentLinkedBankId, accounts, currentBankInfo])
+
+  useEffect(() => {
+    if (!showPopover) return
+
+    const detectedFromSheet = extractCycleTagFromUrl(currentSheetUrl)
+    const detectedFromScript = extractCycleTagFromUrl(currentScriptLink)
+    const detectedTag = detectedFromSheet || detectedFromScript
+    if (!detectedTag) return
+    if (lastAutoDetectedCycle === detectedTag) return
+
+    const existsInCycles = allCycles.some((cycle) => cycle.tag === detectedTag)
+    if (!existsInCycles) return
+
+    setLastAutoDetectedCycle(detectedTag)
+    onYearChange?.(detectedTag.split('-')[0])
+    onCycleChange?.(detectedTag)
+  }, [showPopover, currentSheetUrl, currentScriptLink, allCycles, lastAutoDetectedCycle, onCycleChange, onYearChange])
+
   const label = sheetUrl ? linkedLabel : unlinkedLabel
   const icon = sheetUrl ? RefreshCcw : FileSpreadsheet
   const Icon = icon
@@ -173,9 +238,41 @@ export function ManageSheetButton({
   const hasValidCycle = isYYYYMM(cycleTag)
   const hasValidScriptLink = isValidLink(currentScriptLink)
 
+  const cycleYears = React.useMemo(() => {
+    const sourceYears = availableYears.length > 0
+      ? availableYears
+      : Array.from(new Set(allCycles.filter(cycle => isYYYYMM(cycle.tag)).map(cycle => cycle.tag.split('-')[0]))).sort().reverse()
+
+    return sourceYears.filter(Boolean)
+  }, [allCycles, availableYears])
+
+  const filteredCycles = React.useMemo(() => {
+    const normalizedSearch = historySearch.trim().toLowerCase()
+
+    return allCycles.filter((cycle) => {
+      const matchesYear = historyYear === 'all' || cycle.tag.startsWith(`${historyYear}-`)
+      if (!matchesYear) return false
+      if (!normalizedSearch) return true
+
+      return [cycle.tag, getMonthDisplayName(cycle.tag), numberFormatter.format(cycle.remains)]
+        .join(' ')
+        .toLowerCase()
+        .includes(normalizedSearch)
+    })
+  }, [allCycles, historySearch, historyYear])
+
+  const groupedFilteredCycles = React.useMemo(() => {
+    return cycleYears
+      .map((year) => ({
+        year,
+        cycles: filteredCycles.filter((cycle) => cycle.tag.startsWith(`${year}-`)),
+      }))
+      .filter((group) => group.cycles.length > 0)
+  }, [cycleYears, filteredCycles])
+
   const hasUnsavedChanges =
     currentScriptLink !== (scriptLink ?? '') ||
-    currentSheetUrl !== (googleSheetUrl ?? '') ||
+    currentSheetUrl !== (googleSheetUrl ?? initialSheetUrl ?? '') ||
     currentSheetImg !== (sheetFullImg ?? '') ||
     currentShowBankAccount !== showBankAccount ||
     currentBankInfo !== (sheetBankInfo ?? '') ||
@@ -385,12 +482,6 @@ export function ManageSheetButton({
                             setShowPopover(true)
                           }
                         }}
-                        onMouseEnter={(e) => {
-                          if (allCycles.length > 0) {
-                            setActiveTab('history')
-                            setShowPopover(true)
-                          }
-                        }}
                       >
                         <span className="font-bold text-slate-800 tabular-nums truncate text-[11px]">{cycleTag || 'History'}</span>
 
@@ -458,7 +549,7 @@ export function ManageSheetButton({
           </PopoverTrigger>
         )}
 
-        <PopoverContent className="w-[380px] p-0 overflow-hidden rounded-xl border-slate-200 shadow-xl" align="end" sideOffset={8}>
+        <PopoverContent className="w-[380px] p-0 overflow-hidden rounded-xl border-slate-200 shadow-xl" align={splitMode ? 'start' : 'end'} side="bottom" sideOffset={8}>
           <div className="p-2.5 bg-slate-50 border-b border-slate-100">
             <Tabs
               value={activeTab}
@@ -500,6 +591,32 @@ export function ManageSheetButton({
                     </Button>
                   </div>
 
+                  <div className="px-3 pb-2 flex items-center gap-2">
+                    <div className="relative flex-1">
+                      <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                      <Input
+                        value={historySearch}
+                        onChange={(e) => setHistorySearch(e.target.value)}
+                        placeholder="Search cycle..."
+                        className="h-8 pl-8 text-xs"
+                      />
+                    </div>
+
+                    <div className="relative w-[110px]">
+                      <select
+                        value={historyYear}
+                        onChange={(e) => setHistoryYear(e.target.value)}
+                        className="h-8 w-full rounded-md border border-slate-200 bg-white px-2 pr-7 text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                      >
+                        <option value="all">All years</option>
+                        {cycleYears.map((year) => (
+                          <option key={year} value={year}>{year}</option>
+                        ))}
+                      </select>
+                      <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                    </div>
+                  </div>
+
                   <div className="px-2 pb-2">
                     {/* All History Option */}
                     <button
@@ -516,10 +633,10 @@ export function ManageSheetButton({
                       }}
                       className={cn(
                         "w-full flex items-center justify-between px-3 py-2 rounded-md transition-colors text-xs mb-1",
-                        (selectedYear === null || cycleTag === 'all') ? "bg-amber-50 text-amber-700" : "hover:bg-slate-50"
+                        (selectedYear === null || cycleTag === 'all') && historyYear === 'all' ? "bg-amber-50 text-amber-700" : "hover:bg-slate-50"
                       )}
                     >
-                      <span className={cn("font-bold flex items-center gap-2", (selectedYear === null || cycleTag === 'all') ? "text-amber-900" : "text-slate-600")}>
+                      <span className={cn("font-bold flex items-center gap-2", (selectedYear === null || cycleTag === 'all') && historyYear === 'all' ? "text-amber-900" : "text-slate-600")}>
                         <RotateCcw className="w-3 h-3" />
                         {selectedYear ? `All ${selectedYear}` : 'All History'}
                       </span>
@@ -540,12 +657,10 @@ export function ManageSheetButton({
                       </button>
                     )}
 
-                    {availableYears.map(year => (
+                    {groupedFilteredCycles.map(({ year, cycles }) => (
                       <div key={year} className="mt-2 mb-1">
                         <div className="px-3 py-1 text-[10px] font-bold text-slate-500 bg-slate-100/50 rounded-sm mb-1">{year}</div>
-                        {allCycles
-                          .filter(c => c.tag.startsWith(year))
-                          .map(cycle => {
+                        {cycles.map(cycle => {
                             const cycleSettled = Math.abs(cycle.remains) < 100
                             return (
                               <button
@@ -576,6 +691,12 @@ export function ManageSheetButton({
                           })}
                       </div>
                     ))}
+
+                    {groupedFilteredCycles.length === 0 && (
+                      <div className="px-3 py-6 text-center text-xs text-slate-500">
+                        No cycles match the current filters.
+                      </div>
+                    )}
                   </div>
                 </div>
               </TabsContent>

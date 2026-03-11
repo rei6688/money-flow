@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { Calendar, ChevronRight, History, MinusCircle, Pencil, PlusCircle, User } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { ManageSheetButton } from '@/components/people/manage-sheet-button'
+import { getPersonRouteId } from '@/lib/person-route'
 import type { PeopleDirectoryItem } from '@/components/people/people-directory-data'
 import { isYYYYMM } from '@/lib/month-tag'
 import { PeopleSlideV2 } from '@/components/people/v2/people-slide-v2'
@@ -246,7 +247,7 @@ export function PeopleDirectoryMobile({
                       initialSheetUrl={item.sheetUrl}
                       scriptLink={item.person.sheet_link ?? null}
                       googleSheetUrl={item.person.google_sheet_url ?? null}
-                      connectHref={`/people/${item.id}?tab=sheet`}
+                      connectHref={`/people/${getPersonRouteId(item.person)}?tab=sheet`}
                       size="sm"
                       disabled={!isYYYYMM(item.cycleTag)}
                       linkedLabel="Sheet"
@@ -258,7 +259,7 @@ export function PeopleDirectoryMobile({
                     <ChevronRight className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                   </div>
                   <Link
-                    href={`/people/${item.id}?tab=history`}
+                    href={`/people/${getPersonRouteId(item.person)}?tab=history`}
                     onClick={(event) => event.stopPropagation()}
                     className="flex w-full min-w-0 items-center justify-between rounded-xl px-2 py-2 text-[11px] font-semibold text-slate-600 transition hover:bg-white hover:text-slate-900"
                   >
@@ -303,7 +304,7 @@ export function PeopleDirectoryMobile({
           <DialogFooter className="pt-3">
             {debtModalItem && (
               <Link
-                href={`/people/${debtModalItem.id}?tab=details`}
+                href={`/people/${getPersonRouteId(debtModalItem.person)}?tab=details`}
                 onClick={() => setDebtModalItem(null)}
                 className="inline-flex items-center justify-center rounded-md bg-slate-900 px-3 py-2 text-sm font-semibold text-white transition hover:bg-slate-800"
               >

@@ -10,7 +10,7 @@ import { SimpleTransactionTableSkeleton } from '@/components/people/v2/SimpleTra
 import { PaidTransactionsModal } from '@/components/people/paid-transactions-modal'
 import { PeopleHeader } from '@/components/people/v2/PeopleHeader'
 import { TransactionControlBar } from '@/components/people/v2/TransactionControlBar'
-import { toYYYYMMFromDate } from '@/lib/month-tag'
+import { normalizeMonthTag, toYYYYMMFromDate } from '@/lib/month-tag'
 import { useRecentItems } from '@/hooks/use-recent-items'
 import { useBreadcrumbs } from '@/context/breadcrumb-context'
 import { TransactionSlideV2 } from '@/components/transaction/slide-v2/transaction-slide-v2'
@@ -18,10 +18,13 @@ import { PeopleSlideV2 } from '@/components/people/v2/people-slide-v2'
 import { FilterType } from '@/components/transactions-v2/header/TypeFilterDropdown'
 import { StatusFilter } from '@/components/transactions-v2/header/StatusDropdown'
 import { parseISO, isWithinInterval } from 'date-fns'
+import { DateRange } from 'react-day-picker'
 import { Info, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import { useAppFavicon } from '@/hooks/use-app-favicon'
+import { normalizeCashbackConfig } from '@/lib/cashback'
+import { getPersonRouteId } from '@/lib/person-route'
 
 interface MemberDetailViewProps {
     person: Person
@@ -50,9 +53,22 @@ export function MemberDetailView({
     shops,
     subscriptions = [],
 }: MemberDetailViewProps) {
+        const getEffectiveTxnTag = (txn: TransactionWithDetails): string => {
+            const metadata = txn.metadata as any
+            const metadataDebtCycle = metadata?.debt_cycle_tag as string | undefined
+            const metadataPersisted = metadata?.persisted_cycle_tag as string | undefined
+            const persisted = (txn as any).persisted_cycle_tag as string | undefined
+            const debtCycle = (txn as any).debt_cycle_tag as string | undefined
+            const metadataTag = (metadata?.tag as string | undefined)
+            const rawTag = debtCycle || metadataDebtCycle || txn.tag || persisted || metadataPersisted || metadataTag || ''
+            return normalizeMonthTag(rawTag) || rawTag
+        }
+
     const router = useRouter()
     const searchParams = useSearchParams()
     const urlTag = searchParams.get('tag')
+    const dateFrom = searchParams.get('dateFrom') || ''
+    const dateTo = searchParams.get('dateTo') || ''
     const currentMonthTag = toYYYYMMFromDate(new Date())
 
     const [activeTab, setActiveTab] = useState<'timeline' | 'history' | 'split-bill'>('timeline')
@@ -60,6 +76,9 @@ export function MemberDetailView({
     const [filterType, setFilterType] = useState<FilterType>('all')
     const [statusFilter, setStatusFilter] = useState<StatusFilter>('active')
     const [selectedAccountId, setSelectedAccountId] = useState<string | undefined>()
+    const [dateMode, setDateMode] = useState<'month' | 'range' | 'date' | 'all' | 'year' | 'cycle'>('all')
+    const [dateValue, setDateValue] = useState<Date>(new Date())
+    const [dateRangeValue, setDateRangeValue] = useState<DateRange | undefined>(undefined)
     const [showPaidModal, setShowPaidModal] = useState(false)
     const [dateRangeFilter, setDateRangeFilter] = useState<{ from: Date; to: Date } | undefined>()
     const [isSubmitting, setIsSubmitting] = useState(false)
@@ -76,13 +95,32 @@ export function MemberDetailView({
 
     // Derive active month/year from URL (Single Source of Truth)
     const urlYear = searchParams.get('year')
-    const activeCycleTag = urlTag || currentMonthTag
+    const activeCycleTag = useMemo(() => {
+        if (urlTag) return urlTag
+
+        const hasCurrentData = transactions.some((txn) => {
+            const normalizedTag = normalizeMonthTag(getEffectiveTxnTag(txn) || '')
+            return normalizedTag === currentMonthTag
+        })
+        if (hasCurrentData) return currentMonthTag
+
+        const latestTag = transactions
+            .map((txn) => normalizeMonthTag(getEffectiveTxnTag(txn) || ''))
+            .filter((tag): tag is string => Boolean(tag))
+            .sort((a, b) => b.localeCompare(a))[0]
+
+        return latestTag || currentMonthTag
+    }, [urlTag, transactions, currentMonthTag])
+
     const selectedYear = useMemo(() => {
         if (urlYear) return urlYear // Explicit year param takes priority
         if (urlTag === 'all') return null
         if (urlTag && urlTag.includes('-')) return urlTag.split('-')[0]
+
+        if (activeCycleTag.includes('-')) return activeCycleTag.split('-')[0]
+
         return new Date().getFullYear().toString()
-    }, [urlTag, urlYear])
+    }, [urlTag, urlYear, activeCycleTag])
 
     // Data Hooks
     const { debtCycles, availableYears, currentCycle } = usePersonDetails({
@@ -122,9 +160,9 @@ export function MemberDetailView({
         document.title = `${person.name} ${tabLabel}`
 
         // Set custom breadcrumb name: "Lâm detail history"
-        const path = `/people/${person.id}`
+        const path = `/people/${getPersonRouteId(person)}`
         setCustomName(path, `${person.name} detail history`)
-    }, [person.id, person.name, activeTab, setCustomName])
+    }, [person.id, person.name, person.pocketbase_id, activeTab, setCustomName])
 
     const { addRecentItem } = useRecentItems()
 
@@ -141,6 +179,15 @@ export function MemberDetailView({
 
     // 4. Update Navigation Handlers
     const handleCycleChange = (tag: string) => {
+        if (tag !== 'all') {
+            if (dateMode !== 'all' || dateRangeFilter) {
+                setDateMode('all')
+                setDateRangeValue(undefined)
+                setDateRangeFilter(undefined)
+                handleClearDateRange()
+            }
+        }
+
         const params = new URLSearchParams(searchParams.toString())
         params.set('tag', tag)
         if (tag.includes('-')) {
@@ -152,6 +199,15 @@ export function MemberDetailView({
     }
 
     const handleCycleSelect = (tag: string, year: string | null) => {
+        if (tag !== 'all') {
+            if (dateMode !== 'all' || dateRangeFilter) {
+                setDateMode('all')
+                setDateRangeValue(undefined)
+                setDateRangeFilter(undefined)
+                handleClearDateRange()
+            }
+        }
+
         const params = new URLSearchParams(searchParams.toString())
         params.set('tag', tag)
         if (year) {
@@ -190,16 +246,110 @@ export function MemberDetailView({
 
     // Passively sync date range from URL if present
     useEffect(() => {
-        const dateFrom = searchParams.get('dateFrom')
-        const dateTo = searchParams.get('dateTo')
         if (dateFrom && dateTo) {
             try {
-                setDateRangeFilter({ from: parseISO(dateFrom), to: parseISO(dateTo) })
+                const parsedFrom = parseISO(dateFrom)
+                const parsedTo = parseISO(dateTo)
+                if (Number.isNaN(parsedFrom.getTime()) || Number.isNaN(parsedTo.getTime())) {
+                    setDateRangeFilter(undefined)
+                    setDateRangeValue(undefined)
+                    setDateMode('all')
+                    return
+                }
+                setDateRangeFilter({ from: parsedFrom, to: parsedTo })
+                setDateRangeValue({ from: parsedFrom, to: parsedTo })
+                setDateValue(parsedFrom)
+                setDateMode('range')
             } catch (err) {
                 console.error('Failed to parse date range:', err)
+                setDateRangeFilter(undefined)
+                setDateRangeValue(undefined)
+                setDateMode('all')
             }
+        } else {
+            setDateRangeFilter(undefined)
+            setDateRangeValue(undefined)
+            setDateMode('all')
         }
-    }, [searchParams])
+    }, [dateFrom, dateTo, searchParams])
+
+    const updateDateRangeParams = (nextFrom: string, nextTo: string) => {
+        const params = new URLSearchParams(searchParams.toString())
+
+        if (nextFrom) {
+            params.set('dateFrom', nextFrom)
+        } else {
+            params.delete('dateFrom')
+        }
+
+        if (nextTo) {
+            params.set('dateTo', nextTo)
+        } else {
+            params.delete('dateTo')
+        }
+
+        startTransition(() => {
+            router.push(`?${params.toString()}`, { scroll: false })
+        })
+    }
+
+    const handleClearDateRange = () => {
+        updateDateRangeParams('', '')
+    }
+
+    const handlePickerDateChange = (nextDate: Date) => {
+        setDateValue(nextDate)
+    }
+
+    const handlePickerRangeChange = (nextRange: DateRange | undefined) => {
+        setDateRangeValue(nextRange)
+        if (nextRange?.from && nextRange?.to) {
+            const from = nextRange.from.toISOString().slice(0, 10)
+            const to = nextRange.to.toISOString().slice(0, 10)
+            updateDateRangeParams(from, to)
+            return
+        }
+
+        if (!nextRange?.from && !nextRange?.to) {
+            handleClearDateRange()
+        }
+    }
+
+    const handlePickerModeChange = (mode: 'month' | 'range' | 'date' | 'all' | 'year' | 'cycle') => {
+        setDateMode(mode)
+        if (mode !== 'all' && urlTag !== 'all') {
+            const params = new URLSearchParams(searchParams.toString())
+            params.set('tag', 'all')
+            if (!params.get('year')) {
+                params.set('year', selectedYear ?? new Date().getFullYear().toString())
+            }
+            startTransition(() => {
+                router.push(`?${params.toString()}`, { scroll: false })
+            })
+            toast.info(`Switched debt cycle to all ${params.get('year')}`)
+        }
+        if (mode === 'all') {
+            handleClearDateRange()
+        }
+    }
+
+    const handleAccountChange = (value?: string) => {
+        setSelectedAccountId(value)
+
+        if (!value) return
+
+        if (urlTag !== 'all') {
+            const params = new URLSearchParams(searchParams.toString())
+            params.set('tag', 'all')
+            if (!params.get('year')) {
+                params.set('year', selectedYear ?? new Date().getFullYear().toString())
+            }
+            startTransition(() => {
+                router.push(`?${params.toString()}`, { scroll: false })
+            })
+            toast.info(`Switched debt cycle to all ${params.get('year')} for account filter`)
+        }
+    }
 
     // Calculate stats for Header based on Selected Year or All Time
     const headerStats = useMemo(() => {
@@ -294,7 +444,10 @@ export function MemberDetailView({
         // Apply date range filter if set (from URL params)
         if (dateRangeFilter) {
             result = result.filter(t => {
-                const txDate = parseISO(t.occurred_at || t.created_at || '')
+                const rawDate = t.occurred_at || t.created_at
+                if (!rawDate) return false
+                const txDate = parseISO(rawDate)
+                if (Number.isNaN(txDate.getTime())) return false
                 return isWithinInterval(txDate, { start: dateRangeFilter.from, end: dateRangeFilter.to })
             })
         }
@@ -311,7 +464,7 @@ export function MemberDetailView({
 
         // Mode 2: All for specific year
         if (activeCycleTag === 'all') {
-            const yearTransactions = transactions.filter(t => t.tag?.startsWith(selectedYear))
+            const yearTransactions = transactions.filter(t => getEffectiveTxnTag(t)?.startsWith(selectedYear))
             return applyFilters(yearTransactions)
         }
 
@@ -323,9 +476,76 @@ export function MemberDetailView({
     }, [activeCycleTag, debtCycles, selectedYear, searchTerm, filterType, statusFilter, selectedAccountId, dateRangeFilter, transactions])
 
     const historyTransactions = useMemo(() => {
-        const base = transactions.filter(t => !selectedYear || t.occurred_at?.startsWith(selectedYear))
+        const base = transactions.filter(t => {
+            if (!selectedYear) return true
+            const effectiveTag = getEffectiveTxnTag(t)
+            if (effectiveTag?.startsWith(`${selectedYear}-`)) return true
+            return t.occurred_at?.startsWith(selectedYear) ?? false
+        })
         return applyFilters(base)
     }, [transactions, selectedYear, searchTerm, filterType, statusFilter, selectedAccountId, dateRangeFilter])
+
+    const selectedAccountCashbackStatus = useMemo(() => {
+        if (!selectedAccountId) return null
+
+        const selectedAccount = accounts.find((account) => account.id === selectedAccountId)
+        if (!selectedAccount) return null
+
+        const config = normalizeCashbackConfig(selectedAccount.cashback_config, selectedAccount)
+        const minSpend = config.minSpendTarget ?? null
+
+        const sourceTransactions = (() => {
+            if (selectedYear === null) return transactions
+
+            if (activeCycleTag === 'all') {
+                return transactions.filter((txn) => {
+                    const effectiveTag = getEffectiveTxnTag(txn)
+                    if (effectiveTag?.startsWith(`${selectedYear}-`)) return true
+                    return txn.occurred_at?.startsWith(selectedYear) ?? false
+                })
+            }
+
+            return transactions.filter((txn) => getEffectiveTxnTag(txn) === activeCycleTag)
+        })()
+
+        const accountTransactions = sourceTransactions.filter((txn) => {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const toAccountId = (txn as any).to_account_id as string | undefined
+            return txn.account_id === selectedAccountId
+                || txn.source_account_id === selectedAccountId
+                || txn.target_account_id === selectedAccountId
+                || toAccountId === selectedAccountId
+        })
+
+        const spendTransactions = accountTransactions.filter((txn) => {
+            if (txn.status === 'void') return false
+            return txn.type === 'expense' || txn.type === 'debt'
+        })
+
+        const currentSpend = spendTransactions.reduce((sum, txn) => sum + Math.abs(Number(txn.amount) || 0), 0)
+        const earned = spendTransactions.reduce((sum, txn) => {
+            const amount = Math.abs(Number(txn.amount) || 0)
+            const finalPrice = txn.final_price !== null && txn.final_price !== undefined
+                ? Math.abs(Number(txn.final_price) || 0)
+                : amount
+            return sum + Math.max(0, amount - finalPrice)
+        }, 0)
+
+        const needToSpend = minSpend && minSpend > 0 ? Math.max(0, minSpend - currentSpend) : 0
+
+        if (currentSpend <= 0 && earned <= 0 && needToSpend <= 0) return null
+
+        return {
+            earned,
+            cap: config.maxBudget ?? null,
+            currentSpend,
+            minSpend,
+            needToSpend,
+            remaining: config.maxBudget !== null && config.maxBudget !== undefined
+                ? Math.max(0, config.maxBudget - earned)
+                : null,
+        }
+    }, [accounts, selectedAccountId, selectedYear, activeCycleTag, transactions])
 
 
     // Slide Handlers
@@ -386,6 +606,12 @@ export function MemberDetailView({
         }
         if (!selectedTxn) return undefined
         const isTypeIn = ['income', 'repayment'].includes(selectedTxn.type);
+        const selectedTxnFallbackTag = selectedTxn.tag
+            || (selectedTxn as any).persisted_cycle_tag
+            || (selectedTxn as any).debt_cycle_tag
+            || ((selectedTxn.metadata as any)?.tag)
+            || undefined
+
         return {
             type: selectedTxn.type as any,
             occurred_at: slideMode === 'duplicate' ? new Date() : new Date(selectedTxn.occurred_at),
@@ -396,7 +622,7 @@ export function MemberDetailView({
             category_id: selectedTxn.category_id || undefined,
             shop_id: selectedTxn.shop_id || undefined,
             person_id: selectedTxn.person_id || person.id,
-            tag: selectedTxn.tag || undefined,
+            tag: selectedTxnFallbackTag,
             cashback_mode: selectedTxn.cashback_mode || "none_back",
             cashback_share_percent: selectedTxn.cashback_share_percent,
             cashback_share_fixed: selectedTxn.cashback_share_fixed,
@@ -432,6 +658,9 @@ export function MemberDetailView({
                 activeTab={activeTab}
                 onTabChange={setActiveTab}
                 onEdit={() => setIsPersonSlideOpen(true)}
+                cashbackStatus={selectedAccountCashbackStatus}
+                isSyncing={isGlobalLoading || isPending}
+                syncingText={isGlobalLoading ? (loadingMessage || 'Syncing...') : 'Loading...'}
             />
 
             {/* Content Area */}
@@ -456,7 +685,13 @@ export function MemberDetailView({
                         statusFilter={statusFilter}
                         onStatusChange={setStatusFilter}
                         selectedAccountId={selectedAccountId}
-                        onAccountChange={setSelectedAccountId}
+                        onAccountChange={handleAccountChange}
+                        date={dateValue}
+                        dateRange={dateRangeValue}
+                        dateMode={dateMode}
+                        onDateChange={handlePickerDateChange}
+                        onRangeChange={handlePickerRangeChange}
+                        onModeChange={handlePickerModeChange}
                         accountItems={accountItems}
                         accounts={accounts}
                         categories={categories}

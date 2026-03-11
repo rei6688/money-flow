@@ -145,6 +145,7 @@ export type PersonCycleSheet = {
 
 export type Person = {
   id: string
+  pocketbase_id?: string | null
   created_at?: string
   name: string
   image_url?: string | null
