@@ -152,7 +152,7 @@ export async function getPeople(options?: { includeArchived?: boolean }): Promis
 
       // Cycle identification
       const txnDate = txn.occurred_at || txn.date ? new Date(txn.occurred_at || txn.date) : null
-      const tag = txn.tag || txn.metadata?.tag || ''
+      const tag = txn.debt_cycle_tag || txn.tag || txn.persisted_cycle_tag || txn.metadata?.tag || ''
       const normalizedTag = normalizeMonthTag(tag) ?? tag
       const isCurrentCycle = tag ? (normalizedTag === currentMonthTag) : (txnDate && txnDate >= currentMonthStart)
 
@@ -193,8 +193,9 @@ export async function getPeople(options?: { includeArchived?: boolean }): Promis
         current_cycle_debt: stats?.currentCycleDebt ?? 0,
         outstanding_debt: stats?.outstandingDebt ?? 0,
         total_base_debt: stats?.baseLend ?? 0,
-        total_cashback: stats?.repaid ?? 0, // In UI, 'Settled' column usually shows total repaid
-        total_net_debt: stats?.totalBalance ?? 0, // In UI, 'Outstanding' column usually shows current total balance
+        total_cashback: stats?.cashback ?? 0,
+        total_repaid: stats?.repaid ?? 0,
+        total_net_debt: (stats?.baseLend ?? 0) - (stats?.cashback ?? 0),
         current_cycle_label: currentMonthTag,
         monthly_debts: []
       }

@@ -528,7 +528,7 @@ async function backfillTransactions(): Promise<BackfillResult> {
     const { data: transactionsRaw, error } = await supabase
       .from('transactions')
       .select(
-        'id, occurred_at, note, type, account_id, target_account_id, category_id, person_id, shop_id, amount, status, tag, persisted_cycle_tag, cashback_share_percent, cashback_share_fixed, cashback_mode, metadata, parent_transaction_id, is_installment, installment_plan_id, original_amount, final_price',
+        'id, occurred_at, note, type, account_id, target_account_id, category_id, person_id, shop_id, amount, status, tag, persisted_cycle_tag, cashback_share_percent, cashback_share_fixed, cashback_mode, metadata, parent_transaction_id, is_installment, installment_plan_id, original_amount, final_price, debt_cycle_tag, statement_cycle_tag',
       )
       .order('occurred_at', { ascending: true })
       .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1)
@@ -580,6 +580,8 @@ async function backfillTransactions(): Promise<BackfillResult> {
           parent_transaction_id: txn.parent_transaction_id ? toPocketBaseId(txn.parent_transaction_id, 'transactions') : '',
           tag: txn.tag ?? null,
           persisted_cycle_tag: txn.persisted_cycle_tag ?? null,
+          debt_cycle_tag: txn.debt_cycle_tag ?? null,
+          statement_cycle_tag: txn.statement_cycle_tag ?? null,
           cashback_share_percent: txn.cashback_share_percent ?? null,
           cashback_share_fixed: txn.cashback_share_fixed ?? null,
           cashback_mode: txn.cashback_mode ?? null,

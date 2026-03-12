@@ -210,66 +210,88 @@ export function PeopleHeader({
                         </div>
                     )}
 
-                    {/* 3. Current Balance Section */}
-                    <div className="flex items-center gap-3 px-4 py-2 border border-slate-200 rounded-xl bg-slate-50/30 min-w-[280px] group transition-all duration-300 hover:border-emerald-300 hover:shadow-md hover:shadow-emerald-500/5">
-                        <StatsPopover
-                            originalLend={stats.originalLend}
-                            cashback={stats.cashback}
-                            netLend={stats.netLend}
-                            repay={stats.repay}
-                            remains={stats.remains}
-                            paidRollover={stats.paidRollover}
-                            receiveRollover={stats.receiveRollover}
-                            tabs={activeCycle ? [
-                                {
-                                    key: 'current',
-                                    label: 'Current',
-                                    stats: {
-                                        originalLend: activeCycle.stats.originalLend,
-                                        cashback: activeCycle.stats.cashback,
-                                        netLend: currentCycleNetLend,
-                                        repay: activeCycle.stats.repay,
-                                        remains: activeCycle.remains,
-                                        paidRollover: activeCycle.stats.paidRollover,
-                                        receiveRollover: activeCycle.stats.receiveRollover,
-                                    },
-                                },
-                                {
-                                    key: 'year',
-                                    label: 'Entire Year',
-                                    stats: {
-                                        originalLend: stats.originalLend,
-                                        cashback: stats.cashback,
-                                        netLend: stats.netLend,
-                                        repay: stats.repay,
-                                        remains: stats.remains,
-                                        paidRollover: stats.paidRollover,
-                                        receiveRollover: stats.receiveRollover,
-                                    },
-                                },
-                            ] : undefined}
-                        >
-                            <button className="flex items-center justify-center h-7 w-7 rounded-md border border-slate-200 text-emerald-600 bg-white hover:bg-emerald-50 transition-colors shadow-sm group-hover:scale-110 group-hover:bg-emerald-50 duration-300" title="Balance for entire selected year">
-                                <TrendingUp className="h-3.5 w-3.5 animate-pulse" />
-                            </button>
-                        </StatsPopover>
-                        <div className="flex flex-col gap-1.5 flex-1">
-                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider whitespace-nowrap group-hover:text-emerald-500 transition-colors">Current Balance</span>
-                            <div className="flex items-center justify-between">
-                                <span className="text-[10px] font-bold text-slate-500 uppercase">Status</span>
+                    {/* 3. Consolidated Balance & Breakdown Section */}
+                    <div className="flex items-center gap-6 px-5 py-2.5 border border-slate-200 rounded-xl bg-slate-50/30 transition-all duration-300 hover:border-indigo-300 hover:shadow-xl hover:shadow-indigo-500/5 group">
+                        <div className="grid grid-cols-4 gap-x-8 gap-y-0.5 pr-8 border-r border-slate-200">
+                            {/* Row 1: Labels */}
+                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-[0.1em] whitespace-nowrap">Orig. Spend</span>
+                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-[0.1em] whitespace-nowrap">Cashback</span>
+                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-[0.1em] whitespace-nowrap">Net Lend</span>
+                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-[0.1em] whitespace-nowrap">Total Repay</span>
+
+                            {/* Row 2: Values */}
+                            <span className="text-[13px] font-black text-slate-600 tabular-nums">
+                                {numberFormatter.format(stats.originalLend)}
+                            </span>
+                            <span className="text-[13px] font-black text-amber-600 tabular-nums">
+                                -{numberFormatter.format(stats.cashback)}
+                            </span>
+                            <span className="text-[13px] font-black text-blue-600 tabular-nums">
+                                {numberFormatter.format(stats.netLend)}
+                            </span>
+                            <span className="text-[13px] font-black text-emerald-600 tabular-nums">
+                                -{numberFormatter.format(stats.repay)}
+                            </span>
+                        </div>
+
+                        <div className="flex items-center gap-4">
+                            <div className="flex flex-col">
+                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-1">REMAINS</span>
                                 {displayedBalance === 0 ? (
-                                    <span className="text-xs font-bold uppercase px-2 py-0.5 rounded bg-emerald-100 text-emerald-700">Settled</span>
+                                    <span className="text-xs font-bold uppercase px-3 py-1 rounded bg-emerald-100 text-emerald-700 w-fit">Settled</span>
                                 ) : (
-                                    <span className="text-xl font-bold tabular-nums ml-auto text-emerald-600 drop-shadow-[0_1px_1px_rgba(16,185,129,0.1)]">
+                                    <span className="text-2xl font-black tabular-nums text-rose-600 leading-none drop-shadow-[0_2px_4px_rgba(225,29,72,0.1)] group-hover:scale-105 transition-transform">
                                         {numberFormatter.format(displayedBalance)}
                                     </span>
                                 )}
                             </div>
+
+                            <StatsPopover
+                                originalLend={stats.originalLend}
+                                cashback={stats.cashback}
+                                netLend={stats.netLend}
+                                repay={stats.repay}
+                                remains={stats.remains}
+                                paidRollover={stats.paidRollover}
+                                receiveRollover={stats.receiveRollover}
+                                tabs={activeCycle ? [
+                                    {
+                                        key: 'current',
+                                        label: 'Current',
+                                        stats: {
+                                            originalLend: activeCycle.stats.originalLend,
+                                            cashback: activeCycle.stats.cashback,
+                                            netLend: currentCycleNetLend,
+                                            repay: activeCycle.stats.repay,
+                                            remains: activeCycle.remains,
+                                            paidRollover: activeCycle.stats.paidRollover,
+                                            receiveRollover: activeCycle.stats.receiveRollover,
+                                        },
+                                    },
+                                    {
+                                        key: 'year',
+                                        label: 'Entire Year',
+                                        stats: {
+                                            originalLend: stats.originalLend,
+                                            cashback: stats.cashback,
+                                            netLend: stats.netLend,
+                                            repay: stats.repay,
+                                            remains: stats.remains,
+                                            paidRollover: stats.paidRollover,
+                                            receiveRollover: stats.receiveRollover,
+                                        },
+                                    },
+                                ] : undefined}
+                            >
+                                <button className="flex items-center justify-center h-8 w-8 rounded-lg border border-slate-200 text-slate-400 bg-white hover:bg-slate-50 hover:text-slate-600 transition-all shadow-sm" title="Detailed Breakdown">
+                                    <TrendingUp className="h-4 w-4" />
+                                </button>
+                            </StatsPopover>
                         </div>
 
                         {cashbackStatus && selectedYear !== null && (
-                            <div className="px-4 py-2 border border-slate-200 rounded-xl bg-slate-50/30 min-w-[300px]">
-                                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Cashback Performance</div>
+                            <div className="pl-6 border-l border-slate-200">
+                                <div className="text-[9px] font-black text-slate-400 uppercase tracking-[0.1em] mb-2">Reward Progress</div>
                                 <CashbackStatusDisplay
                                     earned={cashbackStatus.earned}
                                     cap={cashbackStatus.cap}

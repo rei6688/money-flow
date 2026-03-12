@@ -15,6 +15,7 @@ export type Category = {
   mcc_codes?: string[] | null
   kind?: 'internal' | 'external' | null
   is_archived?: boolean | null
+  slug?: string | null
 }
 
 export type Shop = {
@@ -176,6 +177,8 @@ export type Person = {
   total_base_debt?: number | null
   total_cashback?: number | null
   total_net_debt?: number | null
+  total_repaid?: number | null
+  current_debt_balance?: number | null
 }
 
 export type SubscriptionMember = {
@@ -253,6 +256,7 @@ export type TransactionWithDetails = TransactionRow & {
   person_pocketbase_id?: string | null;
   person_name?: string | null;
   person_image_url?: string | null;
+  category_slug?: string | null;
   category_id?: string | null;
   persisted_cycle_tag?: string | null;
   shop_id?: string | null;

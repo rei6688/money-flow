@@ -34,8 +34,9 @@ export function resolveCashbackPolicy(params: {
         spent: number
     }
     categoryName?: string // Helper for legacy matching
+    categorySlug?: string // Added: Bridges PB ID to Supabase UUID in config
 }): CashbackPolicyResult {
-    const { account, amount, categoryId, categoryName, cycleTotals } = params
+    const { account, amount, categoryId, categorySlug, categoryName, cycleTotals } = params
 
     // PRIORITY 1: New Column-based Config
     if (account.cb_type && account.cb_type !== 'none') {
@@ -69,7 +70,9 @@ export function resolveCashbackPolicy(params: {
                     // Priority 1: ID Match (categoryIds or cat_ids)
                     let found = policies.find((p: any) => 
                         (p.categoryIds && p.categoryIds.includes(categoryId)) || 
-                        (p.cat_ids && p.cat_ids.includes(categoryId))
+                        (p.cat_ids && p.cat_ids.includes(categoryId)) ||
+                        (categorySlug && p.categoryIds && p.categoryIds.includes(categorySlug)) ||
+                        (categorySlug && p.cat_ids && p.cat_ids.includes(categorySlug))
                     );
 
                     // Priority 2: Name Match Heuristic
@@ -127,7 +130,8 @@ export function resolveCashbackPolicy(params: {
             }
         } else if (account.cb_type === 'simple' && Array.isArray(account.cb_rules_json)) {
             const rules = account.cb_rules_json as any[];
-            let matchedRule = categoryId ? rules.find((r: any) => r.categoryIds?.includes(categoryId) || r.cat_ids?.includes(categoryId)) : null;
+            const matchedBySlug = categorySlug ? rules.find((r: any) => r.categoryIds?.includes(categorySlug) || r.cat_ids?.includes(categorySlug)) : null;
+            let matchedRule = (categoryId ? rules.find((r: any) => r.categoryIds?.includes(categoryId) || r.cat_ids?.includes(categoryId)) : null) || matchedBySlug;
 
             // Fallback: if categoryId didn't match, try categoryName heuristic
             if (!matchedRule && categoryName) {
@@ -250,7 +254,8 @@ export function resolveCashbackPolicy(params: {
             if (lvl.rules && lvl.rules.length > 0) {
                 const matchingRules = lvl.rules.filter(rule => {
                     const hasIdMatch = (rule as any).categoryIds?.includes(categoryId) || (rule as any).cat_ids?.includes(categoryId)
-                    if (hasIdMatch) return true
+                    const hasSlugMatch = categorySlug && ((rule as any).categoryIds?.includes(categorySlug) || (rule as any).cat_ids?.includes(categorySlug))
+                    if (hasIdMatch || hasSlugMatch) return true
                     
                     // Priority 2: Name Match Fallback
                     if (categoryName) {

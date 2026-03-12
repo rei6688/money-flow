@@ -110,7 +110,8 @@ export function CashbackSection({ accounts, categories = [] }: CashbackSectionPr
             cycleTotals: {
                 spent: cycleSpent
             },
-            categoryName: category?.name
+            categoryName: category?.name,
+            categorySlug: category?.slug ?? undefined
         });
     }, [activeAccount, categoryId, totalGrossAmount, category, cycleStats]);
 

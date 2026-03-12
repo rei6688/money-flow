@@ -298,6 +298,7 @@ export async function mapTransactionRow(
     displayType,
     display_type: displayType === "income" ? "IN" : displayType === "expense" ? "OUT" : "TRANSFER",
     category_name: category?.name,
+    category_slug: category?.slug ?? null,
     category_icon: category?.icon ?? null,
     category_image_url: category?.image_url ?? null,
     account_name: account?.name,
