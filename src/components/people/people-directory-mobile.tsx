@@ -334,6 +334,7 @@ export function PeopleDirectoryMobile({
         onOpenChange={setIsEditSlideOpen}
         person={personToEdit}
         subscriptions={subscriptions}
+        accounts={accounts}
       />
     </>
   )

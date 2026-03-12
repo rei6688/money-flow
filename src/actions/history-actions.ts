@@ -1,6 +1,6 @@
 'use server'
 
-import { createClient } from '@/lib/supabase/server'
+import { pocketbaseList, pocketbaseGetById, toPocketBaseId } from '@/services/pocketbase/server'
 
 export type TransactionHistoryRecord = {
     id: string
@@ -29,74 +29,35 @@ export async function getTransactionHistory(
     transactionId: string
 ): Promise<{ success: boolean; data?: TransactionHistoryWithDiff[]; error?: string }> {
     try {
-        const supabase = await createClient()
+        const pbTxnId = toPocketBaseId(transactionId, 'transactions');
 
-        // Fetch history records ordered by created_at descending
-        type HistoryRow = {
-            id: string
-            transaction_id: string
-            snapshot_before: unknown
-            change_type: string
-            created_at: string
-            changed_by: string | null
-        }
+        // Fetch history records ordered by created_at descending (created in PB)
+        const historyResp = await pocketbaseList<any>('transaction_history', {
+            filter: `transaction_id = "${pbTxnId}"`,
+            sort: '-created', // PocketBase uses 'created' for timestamp
+            perPage: 100
+        });
 
-        const historyResult = await supabase
-            .from('transaction_history')
-            .select('id, transaction_id, snapshot_before, change_type, created_at, changed_by')
-            .eq('transaction_id', transactionId)
-            .order('created_at', { ascending: false })
+        const historyItems = historyResp.items;
 
-        const historyRecords = historyResult.data as HistoryRow[] | null
-        const historyError = historyResult.error
-
-        if (historyError) {
-            console.error('Error fetching transaction history:', historyError)
-            return { success: false, error: historyError.message }
-        }
-
-        if (!historyRecords || historyRecords.length === 0) {
-            return { success: true, data: [] }
-        }
-
-        // Fetch current transaction state for comparison with most recent history
-        const { data: currentTxn, error: txnError } = await supabase
-            .from('transactions')
-            .select('*')
-            .eq('id', transactionId)
-            .single()
-
-        if (txnError) {
-            console.error('Error fetching current transaction:', txnError)
-            // Continue without current state - just show snapshots
-        }
-
-        // Get user emails for changed_by IDs
-        const changedByIds = historyRecords
-            .map(r => r.changed_by)
-            .filter((id): id is string => id !== null)
-
-        const userEmails: Record<string, string> = {}
-        if (changedByIds.length > 0) {
-            // This would require admin access to auth.users - for now we'll skip
-            // In production, you'd fetch from a profiles table or similar
-        }
+        // Fetch current transaction state for comparison
+        const currentTxn = await pocketbaseGetById<any>('transactions', pbTxnId);
 
         // Parse snapshots and compute diffs
         const result: TransactionHistoryWithDiff[] = []
 
-        for (let i = 0; i < historyRecords.length; i++) {
-            const record = historyRecords[i]
+        for (let i = 0; i < historyItems.length; i++) {
+            const record = historyItems[i]
             const snapshotBefore = parseSnapshot(record.snapshot_before)
 
             // Get the "after" state - either the next snapshot or current transaction
             let snapshotAfter: Record<string, unknown>
             if (i === 0) {
                 // Most recent change - compare to current state
-                snapshotAfter = currentTxn ? flattenTransaction(currentTxn as unknown as Record<string, unknown>) : {}
+                snapshotAfter = currentTxn ? flattenTransaction(currentTxn) : {}
             } else {
                 // Compare to the previous snapshot (which is more recent in our desc order)
-                snapshotAfter = parseSnapshot(historyRecords[i - 1].snapshot_before)
+                snapshotAfter = parseSnapshot(historyItems[i - 1].snapshot_before)
             }
 
             const diffs = computeDiffs(snapshotBefore, snapshotAfter)
@@ -106,38 +67,31 @@ export async function getTransactionHistory(
                 transaction_id: record.transaction_id,
                 snapshot_before: snapshotBefore,
                 change_type: record.change_type as 'edit' | 'void',
-                created_at: record.created_at,
-                changed_by: record.changed_by,
-                changed_by_email: record.changed_by ? userEmails[record.changed_by] : null,
+                created_at: record.created, // Use PB created timestamp
+                changed_by: record.changed_by || null,
+                changed_by_email: null, // PB doesn't expose this easily here
                 diffs,
             })
         }
 
         return { success: true, data: result }
-    } catch (error) {
-        console.error('Unexpected error in getTransactionHistory:', error)
-        return { success: false, error: 'An unexpected error occurred' }
+    } catch (error: any) {
+        console.error('[DB:PB] getTransactionHistory failed:', error)
+        return { success: false, error: error.message || 'An unexpected error occurred' }
     }
 }
 
 /**
- * Check if a transaction has any history records (for conditional menu display)
+ * Check if a transaction has any history records
  */
 export async function hasTransactionHistory(transactionId: string): Promise<boolean> {
     try {
-        const supabase = await createClient()
-
-        const { count, error } = await supabase
-            .from('transaction_history')
-            .select('id', { count: 'exact', head: true })
-            .eq('transaction_id', transactionId)
-
-        if (error) {
-            console.error('Error checking transaction history:', error)
-            return false
-        }
-
-        return (count ?? 0) > 0
+        const pbTxnId = toPocketBaseId(transactionId, 'transactions');
+        const resp = await pocketbaseList<any>('transaction_history', {
+            filter: `transaction_id = "${pbTxnId}"`,
+            perPage: 1
+        });
+        return resp.totalItems > 0;
     } catch {
         return false
     }
@@ -192,7 +146,7 @@ function computeDiffs(
     const allKeys = new Set([...Object.keys(before), ...Object.keys(after)])
 
     // Fields to skip in diff display
-    const skipFields = ['id', 'created_at', 'updated_at', 'user_id']
+    const skipFields = ['id', 'created', 'updated', 'user_id', 'collectionId', 'collectionName']
 
     // Human-readable field names
     const fieldLabels: Record<string, string> = {

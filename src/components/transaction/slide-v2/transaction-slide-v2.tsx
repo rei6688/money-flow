@@ -971,6 +971,7 @@ export function TransactionSlideV2({
                         open={isCreatePersonDialogOpen}
                         onOpenChange={setIsCreatePersonDialogOpen}
                         subscriptions={[]} // Quick add doesn't need subs usually
+                        accounts={accounts}
                     />
 
                     <ShopSlide

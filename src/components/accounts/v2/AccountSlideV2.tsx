@@ -1812,6 +1812,7 @@ export function AccountSlideV2({
                     onBack={() => setIsPeopleSlideOpen(false)}
                     zIndex={zIndex + 100}
                     subscriptions={subscriptions}
+                    accounts={allAccounts}
                     onSuccess={handlePersonCreated}
                 />
             </Sheet>

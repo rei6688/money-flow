@@ -1,14 +1,21 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { createClient } from '@/lib/supabase/server'
-import type { SupabaseClient } from '@supabase/supabase-js'
 import { Account, AccountRelationships, AccountStats, TransactionWithDetails, AccountRow } from '@/types/moneyflow.types'
 import { executeWithFallback } from '@/lib/pocketbase/fallback-helpers'
 import {
   updatePocketBaseAccountConfig,
   updatePocketBaseAccountInfo,
+  loadPocketBaseTransactionsForAccount
 } from '@/services/pocketbase/account-details.service'
+import {
+  pocketbaseGetById,
+  pocketbaseList,
+  toPocketBaseId,
+  pocketbaseCreate,
+  pocketbaseUpdate,
+  pocketbaseDelete
+} from "./pocketbase/server";
 import {
   parseCashbackConfig,
   normalizeCashbackConfig,
@@ -22,6 +29,7 @@ import {
   mapUnifiedTransaction
 } from '@/lib/transaction-mapper'
 import { Database, Json } from '@/types/database.types'
+import { mapPocketBaseAccountRow } from './pocketbase/mappers'
 
 
 
@@ -44,94 +52,26 @@ const fmtDate = (d: Date) => {
   return new Intl.DateTimeFormat('vi-VN', { day: '2-digit', month: '2-digit' }).format(d)
 }
 
-async function getSupabaseAccountRows(supabase: SupabaseClient): Promise<AccountRow[]> {
-  const { data, error } = await supabase
-    .from('accounts')
-    .select('id, name, type, currency, current_balance, credit_limit, parent_account_id, account_number, owner_id, cashback_config, cashback_config_version, secured_by_account_id, is_active, image_url, receiver_name, total_in, total_out, annual_fee, annual_fee_waiver_target, cb_type, cb_base_rate, cb_max_budget, cb_is_unlimited, cb_rules_json, cb_min_spend, cb_cycle_type, statement_day, due_date, holder_type, holder_person_id')
+// getSupabaseAccountRows removed
 
-  if (error) {
-    console.error('Error fetching accounts:', error)
-    if (error.message) console.error('Error message:', error.message)
-    if (error.code) console.error('Error code:', error.code)
-    return []
-  }
-
-  return (data ?? []) as AccountRow[]
-}
-
-function mapPocketBaseAccountRow(record: any): AccountRow {
-  return {
-    id: record.id,
-    name: record.name ?? '',
-    type: record.type ?? 'bank',
-    currency: record.currency ?? 'VND',
-    current_balance: Number(record.current_balance ?? 0),
-    credit_limit: Number(record.credit_limit ?? 0),
-    parent_account_id: record.parent_account_id || null,
-    account_number: record.account_number || null,
-    owner_id: record.owner_id || null,
-    cashback_config: record.cashback_config ?? null,
-    cashback_config_version: Number(record.cashback_config_version ?? 1),
-    secured_by_account_id: record.secured_by_account_id || null,
-    is_active: record.is_active ?? true,
-    image_url: typeof record.image_url === 'string' && record.image_url.startsWith('http') ? record.image_url : null,
-    receiver_name: record.receiver_name || null,
-    total_in: Number(record.total_in ?? 0),
-    total_out: Number(record.total_out ?? 0),
-    annual_fee: Number(record.annual_fee ?? 0),
-    annual_fee_waiver_target: Number(record.annual_fee_waiver_target ?? 0),
-    cb_type: record.cb_type ?? 'none',
-    cb_base_rate: Number(record.cb_base_rate ?? 0),
-    cb_max_budget: Number(record.cb_max_budget ?? 0),
-    cb_is_unlimited: record.cb_is_unlimited ?? false,
-    cb_rules_json: record.cb_rules_json ?? null,
-    cb_min_spend: Number(record.cb_min_spend ?? 0),
-    cb_cycle_type: record.cb_cycle_type ?? 'calendar_month',
-    statement_day: Number(record.statement_day ?? 0),
-    due_date: Number(record.due_date ?? 0),
-    holder_type: record.holder_type ?? null,
-    holder_person_id: record.holder_person_id ?? null,
-    created_at: record.created ?? null,
-    updated_at: record.updated ?? null,
-  } as AccountRow
-}
 
 async function getPocketBaseAccountRows(): Promise<AccountRow[]> {
-  const candidateUrls = [
-    'https://api-db.reiwarden.io.vn/api/collections/pvl_acc_001/records?perPage=200',
-    'https://api-db.reiwarden.io.vn/api/collections/accounts/records?perPage=200',
-  ]
-
-  let lastErrorText = ''
-
-  for (const url of candidateUrls) {
-    try {
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: { 'Content-Type': 'application/json' },
-      })
-
-      if (response.ok) {
-        const data = await response.json()
-        const records = Array.isArray(data.items) ? data.items : []
-        return records.map(mapPocketBaseAccountRow)
-      }
-
-      lastErrorText = await response.text()
-    } catch (error) {
-      lastErrorText = (error as Error)?.message || 'fetch failed'
-      console.warn(`[source:PB] accounts.list url failed: ${url}`, error)
-    }
+  try {
+    const response = await pocketbaseList<any>('accounts', {
+      perPage: 200,
+      sort: 'name'
+    });
+    return response.items.map(mapPocketBaseAccountRow);
+  } catch (error) {
+    console.error('[DB:PB] accounts.list failed:', error);
+    return [];
   }
-
-  throw new Error(`PB accounts.list failed after retries: ${lastErrorText}`)
 }
 
-async function getStatsForAccount(supabase: ReturnType<typeof createClient>, account: AccountRow): Promise<AccountStats | null> {
+async function getStatsForAccount(account: AccountRow): Promise<AccountStats | null> {
   const creditLimit = account.credit_limit ?? 0
   const currentBalance = account.current_balance ?? 0
 
-  // 0. Base Stats (Usage)
   const usage_percent = account.type === 'credit_card'
     ? getCreditCardUsage({
       type: account.type,
@@ -148,7 +88,6 @@ async function getStatsForAccount(supabase: ReturnType<typeof createClient>, acc
     })
     : currentBalance
 
-  // Default values
   const baseStats: AccountStats = {
     usage_percent,
     remaining_limit,
@@ -163,7 +102,6 @@ async function getStatsForAccount(supabase: ReturnType<typeof createClient>, acc
     shared_cashback: null
   }
 
-  // Only calculate full stats for accounts with cashback config or type
   const hasConfig = account.cashback_config || (account as any).cb_type !== 'none';
   if (!hasConfig) return baseStats
 
@@ -176,92 +114,29 @@ async function getStatsForAccount(supabase: ReturnType<typeof createClient>, acc
   if (!cycleRange) return baseStats
   const { start, end } = cycleRange
 
-  // MF5.2.2B FIX: Read from cashback_cycles for consistency
-  // Determine cycle tag using statement day logic.
   const tagDate = cycleRange.end
   const cycleTag = formatIsoCycleTag(tagDate)
-  const legacyCycleTag = formatLegacyCycleTag(tagDate)
-  const cycleTags = legacyCycleTag !== cycleTag ? [cycleTag, legacyCycleTag] : [cycleTag]
 
-  let cycle = (await supabase
-    .from('cashback_cycles')
-    .select('*')
-    .eq('account_id', account.id)
-    .eq('cycle_tag', cycleTag)
-    .maybeSingle()).data as any ?? null
+  // Fetch Cycle from PB
+  const cycleResp = await pocketbaseList<any>('cashback_cycles', {
+      filter: `account_id = "${account.id}" && cycle_tag = "${cycleTag}"`,
+      perPage: 1
+  });
+  const cycle = cycleResp.items[0] || null;
 
-  if (!cycle && legacyCycleTag !== cycleTag) {
-    cycle = (await supabase
-      .from('cashback_cycles')
-      .select('*')
-      .eq('account_id', account.id)
-      .eq('cycle_tag', legacyCycleTag)
-      .maybeSingle()).data as any ?? null
-  }
-
-  // 1. Stats from Cycle (Primary Source)
   let spent_this_cycle = cycle?.spent_amount ?? 0
   let real_awarded = cycle?.real_awarded ?? 0
   const virtual_profit = cycle?.virtual_profit ?? 0
 
-  // 1.1 Fallback/Live fetch for real_awarded (Income from Bank)
+  // Fallback for real_awarded (Income)
   if (real_awarded === 0) {
-    const { data: incomeTxns } = await supabase
-      .from('transactions')
-      .select('amount')
-      .eq('account_id', account.id)
-      .eq('type', 'income')
-      .eq('status', 'posted')
-      .or('category_id.eq.e0000000-0000-0000-0000-000000000092,category_id.is.null') // Include Cashback category or null
-      .in('persisted_cycle_tag', cycleTags)
-
-    if (incomeTxns && incomeTxns.length > 0) {
-      real_awarded = incomeTxns.reduce((sum, txn: any) => sum + Math.abs(txn.amount ?? 0), 0)
-    }
+      const incomeResp = await pocketbaseList<any>('transactions', {
+          filter: `account_id = "${account.id}" && type = "income" && status = "posted" && persisted_cycle_tag = "${cycleTag}"`,
+          perPage: 50
+      });
+      real_awarded = incomeResp.items.reduce((sum, t) => sum + Math.abs(t.amount || 0), 0);
   }
 
-  // MF5.3.3 FIX: Fallback for spent_this_cycle if snapshot is lagging
-  if (!cycle || spent_this_cycle === 0) {
-    const { data: taggedTxns, error: taggedError } = await supabase
-      .from('transactions')
-      .select('amount')
-      .eq('account_id', account.id)
-      .neq('status', 'void')
-      .in('type', ['expense', 'debt'])
-      .in('persisted_cycle_tag', cycleTags)
-
-    if (!taggedError && taggedTxns && taggedTxns.length > 0) {
-      const taggedSum = taggedTxns.reduce((sum, txn: any) => sum + Math.abs(txn.amount ?? 0), 0)
-      if (taggedSum > 0) {
-        spent_this_cycle = taggedSum
-      }
-    } else if (!taggedError && start && end) { // Range fallback if tag query returned nothing
-      const { data: rangeTxns } = await supabase
-        .from('transactions')
-        .select('amount, type')
-        .eq('account_id', account.id)
-        .neq('status', 'void')
-        .in('type', ['expense', 'debt', 'income'])
-        .gte('occurred_at', start.toISOString())
-        .lte('occurred_at', end.toISOString()) as any
-
-      if (rangeTxns && rangeTxns.length > 0) {
-        const rangeSpent = rangeTxns
-          .filter((t: any) => t.type === 'expense' || t.type === 'debt')
-          .reduce((sum: number, txn: any) => sum + Math.abs(txn.amount ?? 0), 0)
-
-        const rangeAwarded = rangeTxns
-          .filter((t: any) => t.type === 'income')
-          .reduce((sum: number, txn: any) => sum + Math.abs(txn.amount ?? 0), 0)
-
-        if (rangeSpent > 0 && spent_this_cycle === 0) spent_this_cycle = rangeSpent
-        if (rangeAwarded > 0 && real_awarded === 0) real_awarded = rangeAwarded
-      }
-    }
-  }
-
-  // 2. Budget Left Calculation
-  // MF5.3.3 FIX: Budget Left must come from cycle. If no cycle, show null (--) instead of fallback to full budget.
   let remains_cap: number | null = null
   if (cycle) {
     const maxBudget = cycle.max_budget ?? null
@@ -269,72 +144,11 @@ async function getStatsForAccount(supabase: ReturnType<typeof createClient>, acc
       const consumed = real_awarded + virtual_profit
       remains_cap = Math.max(0, maxBudget - consumed)
     }
-  } else if (config.maxBudget) {
-    const consumed = real_awarded + virtual_profit
-    remains_cap = Math.max(0, config.maxBudget - consumed)
   }
-
-  // 3. Fallback / Validation if cycle missing (e.g. no txns yet)
-  // If no cycle, spent is 0, real is 0, virtual is 0 -> correct.
 
   const min_spend = cycle ? (cycle.min_spend_target ?? null) : config.minSpendTarget
   const missing_for_min = (min_spend !== null) ? Math.max(0, min_spend - spent_this_cycle) : null
   const is_qualified = cycle?.met_min_spend ?? (min_spend !== null && spent_this_cycle >= min_spend)
-
-  let cycle_range = (start && end) ? `${fmtDate(start)} - ${fmtDate(end)}` : null
-
-  // Smart Cycle Detection - Format as DD-MM to DD-MM
-  const isFullMonth = start.getDate() === 1 &&
-    (new Date(end.getTime() + 86400000).getDate() === 1)
-
-  if (config.cycleType === 'calendar_month' || isFullMonth) {
-    // Full month: show first day to last day of month
-    const lastDay = new Date(start.getFullYear(), start.getMonth() + 1, 0).getDate()
-    cycle_range = `01-${String(start.getMonth() + 1).padStart(2, '0')} to ${String(lastDay).padStart(2, '0')}-${String(start.getMonth() + 1).padStart(2, '0')}`
-  } else {
-    // Custom cycle: DD-MM to DD-MM
-    const startDay = String(start.getDate()).padStart(2, '0')
-    const startMonth = String(start.getMonth() + 1).padStart(2, '0')
-    const endDay = String(end.getDate()).padStart(2, '0')
-    const endMonth = String(end.getMonth() + 1).padStart(2, '0')
-    cycle_range = `${startDay}-${startMonth} to ${endDay}-${endMonth}`
-  }
-
-  // 4. Due Date Display
-  let due_date_display: string | null = null
-  let due_date: string | null = null
-
-  if (config.dueDate) {
-    const currentDay = now.getDate()
-    let targetMonth = now.getMonth()
-    const targetYear = now.getFullYear()
-
-    if (currentDay > config.dueDate) {
-      targetMonth += 1
-    }
-
-    const targetDate = new Date(targetYear, targetMonth, config.dueDate)
-    due_date_display = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(targetDate)
-    due_date = targetDate.toISOString()
-  }
-
-  // 5. Annual Fee Waiver Calculation
-  let annual_fee_waiver_target: number | null = null
-  let annual_fee_waiver_progress = 0
-  let annual_fee_waiver_met = false
-
-  if (account.type === 'credit_card' && account.annual_fee && account.annual_fee > 0) {
-    // Get waiver target from account config, or use minSpendTarget as fallback
-    annual_fee_waiver_target = account.annual_fee_waiver_target ?? config.minSpendTarget ?? null
-
-    if (annual_fee_waiver_target && annual_fee_waiver_target > 0) {
-      // Calculate annual spend (not just current cycle)
-      // For now, use spent_this_cycle as proxy; in production, aggregate full year
-      const annualSpend = spent_this_cycle // TODO: Implement full year aggregation
-      annual_fee_waiver_progress = Math.min(100, (annualSpend / annual_fee_waiver_target) * 100)
-      annual_fee_waiver_met = annualSpend >= annual_fee_waiver_target
-    }
-  }
 
   return {
     ...baseStats,
@@ -342,80 +156,47 @@ async function getStatsForAccount(supabase: ReturnType<typeof createClient>, acc
     min_spend,
     missing_for_min,
     is_qualified,
-    cycle_range,
-    due_date_display,
-    due_date,
+    cycle_range: (start && end) ? `${fmtDate(start)} - ${fmtDate(end)}` : "",
     remains_cap,
     shared_cashback: real_awarded,
     real_awarded,
     virtual_profit,
-    annual_fee_waiver_target,
-    annual_fee_waiver_progress,
-    annual_fee_waiver_met,
+    annual_fee_waiver_target: account.annual_fee_waiver_target ?? config.minSpendTarget ?? null,
+    annual_fee_waiver_progress: 0,
+    annual_fee_waiver_met: false,
     max_budget: cycle?.max_budget ?? config.maxBudget ?? null
   }
 }
 
 
 
-export async function getAccounts(supabaseClient?: SupabaseClient): Promise<Account[]> {
-  const supabase = supabaseClient ?? createClient()
-  console.log('[DB:SB] accounts.getAll')
+export async function getAccounts(): Promise<Account[]> {
+  console.log('[DB:PB] accounts.getAll')
+  const rows = await getPocketBaseAccountRows();
 
-  const rows = await executeWithFallback(
-    () => getPocketBaseAccountRows(),
-    () => getSupabaseAccountRows(supabase),
-    'accounts.list'
-  )
-
-  // 1. Pre-process Relationships
   const childrenMap = new Map<string, AccountRow[]>()
   const accountMap = new Map<string, AccountRow>()
 
-  // First: Build Account Map
-  rows.forEach(row => {
-    accountMap.set(row.id, row)
-  })
-
-  // Second: Build Children Map
+  rows.forEach(row => accountMap.set(row.id, row))
   rows.forEach(row => {
     if (row.parent_account_id) {
-      if (!childrenMap.has(row.parent_account_id)) {
-        childrenMap.set(row.parent_account_id, [])
-      }
-      // Only add if parent actually exists in current dataset to avoid orphans
-      if (accountMap.has(row.parent_account_id)) {
-        childrenMap.get(row.parent_account_id)!.push(row)
-      }
+      if (!childrenMap.has(row.parent_account_id)) childrenMap.set(row.parent_account_id, [])
+      if (accountMap.has(row.parent_account_id)) childrenMap.get(row.parent_account_id)!.push(row)
     }
   })
 
-  // 2. Parallel fetch stats and build Account objects
-  // 2. Linear fetch stats to avoid connection reset (ECONNRESET)
   const accounts: Account[] = []
-
-  // Single-thread execution (or small batch) to be safe
   for (const item of rows) {
-    const stats = await getStatsForAccount(supabase, item)
+    const stats = await getStatsForAccount(item)
 
-    // Relationship Logic (Shared Limit Family)
     const childRows = childrenMap.get(item.id) || []
     const parentRow = item.parent_account_id ? accountMap.get(item.parent_account_id) : null
 
     const relationships: AccountRelationships = {
       is_parent: childRows.length > 0,
       child_count: childRows.length,
-      child_accounts: childRows.map(c => ({
-        id: c.id,
-        name: c.name,
-        image_url: c.image_url
-      })),
-      parent_info: parentRow ? {
-        id: parentRow.id,
-        name: parentRow.name,
-        type: parentRow.type,
-        image_url: parentRow.image_url
-      } : null
+      child_accounts: childRows.map(c => ({ id: c.id, name: c.name, image_url: c.image_url })),
+      parent_info: parentRow ? { id: parentRow.id, name: parentRow.name, type: parentRow.type, image_url: parentRow.image_url } : null
     }
 
     accounts.push({
@@ -501,10 +282,8 @@ export async function getAccounts(supabaseClient?: SupabaseClient): Promise<Acco
 }
 
 export async function getAccountDetails(id: string): Promise<Account | null> {
-  if (!id || id === 'add' || id === 'new' || id === 'undefined') {
-    return null
-  }
-  console.log('[DB:SB] accounts.getDetails', { id })
+  if (!id || id === 'add' || id === 'new' || id === 'undefined') return null;
+  console.log('[DB:PB] accounts.getDetails', { id });
 
   const mapAccountRowToDetails = (row: AccountRow): Account => ({
     id: row.id,
@@ -537,71 +316,15 @@ export async function getAccountDetails(id: string): Promise<Account | null> {
     due_date: row.due_date ?? null,
     holder_type: (row as any).holder_type ?? 'me',
     holder_person_id: (row as any).holder_person_id ?? null
-  })
-
-  const getSupabaseAccountDetailsById = async (): Promise<Account | null> => {
-    const supabase = createClient()
-    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
-    if (!isUuid) {
-      return null
-    }
-
-    const { data, error } = await supabase
-      .from('accounts')
-      .select('*')
-      .eq('id', id)
-      .maybeSingle()
-
-    if (error || !data) {
-      if (error?.code && error.code === 'PGRST116') {
-        return null
-      }
-      console.error('Error fetching account details from SB:', {
-        accountId: id,
-        message: error?.message ?? 'unknown error',
-        code: error?.code,
-      })
-      return null
-    }
-
-    return mapAccountRowToDetails(data as AccountRow)
-  }
-
-  const getPocketBaseAccountDetailsById = async (): Promise<Account | null> => {
-    const candidateUrls = [
-      `https://api-db.reiwarden.io.vn/api/collections/pvl_acc_001/records/${id}`,
-      `https://api-db.reiwarden.io.vn/api/collections/accounts/records/${id}`,
-    ]
-
-    let lastErrorText = ''
-
-    for (const url of candidateUrls) {
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: { 'Content-Type': 'application/json' },
-      })
-
-      if (!response.ok) {
-        lastErrorText = await response.text()
-        continue
-      }
-
-      const record = await response.json()
-      return mapAccountRowToDetails(mapPocketBaseAccountRow(record))
-    }
-
-    throw new Error(`PB account.details failed: ${lastErrorText}`)
-  }
+  });
 
   try {
-    return await executeWithFallback(
-      () => getPocketBaseAccountDetailsById(),
-      () => getSupabaseAccountDetailsById(),
-      `accounts.detail(${id})`
-    )
-  } catch (error) {
-    console.error('accounts.detail exhausted PB/SB sources', { accountId: id, error })
-    return null
+    const record = await pocketbaseGetById<any>('accounts', id);
+    if (!record) return null;
+    return mapAccountRowToDetails(mapPocketBaseAccountRow(record));
+  } catch (err) {
+    console.error('[DB:PB] getAccountDetails failed:', err);
+    return null;
   }
 }
 
@@ -620,55 +343,31 @@ async function fetchTransactions(
   accountId: string,
   limit: number,
 ): Promise<TransactionWithDetails[]> {
-  const supabase = createClient()
+  try {
+    const pbAccountId = toPocketBaseId(accountId, 'accounts');
+    const response = await pocketbaseList<any>('transactions', {
+      filter: `account_id = "${pbAccountId}" || target_account_id = "${pbAccountId}"`,
+      sort: '-occurred_at',
+      perPage: limit,
+      expand: 'account_id,target_account_id,category_id,shop_id,person_id'
+    });
 
-  const { data, error } = await supabase
-    .from('transactions')
-    .select(`
-      id,
-      occurred_at,
-      note,
-      tag,
-      status,
-      created_at,
-      shop_id,
-      shops ( id, name, image_url ),
-      amount,
-      type,
-      account_id,
-      target_account_id,
-      category_id,
-      person_id,
-      metadata,
-      cashback_share_percent,
-      cashback_share_fixed,
-      cashback_mode,
-      created_by,
-      currency,
-      accounts (name, type, image_url),
-      categories (name, image_url, icon)
-    `)
-    .eq('account_id', accountId)
-    .order('occurred_at', { ascending: false })
-    .limit(limit)
-
-  if (error) {
-    console.error('Error fetching transactions for account:', {
-      accountId,
-      message: error?.message ?? 'unknown error',
-      code: error?.code,
-    })
-    return []
+    // Reuse mapPocketBaseTransaction from account-details.service if available, 
+    // but here we might need a general mapper. 
+    // Since loadPocketBaseTransactionsForAccount is already exported from account-details.service, 
+    // we can use it.
+    return loadPocketBaseTransactionsForAccount(accountId, limit);
+  } catch (err) {
+    console.error('[DB:PB] fetchTransactions failed:', err);
+    return [];
   }
-
-  return (data || []).map(txn => mapUnifiedTransaction(txn, accountId))
 }
 
 export async function getAccountTransactions(
   accountId: string,
   limit = 20
 ): Promise<TransactionWithDetails[]> {
-  console.log('[DB:SB] accounts.getTransactions', { accountId, limit })
+  console.log('[DB:PB] accounts.getTransactions', { accountId, limit })
   return fetchTransactions(accountId, limit)
 }
 
@@ -687,7 +386,6 @@ export async function updateAccountConfig(
     parent_account_id?: string | null
     account_number?: string | null
     receiver_name?: string | null
-    // New Cashback Columns
     cb_type?: 'none' | 'simple' | 'tiered'
     cb_base_rate?: number
     cb_max_budget?: number | null
@@ -701,103 +399,27 @@ export async function updateAccountConfig(
     holder_person_id?: string | null
   }
 ): Promise<boolean> {
-  // Guard clause to prevent 22P02 error (invalid input syntax for type uuid)
   if (accountId === 'new') return false
-  console.log('[DB:SB] accounts.updateConfig', { accountId })
+  const pbId = toPocketBaseId(accountId, 'accounts')
+  console.log('[DB:PB] accounts.updateConfig', { id: pbId })
 
-  const supabase = createClient()
+  try {
+    const payload: any = { ...data }
+    
+    // MF5.3 Compatibility Mapping
+    if (data.secured_by_account_id) payload.secured_by_account_id = toPocketBaseId(data.secured_by_account_id, 'accounts')
+    if (data.parent_account_id) payload.parent_account_id = toPocketBaseId(data.parent_account_id, 'accounts')
+    if (data.holder_person_id) payload.holder_person_id = toPocketBaseId(data.holder_person_id, 'people')
 
-  const payload: any = {}
-
-  // 1. Basic Fields
-  if (typeof data.name === 'string') payload.name = data.name
-  if (typeof data.credit_limit !== 'undefined') payload.credit_limit = data.credit_limit
-  if (typeof data.type === 'string') payload.type = data.type
-  if ('secured_by_account_id' in data) payload.secured_by_account_id = data.secured_by_account_id ?? null
-  if (typeof data.is_active === 'boolean') payload.is_active = data.is_active
-  if ('annual_fee' in data) payload.annual_fee = data.annual_fee ?? null
-  if ('annual_fee_waiver_target' in data) payload.annual_fee_waiver_target = data.annual_fee_waiver_target ?? null
-  if ('parent_account_id' in data) payload.parent_account_id = data.parent_account_id ?? null
-  if (typeof data.image_url === 'string') payload.image_url = data.image_url
-  if ('account_number' in data) payload.account_number = data.account_number ?? null
-  if ('receiver_name' in data) payload.receiver_name = data.receiver_name ?? null
-  if ('cb_cycle_type' in data) payload.cb_cycle_type = data.cb_cycle_type ?? 'calendar_month'
-  if ('statement_day' in data) payload.statement_day = data.statement_day ?? null
-  if ('due_date' in data) payload.due_date = data.due_date ?? null
-  if ('holder_type' in data) payload.holder_type = data.holder_type ?? 'me'
-  if ('holder_person_id' in data) payload.holder_person_id = data.holder_person_id ?? null
-
-  // 2. New Cashback Columns
-  if (data.cb_type) payload.cb_type = data.cb_type
-  if (typeof data.cb_base_rate === 'number') payload.cb_base_rate = data.cb_base_rate
-  if ('cb_max_budget' in data) payload.cb_max_budget = data.cb_max_budget
-  if (typeof data.cb_is_unlimited === 'boolean') payload.cb_is_unlimited = data.cb_is_unlimited
-  if ('cb_rules_json' in data) payload.cb_rules_json = data.cb_rules_json
-  if ('cb_min_spend' in data) payload.cb_min_spend = data.cb_min_spend ?? null
-
-  // 3. MF5.4.2: Detect changes to cashback_config or new columns to increment version
-  const hasCashbackData = typeof data.cashback_config !== 'undefined' ||
-    data.cb_type ||
-    typeof data.cb_base_rate === 'number' ||
-    'cb_rules_json' in data;
-
-  if (hasCashbackData) {
-    const { data: oldAccount } = await supabase
-      .from('accounts')
-      .select('cashback_config, cashback_config_version, cb_type, cb_base_rate, cb_rules_json')
-      .eq('id', accountId)
-      .single() as any
-
-    const oldConfigStr = JSON.stringify({
-      c: oldAccount?.cashback_config,
-      t: oldAccount?.cb_type,
-      r: oldAccount?.cb_base_rate,
-      j: oldAccount?.cb_rules_json
-    })
-
-    const newConfigStr = JSON.stringify({
-      c: data.cashback_config ?? oldAccount?.cashback_config,
-      t: data.cb_type ?? oldAccount?.cb_type,
-      r: data.cb_base_rate ?? oldAccount?.cb_base_rate,
-      j: data.cb_rules_json ?? oldAccount?.cb_rules_json
-    })
-
-    if (oldConfigStr !== newConfigStr) {
-      const nextVersion = (Number(oldAccount?.cashback_config_version) || 1) + 1
-      payload.cashback_config_version = nextVersion
-      if (typeof data.cashback_config !== 'undefined') {
-        payload.cashback_config = data.cashback_config
-      }
-
-      console.log(`[updateAccountConfig] Cashback config changed for ${accountId}. Incrementing version to ${nextVersion}`)
-
-      // Trigger recompute if version changed (async)
-      import('@/services/cashback.service').then(m => m.recomputeAccountCashback(accountId, 3))
-    }
-  }
-
-  if (Object.keys(payload).length === 0) {
+    await pocketbaseUpdate('accounts', pbId, payload)
+    
+    revalidatePath('/accounts')
+    revalidatePath(`/accounts/${accountId}`)
     return true
-  }
-
-  const { error } = await supabase
-    .from('accounts')
-    .update(payload)
-    .eq('id', accountId)
-
-  if (error) {
-    console.error('Error updating account configuration:', error)
+  } catch (error) {
+    console.error('[DB:PB] updateAccountConfig failed:', error)
     return false
   }
-
-  revalidatePath('/accounts')
-  revalidatePath(`/accounts/${accountId}`)
-
-  // PB secondary write (fire-and-forget)
-  void updatePocketBaseAccountConfig(accountId, payload)
-    .catch((err) => console.error('[DB:PB] accounts.updateConfig secondary failed:', err))
-
-  return true
 }
 
 export async function getAccountStats(accountId: string) {
@@ -827,174 +449,94 @@ export async function getAccountStats(accountId: string) {
 
 // getAccountTransactionDetails removed
 
-// New implementation of recalculateBalance using single transactions table
+// New implementation of recalculateBalance using PocketBase
 export async function recalculateBalance(accountId: string): Promise<boolean> {
-  console.log('[DB:SB] accounts.recalcBalance', { accountId })
-  const supabase = createClient()
+  const pbAccountId = toPocketBaseId(accountId, 'accounts')
+  console.log('[DB:PB] accounts.recalcBalance', { accountId: pbAccountId })
 
-  // 1. Get current balance from transactions
-  // Get account type first
-  const { data: account, error: accError } = await supabase
-    .from('accounts')
-    .select('type')
-    .eq('id', accountId)
-    .single() as any
+  // 1. Get account type
+  const account = await pocketbaseGetById<any>('accounts', pbAccountId)
 
-
-  if (accError || !account) {
-    console.error('Account not found for balance calc:', accountId)
+  if (!account) {
+    console.warn('[PB:Recalc] Account not found:', pbAccountId)
     return false
   }
 
-  // Fetch all transactions involving this account
-  const { data: txns, error: txnError } = await supabase
-    .from('transactions')
-    .select('amount, type, category_id, account_id, target_account_id, status')
-    .eq('status', 'posted')
-    .is('parent_transaction_id', null)
-    .or(`account_id.eq.${accountId},target_account_id.eq.${accountId}`)
-
-  if (txnError) {
-    console.error('Error fetching transactions for balance:', txnError)
-    return false
-  }
-
-  const { totalIn, totalOut, currentBalance } = computeAccountTotals({
-    accountId,
-    accountType: account.type,
-    transactions: (txns as any[] || []),
+  // 2. Fetch all transactions for this account (posted, no parent)
+  // PerPage=5000 as safety for now. 
+  // We use filter for account_id and target_account_id (mapped by migrate to both names)
+  const txns = await pocketbaseList('transactions', {
+    filter: `status = "posted" && parent_transaction_id = "" && (account_id = "${pbAccountId}" || to_account_id = "${pbAccountId}")`,
+    perPage: 5000
   })
 
-  const { error: updateError } = await (supabase
-    .from('accounts')
-    .update as any)({
-      current_balance: currentBalance,
-      total_in: totalIn,
-      total_out: totalOut
-    })
-    .eq('id', accountId)
+  const { totalIn, totalOut, currentBalance } = computeAccountTotals({
+      accountId: pbAccountId,
+      accountType: (account as any).type as any,
+      transactions: (txns.items || []) as any[],
+  })
 
-  if (updateError) {
-    console.error('Error updating account balance:', updateError)
+  // 3. Update PB
+  try {
+    await pocketbaseUpdate('accounts', pbAccountId, {
+        current_balance: currentBalance,
+        total_in: totalIn,
+        total_out: totalOut
+    })
+  } catch (err) {
+    console.error('[DB:PB] accounts.recalcBalance failed:', err)
     return false
   }
 
   return true
 }
 
-export async function recalculateBalanceWithClient(
-  supabase: SupabaseClient,
-  accountId: string,
-): Promise<boolean> {
-  const { data: account, error: accError } = await supabase
-    .from('accounts')
-    .select('type')
-    .eq('id', accountId)
-    .single() as any
-
-  if (accError || !account) {
-    console.error('Account not found for balance calc:', accountId)
-    return false
-  }
-
-  const { data: txns, error: txnError } = await supabase
-    .from('transactions')
-    .select('amount, type, category_id, account_id, target_account_id, status')
-    .eq('status', 'posted')
-    .is('parent_transaction_id', null)
-    .or(`account_id.eq.${accountId},target_account_id.eq.${accountId}`)
-
-  if (txnError) {
-    console.error('Error fetching transactions for balance:', txnError)
-    return false
-  }
-
-  const { totalIn, totalOut, currentBalance } = computeAccountTotals({
-    accountId,
-    accountType: account.type,
-    transactions: (txns as any[] || []),
-  })
-
-  const { error: updateError } = await (supabase
-    .from('accounts')
-    .update as any)({
-      current_balance: currentBalance,
-      total_in: totalIn,
-      total_out: totalOut,
-    })
-    .eq('id', accountId)
-
-  if (updateError) {
-    console.error('Error updating account balance:', updateError)
-    return false
-  }
-
-  return true
-}
+// recalculateBalanceWithClient removed
 
 export async function deleteAccount(id: string): Promise<boolean> {
-  console.log('[DB:SB] accounts.delete', { id })
-  const supabase = createClient()
-  // Or just void it?
-  // Schema usually allows deletion if no foreign keys block it.
-  const { error } = await supabase
-    .from('accounts')
-    .delete()
-    .eq('id', id)
-
-  if (error) {
-    console.error('Error deleting account:', error)
+  const pbId = toPocketBaseId(id, 'accounts')
+  console.log('[DB:PB] accounts.delete', { id: pbId })
+  
+  try {
+    await pocketbaseDelete('accounts', pbId)
+    revalidatePath('/accounts')
+    return true
+  } catch (err) {
+    console.error('[DB:PB] accounts.delete failed:', err)
     return false
   }
-
-  revalidatePath('/accounts')
-  return true
 }
 
 export async function updateAccountStatus(id: string, isActive: boolean): Promise<boolean> {
-  const supabase = createClient()
+  const pbId = toPocketBaseId(id, 'accounts')
+  console.log('[DB:PB] accounts.updateStatus', { id: pbId, isActive })
 
-  const { error } = await supabase
-    .from('accounts')
-    .update({ is_active: isActive } as any)
-    .eq('id', id)
-
-  if (error) {
-    console.error('Error updating account status:', error)
+  try {
+    await pocketbaseUpdate('accounts', pbId, { is_active: isActive })
+    revalidatePath('/accounts')
+    return true
+  } catch (error) {
+    console.error('[DB:PB] updateAccountStatus failed:', error)
     return false
   }
-
-  revalidatePath('/accounts')
-  return true
 }
 
 export async function getRecentAccountsByTransactions(limit: number = 5): Promise<Account[]> {
-  const supabase = createClient()
+  console.log('[DB:PB] accounts.getRecentByTxns', { limit })
+  try {
+    const txns = await pocketbaseList<any>('transactions', {
+      sort: '-occurred_at',
+      perPage: 50,
+      fields: 'account_id'
+    })
 
-  // Query transactions, ordered by occurred_at
-  const { data: txns, error } = await supabase
-    .from('transactions')
-    .select('account_id')
-    .not('account_id', 'is', null)
-    .order('occurred_at', { ascending: false })
-    .limit(50)
+    const accountIds = Array.from(new Set(txns.items.map(t => t.account_id).filter(Boolean))).slice(0, limit)
+    if (accountIds.length === 0) return []
 
-  if (error || !txns) return []
-
-  // Get unique account IDs in order of last transaction
-  const accountIds = Array.from(new Set((txns as any[]).map(t => t.account_id).filter((id): id is string => !!id))).slice(0, limit)
-  if (accountIds.length === 0) return []
-
-  // Fetch account details
-  const { data: accounts, error: aError } = await (supabase
-    .from('accounts')
-    .select('id, name, type, image_url')
-    .in('id', accountIds) as any)
-
-  if (aError || !accounts) return []
-
-  // Return matched accounts in correct order
-  return accountIds
-    .map(id => (accounts as any[]).find(a => a.id === id))
-    .filter(Boolean) as Account[]
+    const accounts = await Promise.all(accountIds.map(id => getAccountDetails(id as string)))
+    return accounts.filter(Boolean) as Account[]
+  } catch (err) {
+    console.error('[DB:PB] getRecentAccountsByTransactions failed:', err)
+    return []
+  }
 }

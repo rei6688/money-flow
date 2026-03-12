@@ -322,20 +322,23 @@ export function MonthYearPickerV2({
                 {isCycleLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Cycle'}
               </Button>
             )}
-            {(['month', 'date', 'range', 'all'] as const).map((m) => {
-              const isActive = (m === 'all' && (localMode === 'all' || localMode === 'year')) || (m === localMode);
+            {['month', 'date', 'range', 'all'].map((m) => {
+              const isActive = m === localMode || (m === 'all' && localMode === 'year');
               return (
                 <Button
                   key={m}
                   variant={isActive ? 'default' : 'ghost'}
                   size="sm"
                   onClick={() => {
-                    if (m === 'all' && localMode === 'range') setLocalMode('all')
-                    else setLocalMode(m)
+                    if (m === 'all' && (localMode === 'range' || localMode === 'all')) {
+                      setLocalMode('all')
+                    } else {
+                      setLocalMode(m as any)
+                    }
                   }}
-                  className="flex-1 h-7 text-xs capitalize"
+                  className="flex-1 h-7 text-[10px] capitalize px-1"
                 >
-                  {m === 'all' ? 'Year' : m}
+                  {m === 'all' ? 'All' : m}
                 </Button>
               )
             })}

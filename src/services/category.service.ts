@@ -1,9 +1,19 @@
 'use server'
 
-import { createClient } from '@/lib/supabase/server'
-import { Category } from '@/types/moneyflow.types'
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
 import { revalidatePath } from 'next/cache'
+import { Category } from '@/types/moneyflow.types'
 import {
+  pocketbaseList,
+  pocketbaseGetById,
+  toPocketBaseId,
+  pocketbaseCreate,
+  pocketbaseUpdate,
+  pocketbaseDelete,
+} from '@/services/pocketbase/server'
+import {
+  getPocketBaseCategories,
   createPocketBaseCategory,
   updatePocketBaseCategory,
   togglePocketBaseCategoryArchive,
@@ -12,41 +22,76 @@ import {
   deletePocketBaseCategoriesBulk,
 } from '@/services/pocketbase/account-details.service'
 
-type CategoryRow = {
-  id: string
-  name: string
-  type: Category['type']
-  parent_id: string | null
-  icon: string | null
-  image_url: string | null
-  kind: Category['kind']
-  mcc_codes?: string[] | null
-  is_archived?: boolean | null
-}
-
-import { getPocketBaseCategories } from './pocketbase/account-details.service'
-
 export async function getCategories(): Promise<Category[]> {
   console.log('[DB:PB] categories.list')
   try {
     return await getPocketBaseCategories()
   } catch (err) {
-    console.error('[DB:PB] categories.list failed, falling back to Supabase:', err)
+    console.error('[DB:PB] categories.list failed:', err)
+    return []
+  }
+}
 
-    console.log('[DB:SB] categories.select')
-    const supabase = createClient()
-    const { data, error } = await supabase
-      .from('categories')
-      .select('*')
-      .order('name', { ascending: true })
+export async function createCategory(category: Omit<Category, 'id'>): Promise<Category | null> {
+  console.log('[DB:PB] categories.create', { name: category.name })
+  
+  // Create a temporary ID to hash for consistent PB ID if needed, 
+  // but for categories we can just let PB generate or use random
+  const tempId = crypto.randomUUID()
+  
+  try {
+    const success = await createPocketBaseCategory(tempId, {
+      name: category.name,
+      type: category.type,
+      icon: category.icon ?? null,
+      image_url: category.image_url ?? null,
+      kind: category.kind ?? null,
+      mcc_codes: (category as any).mcc_codes ?? null,
+    })
 
-    if (error) {
-      console.error('[DB:SB] categories.select failed:', error)
-      return []
-    }
+    if (!success) throw new Error('Failed to create category in PocketBase')
+    
+    revalidatePath('/categories')
+    // Re-fetch to return the actual object with PB ID
+    const categories = await getPocketBaseCategories()
+    return categories.find(c => c.name === category.name) || null
+  } catch (err) {
+    console.error('[DB:PB] categories.create failed:', err)
+    return null
+  }
+}
 
-    const rows = (data ?? []) as unknown as CategoryRow[]
-    return rows.map(item => ({
+export async function updateCategory(id: string, updates: Partial<Category>): Promise<Category | null> {
+  console.log('[DB:PB] categories.update', { id })
+  
+  try {
+    const success = await updatePocketBaseCategory(id, {
+      name: updates.name,
+      type: updates.type,
+      icon: updates.icon ?? null,
+      image_url: updates.image_url ?? null,
+      kind: updates.kind ?? null,
+      mcc_codes: (updates as any).mcc_codes ?? null,
+    })
+
+    if (!success) throw new Error('Failed to update category in PocketBase')
+
+    revalidatePath('/categories')
+    return (await getCategoryById(id))
+  } catch (err) {
+    console.error('[DB:PB] categories.update failed:', err)
+    return null
+  }
+}
+
+export async function getCategoryById(id: string): Promise<Category | null> {
+  console.log('[DB:PB] categories.getById', { id })
+  try {
+    const pbId = toPocketBaseId(id, 'categories')
+    const item = await pocketbaseGetById<any>('categories', pbId)
+    if (!item) return null
+
+    return {
       id: item.id,
       name: item.name,
       type: item.type,
@@ -56,335 +101,182 @@ export async function getCategories(): Promise<Category[]> {
       kind: item.kind,
       mcc_codes: item.mcc_codes,
       is_archived: item.is_archived,
-    }))
-  }
-}
-
-export async function createCategory(category: Omit<Category, 'id'>): Promise<Category | null> {
-  const supabase = createClient()
-
-  console.log('[DB:SB] categories.create', { name: category.name })
-
-  const { data, error } = await (supabase
-    .from('categories') as any)
-    .insert({
-      name: category.name,
-      type: category.type,
-      icon: category.icon ?? null,
-      image_url: category.image_url ?? null,
-      kind: category.kind ?? null,
-      mcc_codes: (category as any).mcc_codes ?? null,
-    } as any)
-    .select()
-    .single()
-
-  if (error) {
-    console.error('[DB:SB] categories.create failed:', error)
-    return null
-  }
-
-  const result = data as Category
-  void createPocketBaseCategory(result.id, {
-    name: result.name,
-    type: result.type,
-    icon: result.icon ?? null,
-    image_url: result.image_url ?? null,
-    kind: result.kind ?? null,
-    mcc_codes: (result as any).mcc_codes ?? null,
-  }).catch((err) => console.error('[DB:PB] categories.create secondary failed:', err))
-
-  return result
-}
-
-export async function updateCategory(id: string, updates: Partial<Category>): Promise<Category | null> {
-  const supabase = createClient()
-
-  console.log('[DB:SB] categories.update', { id })
-
-  const { data, error } = await (supabase
-    .from('categories') as any)
-    .update({
-      name: updates.name,
-      type: updates.type,
-      icon: updates.icon,
-      image_url: updates.image_url,
-      kind: updates.kind,
-      mcc_codes: (updates as any).mcc_codes,
-    } as any)
-    .eq('id', id)
-    .select()
-    .single()
-
-  if (error) {
-    console.error('[DB:SB] categories.update failed:', error)
-    return null
-  }
-
-  void updatePocketBaseCategory(id, {
-    name: updates.name,
-    type: updates.type,
-    icon: updates.icon ?? null,
-    image_url: updates.image_url ?? null,
-    kind: updates.kind ?? null,
-    mcc_codes: (updates as any).mcc_codes ?? null,
-  }).catch((err) => console.error('[DB:PB] categories.update secondary failed:', err))
-
-  return data as Category
-}
-
-export async function getCategoryById(id: string): Promise<Category | null> {
-  const supabase = createClient()
-  console.log('[DB:SB] categories.getById', { id })
-
-  const { data, error } = await supabase
-    .from('categories')
-    .select('*')
-    .eq('id', id)
-    .single()
-
-  if (error) {
-    if (error.code !== 'PGRST116') { // not found
-      console.error('Error fetching category:', error)
     }
+  } catch (error) {
+    console.error('[DB:PB] getCategoryById failed:', error)
     return null
-  }
-
-  const item = data as any
-
-  return {
-    id: item.id,
-    name: item.name,
-    type: item.type,
-    parent_id: item.parent_id ?? undefined,
-    icon: item.icon,
-    image_url: item.image_url,
-    kind: item.kind,
-    mcc_codes: item.mcc_codes,
   }
 }
 
 export async function getCategoryStats(year: number) {
-  const supabase = createClient()
-  console.log('[DB:SB] categories.getStats', { year })
-  const startDate = `${year}-01-01T00:00:00.000Z`
-  const endDate = `${year}-12-31T23:59:59.999Z`
+  console.log('[DB:PB] categories.getStats', { year })
+  const startDate = `${year}-01-01 00:00:00.000Z`
+  const endDate = `${year}-12-31 23:59:59.999Z`
 
-  const { data, error } = await supabase
-    .from('transactions')
-    .select('category_id, amount')
-    .neq('status', 'void')
-    .gte('occurred_at', startDate)
-    .lte('occurred_at', endDate)
+  try {
+    // This could potentially fetch thousands of txns, but typical personal use is limited
+    const response = await pocketbaseList<any>('transactions', {
+      filter: `occurred_at >= '${startDate}' && occurred_at <= '${endDate}' && status != 'void'`,
+      perPage: 2000
+    })
 
-  if (error) {
-    console.error('Error fetching category stats:', error)
+    const stats: Record<string, { total: number; count: number }> = {}
+
+    response.items.forEach((txn: any) => {
+      if (!txn.category_id) return
+      if (!stats[txn.category_id]) {
+        stats[txn.category_id] = { total: 0, count: 0 }
+      }
+      stats[txn.category_id].total += txn.amount || 0
+      stats[txn.category_id].count += 1
+    })
+
+    return stats
+  } catch (error) {
+    console.error('[DB:PB] getCategoryStats failed:', error)
     return {}
   }
-
-  const stats: Record<string, { total: number; count: number }> = {}
-
-
-  data.forEach((txn: any) => {
-    if (!txn.category_id) return
-    if (!stats[txn.category_id]) {
-      stats[txn.category_id] = { total: 0, count: 0 }
-    }
-    stats[txn.category_id].total += txn.amount || 0
-    stats[txn.category_id].count += 1
-  })
-
-  return stats
 }
 
 export async function toggleCategoryArchive(id: string, isArchived: boolean): Promise<boolean> {
-  const supabase = createClient()
-  console.log('[DB:SB] categories.toggleArchive', { id, isArchived })
-  const { error } = await supabase
-    .from('categories')
-    .update({ is_archived: isArchived } as any)
-    .eq('id', id)
-
-  if (error) {
-    console.error('[DB:SB] categories.toggleArchive failed:', error)
+  console.log('[DB:PB] categories.toggleArchive', { id, isArchived })
+  try {
+    const success = await togglePocketBaseCategoryArchive(id, isArchived)
+    if (success) revalidatePath('/categories')
+    return success
+  } catch (err) {
+    console.error('[DB:PB] categories.toggleArchive failed:', err)
     return false
   }
-
-  void togglePocketBaseCategoryArchive(id, isArchived)
-    .catch((err) => console.error('[DB:PB] categories.toggleArchive secondary failed:', err))
-
-  return true
 }
 
 export async function deleteCategory(id: string, targetId?: string): Promise<{ success: boolean; error?: string; hasTransactions?: boolean }> {
-  const supabase = createClient()
+  console.log('[DB:PB] categories.delete', { id, targetId })
+  
+  try {
+    const pbId = toPocketBaseId(id, 'categories')
+    
+    // 1. Check for existing transactions
+    const txns = await pocketbaseList<any>('transactions', {
+      filter: `category_id='${pbId}'`,
+      perPage: 1
+    })
+    
+    const hasTransactions = txns.totalItems > 0
 
-  console.log('[DB:SB] categories.delete', { id, targetId })
+    if (hasTransactions) {
+      if (!targetId) {
+        return { success: false, hasTransactions: true, error: 'Category has associated transactions' }
+      }
 
-  // 1. Check for existing transactions
-  const { count, error: countError } = await supabase
-    .from('transactions')
-    .select('*', { count: 'exact', head: true })
-    .eq('category_id', id)
-
-  if (countError) {
-    console.error('[DB:SB] categories.delete count check failed:', countError)
-    return { success: false, error: 'Failed to check transactions' }
-  }
-
-  const hasTransactions = (count || 0) > 0
-
-  if (hasTransactions) {
-    if (!targetId) {
-      return { success: false, hasTransactions: true, error: 'Category has associated transactions' }
+      // 2. Handover transactions to target category
+      const targetPbId = toPocketBaseId(targetId, 'categories')
+      const allTxns = await pocketbaseList<any>('transactions', {
+        filter: `category_id='${pbId}'`,
+        perPage: 500
+      })
+      
+      for (const txn of allTxns.items) {
+        await pocketbaseUpdate('transactions', txn.id, { category_id: targetPbId })
+      }
     }
 
-    // 2. Handover transactions to target category
-    const { error: updateError } = await supabase
-      .from('transactions')
-      .update({ category_id: targetId } as any)
-      .eq('category_id', id)
-
-    if (updateError) {
-      console.error('[DB:SB] categories.delete handover failed:', updateError)
-      return { success: false, error: 'Failed to move transactions' }
-    }
+    // 3. Delete the category
+    const success = await deletePocketBaseCategory(pbId)
+    if (success) revalidatePath('/categories')
+    return { success }
+  } catch (err) {
+    console.error('[DB:PB] deleteCategory failed:', err)
+    return { success: false, error: (err as any).message }
   }
-
-  // 3. Delete the category
-  const { error: deleteError } = await supabase
-    .from('categories')
-    .delete()
-    .eq('id', id)
-
-  if (deleteError) {
-    console.error('[DB:SB] categories.delete failed:', deleteError)
-    return { success: false, error: 'Failed to delete category' }
-  }
-
-  void deletePocketBaseCategory(id)
-    .catch((err) => console.error('[DB:PB] categories.delete secondary failed:', err))
-
-  revalidatePath('/categories')
-  return { success: true }
 }
 
-
 export async function toggleCategoriesArchiveBulk(ids: string[], isArchived: boolean): Promise<boolean> {
-  const supabase = createClient()
-  console.log('[DB:SB] categories.toggleArchiveBulk', { count: ids.length, isArchived })
-  const { error } = await supabase
-    .from('categories')
-    .update({ is_archived: isArchived } as any)
-    .in('id', ids)
-
-  if (error) {
-    console.error('[DB:SB] categories.toggleArchiveBulk failed:', error)
+  console.log('[DB:PB] categories.toggleArchiveBulk', { count: ids.length, isArchived })
+  try {
+    const success = await togglePocketBaseCategoriesArchiveBulk(ids, isArchived)
+    if (success) revalidatePath('/categories')
+    return success
+  } catch (err) {
+    console.error('[DB:PB] toggleCategoriesArchiveBulk failed:', err)
     return false
   }
-
-  void togglePocketBaseCategoriesArchiveBulk(ids, isArchived)
-    .catch((err) => console.error('[DB:PB] categories.toggleArchiveBulk secondary failed:', err))
-
-  revalidatePath('/categories')
-  return true
 }
 
 export async function deleteCategoriesBulk(ids: string[], targetId?: string): Promise<{ success: boolean; error?: string; hasTransactionsIds?: string[] }> {
-  const supabase = createClient()
-
-  console.log('[DB:SB] categories.deleteBulk', { count: ids.length, targetId })
-
-  // 1. Check for transactions across all categories
-  const { data: txns, error: countError } = await supabase
-    .from('transactions')
-    .select('category_id')
-    .in('category_id', ids)
-
-  if (countError) {
-    console.error('[DB:SB] categories.deleteBulk count check failed:', countError)
-    return { success: false, error: 'Failed to check transactions' }
-  }
-
-  const idsWithTransactions = Array.from(new Set((txns as any[]).map(t => t.category_id)))
-
-  if (idsWithTransactions.length > 0 && !targetId) {
-    return { success: false, hasTransactionsIds: idsWithTransactions, error: 'Some categories have associated transactions' }
-  }
-
-  // 2. Handover if targetId provided
-  if (targetId && idsWithTransactions.length > 0) {
-    const { error: updateError } = await supabase
-      .from('transactions')
-      .update({ category_id: targetId } as any)
-      .in('category_id', idsWithTransactions)
-
-    if (updateError) {
-      console.error('[DB:SB] categories.deleteBulk handover failed:', updateError)
-      return { success: false, error: 'Failed to move transactions' }
+  console.log('[DB:PB] categories.deleteBulk', { count: ids.length, targetId })
+  
+  try {
+    // 1. Find categories with transactions
+    const idsWithTransactions: string[] = []
+    const pbIds = ids.map(id => toPocketBaseId(id, 'categories'))
+    
+    for (const pbId of pbIds) {
+      const txns = await pocketbaseList<any>('transactions', {
+        filter: `category_id='${pbId}'`,
+        perPage: 1
+      })
+      if (txns.totalItems > 0) idsWithTransactions.push(pbId)
     }
+
+    if (idsWithTransactions.length > 0 && !targetId) {
+      return { success: false, hasTransactionsIds: idsWithTransactions, error: 'Some categories have associated transactions' }
+    }
+
+    // 2. Handover if targetId provided
+    if (targetId && idsWithTransactions.length > 0) {
+      const targetPbId = toPocketBaseId(targetId, 'categories')
+      for (const pbId of idsWithTransactions) {
+        const allTxns = await pocketbaseList<any>('transactions', {
+          filter: `category_id='${pbId}'`,
+          perPage: 500
+        })
+        for (const txn of allTxns.items) {
+          await pocketbaseUpdate('transactions', txn.id, { category_id: targetPbId })
+        }
+      }
+    }
+
+    // 3. Delete categories
+    const success = await deletePocketBaseCategoriesBulk(pbIds)
+    if (success) revalidatePath('/categories')
+    return { success: true }
+  } catch (err) {
+    console.error('[DB:PB] deleteCategoriesBulk failed:', err)
+    return { success: false, error: (err as any).message }
   }
-
-  // 3. Delete categories
-  const { error: deleteError } = await supabase
-    .from('categories')
-    .delete()
-    .in('id', ids)
-
-  if (deleteError) {
-    console.error('[DB:SB] categories.deleteBulk failed:', deleteError)
-    return { success: false, error: 'Failed to delete categories bulk' }
-  }
-
-  void deletePocketBaseCategoriesBulk(ids)
-    .catch((err) => console.error('[DB:PB] categories.deleteBulk secondary failed:', err))
-
-  revalidatePath('/categories')
-  return { success: true }
 }
 
 export async function archiveCategory(id: string, targetId?: string): Promise<{ success: boolean; error?: string; hasTransactions?: boolean }> {
-  const supabase = createClient()
-
-  console.log('[DB:SB] categories.archive', { id, targetId })
-
-  // 1. If targetId provided, handover transactions first
-  if (targetId) {
-    const { error: updateError } = await supabase
-      .from('transactions')
-      .update({ category_id: targetId } as any)
-      .eq('category_id', id)
-
-    if (updateError) {
-      console.error('[DB:SB] categories.archive handover failed:', updateError)
-      return { success: false, error: 'Failed to move transactions' }
+  console.log('[DB:PB] categories.archive', { id, targetId })
+  
+  try {
+    const pbId = toPocketBaseId(id, 'categories')
+    
+    if (targetId) {
+      const targetPbId = toPocketBaseId(targetId, 'categories')
+      const allTxns = await pocketbaseList<any>('transactions', {
+        filter: `category_id='${pbId}'`,
+        perPage: 500
+      })
+      for (const txn of allTxns.items) {
+        await pocketbaseUpdate('transactions', txn.id, { category_id: targetPbId })
+      }
+    } else {
+      const txns = await pocketbaseList<any>('transactions', {
+        filter: `category_id='${pbId}' && status != 'void'`,
+        perPage: 1
+      })
+      if (txns.totalItems > 0) {
+        return { success: false, hasTransactions: true, error: 'Category has transactions' }
+      }
     }
-  } else {
-    // Check if it has transactions if no targetId provided
-    const { count, error: countError } = await supabase
-      .from('transactions')
-      .select('*', { count: 'exact', head: true })
-      .eq('category_id', id)
-      .neq('status', 'void')
 
-    if (!countError && (count || 0) > 0) {
-      return { success: false, hasTransactions: true, error: 'Category has transactions' }
-    }
+    const success = await pocketbaseUpdate('categories', pbId, { is_archived: true })
+    if (success) revalidatePath('/categories')
+    return { success: !!success }
+  } catch (err) {
+    console.error('[DB:PB] archiveCategory failed:', err)
+    return { success: false, error: (err as any).message }
   }
-
-  // 2. Archive the category
-  const { error: archiveError } = await supabase
-    .from('categories')
-    .update({ is_archived: true } as any)
-    .eq('id', id)
-
-  if (archiveError) {
-    console.error('[DB:SB] categories.archive failed:', archiveError)
-    return { success: false, error: 'Failed to archive' }
-  }
-
-  void togglePocketBaseCategoryArchive(id, true)
-    .catch((err) => console.error('[DB:PB] categories.archive secondary failed:', err))
-
-  revalidatePath('/categories')
-  return { success: true }
 }

@@ -1,6 +1,6 @@
 'use server'
 
-import { createClient } from '@/lib/supabase/server'
+import { pocketbaseList, pocketbaseGetById, toPocketBaseId } from './pocketbase/server'
 import { DebtAccount } from '@/types/moneyflow.types'
 import { toYYYYMMFromDate, normalizeMonthTag } from '@/lib/month-tag'
 import { CreateTransactionInput, createTransaction } from './transaction.service'
@@ -45,20 +45,8 @@ function isUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
 }
 
-async function resolvePersonSupabaseId(personId: string): Promise<string> {
-  if (!personId) return personId
-  if (isUuid(personId)) return personId
-
-  try {
-    const record = await resolvePocketBasePersonRecord(personId)
-    if (record && typeof record.slug === 'string' && isUuid(record.slug)) {
-      return record.slug
-    }
-  } catch (err) {
-    console.error('[resolvePersonSupabaseId] Failed to resolve PB person ID:', err)
-  }
-
-  return personId
+async function resolvePersonPocketBaseId(personId: string): Promise<string> {
+  return toPocketBaseId(personId, 'people');
 }
 
 function resolveBaseType(type: TransactionType | null | undefined): 'income' | 'expense' | 'transfer' {
@@ -119,66 +107,52 @@ export async function computeDebtFromTransactions(rows: DebtTransactionRow[], pe
 
 export async function getPersonDebt(personId: string): Promise<number> {
   if (!personId) return 0
-  const resolvedPersonId = await resolvePersonSupabaseId(personId)
-  const supabase = createClient()
-  const { data, error } = await supabase
-    .from('transactions')
-    .select('amount, type, person_id, status, cashback_share_percent, cashback_share_fixed, final_price')
-    .eq('person_id', resolvedPersonId)
+  const pbPersonId = await resolvePersonPocketBaseId(personId)
+  
+  try {
+    const response = await pocketbaseList<any>('transactions', {
+      filter: `person_id = "${pbPersonId}" && status != "void"`,
+      fields: 'amount,type,person_id,status,cashback_share_percent,cashback_share_fixed,final_price'
+    });
 
-  if (error || !data) {
-    if (error) console.error('Error fetching person debt:', error)
-    return 0
+    return await computeDebtFromTransactions(response.items as unknown as DebtTransactionRow[], pbPersonId)
+  } catch (err) {
+    console.error('[DB:PB] getPersonDebt failed:', err);
+    return 0;
   }
-
-  return await computeDebtFromTransactions(data as unknown as DebtTransactionRow[], resolvedPersonId)
 }
 
 export async function getDebtAccounts(): Promise<DebtAccount[]> {
-  const supabase = createClient()
-  const { data, error } = await supabase
-    .from('transactions')
-    .select('person_id')
-    .not('person_id', 'is', null)
+  try {
+    const txns = await pocketbaseList<any>('transactions', {
+      filter: 'person_id != ""',
+      fields: 'person_id',
+      perPage: 500
+    });
 
-  if (error) {
-    console.error('Error fetching debt accounts:', error)
-    return []
-  }
+    const personIds = Array.from(new Set(txns.items.map(t => t.person_id).filter(Boolean))) as string[];
+    if (personIds.length === 0) return []
 
-  const personIds = Array.from(
-    new Set(
-      ((data ?? []) as unknown as Array<{ person_id: string | null }>).map(row => row.person_id).filter(Boolean) as string[]
-    )
-  )
+    const [people, debtValues] = await Promise.all([
+      Promise.all(personIds.map(id => pocketbaseGetById<any>('people', id))),
+      Promise.all(personIds.map(id => getPersonDebt(id))),
+    ])
 
-  if (personIds.length === 0) return []
-
-  const [profilesRes, debtValues] = await Promise.all([
-    supabase.from('people').select('id, name, image_url, sheet_link').in('id', personIds),
-    Promise.all(personIds.map(id => getPersonDebt(id))),
-  ])
-  const profileMap = new Map<string, { name: string; image_url: string | null; sheet_link: string | null }>()
-    ; (profilesRes.data ?? []).forEach((row: any) => {
-      if (!row?.id) return
-      profileMap.set(row.id, {
-        name: row.name,
-        image_url: row.image_url ?? null,
-        sheet_link: row.sheet_link ?? null,
-      })
+    return personIds.map((id, index) => {
+      const person = people[index]
+      return {
+        id,
+        name: person?.name ?? 'Unknown',
+        current_balance: debtValues[index] ?? 0,
+        owner_id: id,
+        image_url: person?.image_url ?? null,
+        sheet_link: person?.sheet_link ?? null,
+      }
     })
-
-  return personIds.map((id, index) => {
-    const profile = profileMap.get(id)
-    return {
-      id,
-      name: profile?.name ?? 'Unknown',
-      current_balance: debtValues[index] ?? 0,
-      owner_id: id,
-      image_url: profile?.image_url ?? null,
-      sheet_link: profile?.sheet_link ?? null,
-    }
-  })
+  } catch (err) {
+    console.error('[DB:PB] getDebtAccounts failed:', err);
+    return [];
+  }
 }
 
 export async function getPersonDetails(id: string): Promise<{
@@ -193,78 +167,43 @@ export async function getPersonDetails(id: string): Promise<{
   sheet_show_bank_account: boolean
   sheet_show_qr_image: boolean
 } | null> {
-  const resolvedPersonId = await resolvePersonSupabaseId(id)
-  const supabase = createClient()
+  const pbId = toPocketBaseId(id, 'people')
+  
+  try {
+    const person = await pocketbaseGetById<any>('people', pbId);
+    if (!person) return null;
 
-  // Add new columns to SELECT
-  const { data, error } = await supabase
-    .from('people')
-    .select('id, name, image_url, sheet_link, google_sheet_url, sheet_full_img, sheet_show_bank_account, sheet_show_qr_image')
-    .eq('id', resolvedPersonId)
-    .maybeSingle()
-
-  if (error) {
-    console.error('[getPersonDetails] Main query error:', error)
-  }
-
-  if (error?.code === '42703' || error?.code === 'PGRST204') {
-    console.warn('[getPersonDetails] Column missing, using fallback (settings will be lost)')
-    // Fallback if google_sheet_url column doesn't exist
-    const fallback = await supabase
-      .from('people')
-      .select('id, name, image_url, sheet_link')
-      .eq('id', resolvedPersonId)
-      .maybeSingle()
-    return fallback.data ? {
-      ...(fallback.data as any),
-      name: (fallback.data as any).name ?? 'Unknown',
-      owner_id: (fallback.data as any).id,
-      current_balance: await getPersonDebt(resolvedPersonId), // Recalculate or reuse logic below
-      google_sheet_url: null,
-      sheet_full_img: null,
-      sheet_show_bank_account: false,
-      sheet_show_qr_image: false
-    } : null
-  }
-
-  if (error || !data) {
-    if (error) console.log('Error fetching person details:', error)
-    return null
-  }
-
-  const profile = data as any // simpler casting since we added fields
-
-  const currentBalance = await getPersonDebt(resolvedPersonId)
-  return {
-    id: profile.id,
-    name: profile.name,
-    current_balance: currentBalance,
-    owner_id: profile.id,
-    image_url: profile.image_url ?? null,
-    sheet_link: profile.sheet_link ?? null,
-    google_sheet_url: profile.google_sheet_url ?? null,
-    sheet_full_img: profile.sheet_full_img ?? null,
-    sheet_show_bank_account: profile.sheet_show_bank_account ?? false,
-    sheet_show_qr_image: profile.sheet_show_qr_image ?? false
+    const currentBalance = await getPersonDebt(pbId)
+    return {
+      id: person.id,
+      name: person.name,
+      current_balance: currentBalance,
+      owner_id: person.id,
+      image_url: person.image_url ?? null,
+      sheet_link: person.sheet_link ?? null,
+      google_sheet_url: person.google_sheet_url ?? null,
+      sheet_full_img: person.sheet_full_img ?? null,
+      sheet_show_bank_account: person.sheet_show_bank_account ?? false,
+      sheet_show_qr_image: person.sheet_show_qr_image ?? false
+    }
+  } catch (err) {
+    console.error('[DB:PB] getPersonDetails failed:', err);
+    return null;
   }
 }
 
 export async function getDebtByTags(personId: string): Promise<DebtByTagAggregatedResult[]> {
   if (!personId) return []
-  const resolvedPersonId = await resolvePersonSupabaseId(personId)
+  const pbPersonId = await resolvePersonPocketBaseId(personId)
 
-  const supabase = createClient()
-  const { data, error } = await supabase
-    .from('transactions')
-    .select('tag, occurred_at, amount, type, person_id, status, cashback_share_percent, cashback_share_fixed, final_price, id, metadata')
-    .eq('person_id', resolvedPersonId)
-    .neq('status', 'void')
-    .order('occurred_at', { ascending: true }) // Oldest first for FIFO
+  try {
+    const response = await pocketbaseList<any>('transactions', {
+      filter: `person_id = "${pbPersonId}" && status != "void"`,
+      sort: 'date',
+      perPage: 1000
+    });
 
-  if (error || !data) {
-    if (error) console.log('Error fetching debt by tags:', error)
-    return []
-  }
+    const data = response.items;
 
   // FIFO Simulation to determine "Remaining" amount for each debt
   // 1. Separate Debts and Repayments
@@ -293,7 +232,7 @@ export async function getDebtByTags(personId: string): Promise<DebtByTagAggregat
         id: txn.id,
         amount: calculateFinalPrice(txn as any),
         initialAmount: calculateFinalPrice(txn as any),
-        date: txn.occurred_at,
+        date: txn.date || txn.occurred_at,
         metadata: txn.metadata,
         tag: txn.tag
       });
@@ -302,7 +241,7 @@ export async function getDebtByTags(personId: string): Promise<DebtByTagAggregat
 
   // Sort lists
   // Debts: Oldest First (FIFO targets)
-  debtsList.sort((a, b) => new Date(a.occurred_at).getTime() - new Date(b.occurred_at).getTime());
+  debtsList.sort((a, b) => new Date(a.date || a.occurred_at).getTime() - new Date(b.date || b.occurred_at).getTime());
   // Repayments: Oldest First
   repaymentList.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
@@ -438,7 +377,7 @@ export async function getDebtByTags(personId: string): Promise<DebtByTagAggregat
       remainingPrincipal: number // Sum of 'remaining' of debts in this tag
       links: { repaymentId: string, amount: number }[] // NEW: Collected links
     }
-  >()
+  >();
 
     ; (data as unknown as (DebtTransactionRow & { id: string })[]).forEach(row => {
       const normalizedTag = normalizeMonthTag(row.tag)
@@ -501,7 +440,7 @@ export async function getDebtByTags(personId: string): Promise<DebtByTagAggregat
       }
     })
 
-  return Array.from(tagMap.entries()).map(([tag, { lend, lendOriginal, repay, cashback, last_activity, remainingPrincipal, links }]) => {
+    const result = Array.from(tagMap.entries()).map(([tag, { lend, lendOriginal, repay, cashback, last_activity, remainingPrincipal, links }]) => {
     const netBalance = lend - repay
 
     // Status Logic:
@@ -525,9 +464,15 @@ export async function getDebtByTags(personId: string): Promise<DebtByTagAggregat
       status,
       last_activity,
       remainingPrincipal,
-      links // Use destructured variable
+      links
     }
-  })
+  });
+
+    return result;
+  } catch (err) {
+    console.error('[DB:PB] getDebtByTags failed:', err);
+    return [];
+  }
 }
 
 export async function settleDebt(
@@ -565,16 +510,18 @@ export async function settleDebt(
 
 export async function getOutstandingDebts(personId: string, excludeTransactionId?: string): Promise<any[]> {
   if (!personId) return []
-  const supabase = createClient()
+  const pbPersonId = toPocketBaseId(personId, 'people')
+  const pbExcludeId = excludeTransactionId ? toPocketBaseId(excludeTransactionId, 'transactions') : null
 
-  const { data, error } = await supabase
-    .from('transactions')
-    .select('*')
-    .eq('person_id', personId)
-    .neq('status', 'void')
-    .order('occurred_at', { ascending: true }) // Oldest first
+  try {
+    const response = await pocketbaseList<any>('transactions', {
+      filter: `person_id = "${pbPersonId}" && status != "void"`,
+      sort: 'date',
+      perPage: 500
+    })
 
-  if (error || !data) return []
+    const data = response.items
+    if (!data) return []
 
   // In-memory simulation of current state
   // 1. Separate Debts and Repayments
@@ -623,4 +570,8 @@ export async function getOutstandingDebts(personId: string, excludeTransactionId
     ...d,
     amount: d.remaining // Update amount to be the 'Remaining Principal'
   }))
+  } catch (err) {
+    console.error('[DB:PB] getOutstandingDebts failed:', err);
+    return [];
+  }
 }

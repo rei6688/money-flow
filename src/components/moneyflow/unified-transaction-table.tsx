@@ -87,12 +87,12 @@ import {
 } from "@/components/ui/popover"
 import { TransactionForm, TransactionFormValues } from "./transaction-form"
 import {
-  restoreTransaction,
   deleteTransaction,
   getTransactionById,
 } from "@/services/transaction.service"
 import {
   voidTransactionAction,
+  restoreTransaction,
 } from "@/actions/transaction-actions"
 import { REFUND_PENDING_ACCOUNT_ID } from "@/constants/refunds"
 import { generateTag } from "@/lib/tag"
@@ -884,35 +884,40 @@ export const UnifiedTransactionTable = React.forwardRef<UnifiedTransactionTableR
     setVoidError(null)
     setIsVoiding(true)
 
-    import("@/services/transaction.service").then(async ({ requestRefund, confirmRefund }) => {
+    Promise.all([
+      import("@/actions/transaction-actions"),
+      import("@/services/transaction.service")
+    ]).then(async ([actions, service]) => {
+      const { requestRefund, confirmRefundAction } = actions
+      const { confirmRefund } = service // If we still want the service version, but let's use the one that works.
+      
       const originalAmount = typeof confirmCancelTarget.original_amount === "number"
         ? confirmCancelTarget.original_amount
         : confirmCancelTarget.amount
       const amountToRefund = Math.abs(originalAmount ?? 0)
 
       try {
-        // 1. Request Refund (Always needed to set up metadata and pending txn)
+        // 1. Request Refund
         const reqRes = await requestRefund(
           confirmCancelTarget.id,
           amountToRefund,
-          false // isPending = false means it goes to Pending account? No, partial=false means full refund.
+          false
         )
 
-        if (!reqRes.success || !reqRes.refundTransactionId) {
+        if (!reqRes.success) {
           throw new Error(reqRes.error || 'Failed to request refund')
         }
 
         // 2. If Money Received, Confirm it immediately
         if (moneyReceived) {
-          // Determine target account (default to source account of original txn)
-          // For an expense (cancel target), account_id is the source.
           const targetAccountId = confirmCancelTarget.account_id
 
           if (!targetAccountId) {
-            throw new Error('Cannot determine target account for immediate refund. Please use manual refund.')
+            throw new Error('Cannot determine target account for immediate refund.')
           }
 
-          const confRes = await confirmRefund(reqRes.refundTransactionId, targetAccountId)
+          // Use action version for consistency
+          const confRes = await confirmRefundAction(confirmCancelTarget.id, targetAccountId)
           if (!confRes.success) {
             throw new Error(confRes.error || 'Failed to confirm refund')
           }

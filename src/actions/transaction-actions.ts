@@ -1,38 +1,24 @@
 'use server';
 
-import { createClient } from '@/lib/supabase/server';
-import { format, setDate, subMonths } from 'date-fns';
-import { Database, Json } from '@/types/database.types';
+import { Json } from '@/types/database.types';
 import { syncTransactionToSheet } from '@/services/sheet.service';
-import { REFUND_PENDING_ACCOUNT_ID } from '@/constants/refunds';
-import { loadShopInfo, ShopRow, parseMetadata, mapUnifiedTransaction } from '@/lib/transaction-mapper';
-import { TransactionWithDetails } from '@/types/moneyflow.types';
-import { upsertTransactionCashback } from '@/services/cashback.service';
-import { normalizeMonthTag } from '@/lib/month-tag'
-import { pocketbaseGetById } from '@/services/pocketbase/server';
+import { parseMetadata } from '@/lib/transaction-mapper';
+import { normalizeMonthTag } from '@/lib/month-tag';
+import { revalidatePath } from 'next/cache';
+import { CashbackMode } from '@/types/moneyflow.types';
 import {
-  createPocketBaseTransaction,
-  updatePocketBaseTransaction,
-  voidPocketBaseTransaction,
-} from '@/services/pocketbase/account-details.service';
-
-const isUuid = (id: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
-
-async function resolveSupabaseId(id: string, collection: 'transactions' | 'accounts' = 'transactions'): Promise<string> {
-  if (isUuid(id)) return id
-
-  // Try to find in PocketBase to get source_id
-  try {
-    const record = await pocketbaseGetById<any>(collection, id)
-    if (record?.metadata?.source_id && isUuid(record.metadata.source_id)) {
-      return record.metadata.source_id
-    }
-  } catch (err) {
-    console.error(`[resolveSupabaseId] Failed to resolve ${id} from PB:`, err)
-  }
-
-  return id // Fallback
-}
+  createTransaction as createPBTransaction,
+  updateTransaction as updatePBTransaction,
+  voidTransaction as voidPBTransaction,
+  confirmRefund as confirmPBRefund,
+} from '@/services/transaction.service';
+import {
+  pocketbaseCreate,
+  pocketbaseGetById,
+  pocketbaseList,
+  pocketbaseUpdate,
+  toPocketBaseId,
+} from '@/services/pocketbase/server';
 
 export type CreateTransactionInput = {
   occurred_at: string;
@@ -49,447 +35,118 @@ export type CreateTransactionInput = {
   cashback_share_fixed?: number | null;
   discount_category_id?: string | null;
   shop_id?: string | null;
-  cashback_mode?: string | null;
+  cashback_mode?: CashbackMode | null;
   linked_transaction_id?: string | null;
 };
 
-async function resolveSystemCategory(
-  supabase: ReturnType<typeof createClient>,
-  name: string,
-  type: 'income' | 'expense'
-): Promise<string | null> {
-  const { data, error } = await supabase
-    .from('categories')
-    .select('id')
-    .eq('name', name)
-    .eq('type', type)
-    .limit(1)
-    .maybeSingle();
-
-  if (error) {
-    console.error(`Error fetching system category "${name}":`, error);
-    return null;
-  }
-
-  return (data as unknown as { id: string } | null)?.id ?? null;
-}
-
-async function resolveDiscountCategoryId(
-  supabase: ReturnType<typeof createClient>,
-  overrideCategoryId?: string
-): Promise<string | null> {
-  if (overrideCategoryId) {
-    return overrideCategoryId;
-  }
-
-  // Chain of fallbacks
-  const namesToTry = ['Chiết khấu / Quà tặng', 'Discount Given', 'Chi phí khác'];
-  for (const name of namesToTry) {
-    const id = await resolveSystemCategory(supabase, name, 'expense');
-    if (id) return id;
-  }
-
-  // Final fallback if no named category found
-  const { data: fallback, error: fallbackError } = await supabase
-    .from('categories')
-    .select('id')
-    .eq('type', 'expense')
-    .limit(1);
-
-  if (fallbackError) {
-    console.error('Error fetching any expense category for fallback:', fallbackError);
-    return null;
-  }
-
-  const fallbackRows = (fallback ?? []) as unknown as { id: string }[];
-  return fallbackRows[0]?.id ?? null;
-}
-
-
-function mergeMetadata(value: Json | null, extra: Record<string, unknown>): Json {
-  const parsed = parseMetadata(value);
-  const next = {
-    ...parsed,
-    ...extra,
-  };
-  return next as Json;
-}
-
-async function resolveCurrentUserId(supabase: ReturnType<typeof createClient>) {
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  return user?.id ?? '917455ba-16c0-42f9-9cea-264f81a3db66';
-}
-
-// buildTransactionLines removed
-
-async function calculatePersistedCycleTag(
-  supabase: ReturnType<typeof createClient>,
-  accountId: string,
-  transactionDate: Date
-): Promise<string | null> {
-  const { data, error } = await supabase
-    .from('accounts')
-    .select('type, cashback_config')
-    .eq('id', accountId)
-    .single();
-
-  const account = data as unknown as { type: string; cashback_config: Json } | null;
-
-  if (error || !account || account.type !== 'credit_card') {
-    return null;
-  }
-
-  const config = account.cashback_config as { statement_day?: number } | null;
-  if (!config?.statement_day) {
-    return null;
-  }
-
-  const statementDay = config.statement_day;
-  const transactionDay = transactionDate.getDate();
-
-  let cycleStartDate: Date;
-  if (transactionDay >= statementDay) {
-    cycleStartDate = setDate(transactionDate, statementDay);
-  } else {
-    const previousMonth = subMonths(transactionDate, 1);
-    cycleStartDate = setDate(previousMonth, statementDay);
-  }
-
-  return format(cycleStartDate, 'yyyy-MM-dd');
-}
-
-function buildSheetPayload(
-  txn: { id: string; occurred_at: string; note?: string | null; tag?: string | null },
-  line:
-    | {
-      amount: number
-      original_amount?: number | null
-      cashback_share_percent?: number | null
-      cashback_share_fixed?: number | null
-      metadata?: Json | null
-    }
-    | null
-) {
-  if (!line) return null;
-  const meta = (line.metadata as Record<string, unknown> | null) ?? null;
-  const cashbackAmount =
-    typeof meta?.cashback_share_amount === 'number' ? meta.cashback_share_amount : undefined;
-
-  return {
-    id: txn.id,
-    occurred_at: txn.occurred_at,
-    note: txn.note ?? undefined,
-    tag: txn.tag ?? undefined,
-    amount: line.amount,
-    original_amount:
-      typeof line.original_amount === 'number' ? line.original_amount : Math.abs(line.amount),
-    cashback_share_percent:
-      typeof line.cashback_share_percent === 'number' ? line.cashback_share_percent : undefined,
-    cashback_share_fixed:
-      typeof line.cashback_share_fixed === 'number' ? line.cashback_share_fixed : undefined,
-    cashback_share_amount: cashbackAmount,
-  };
-}
-
-// syncRepaymentTransaction removed
-
 export async function createTransaction(input: CreateTransactionInput): Promise<string | null> {
-  const supabase = createClient();
-
-  const { data: { user } } = await supabase.auth.getUser();
-  const userId = user?.id || '917455ba-16c0-42f9-9cea-264f81a3db66';
-
   const tag = normalizeMonthTag(input.tag) ?? input.tag;
 
-  const persistedCycleTag = await calculatePersistedCycleTag(
-    supabase,
-    input.source_account_id,
-    new Date(input.occurred_at)
-  );
-
-  // Single Table Insertion Logic
-  const originalAmount = Math.round(Math.abs(input.amount));
-  let finalAmount = originalAmount;
-  const targetAccountId = input.destination_account_id ?? input.debt_account_id ?? null;
-  const personId = input.person_id ?? null;
-  const categoryId = input.category_id ?? null;
-
-  let sharePercent: number | null = null;
-  let shareFixed: number | null = null;
-  const sharePercentEntry = typeof input.cashback_share_percent === 'number' ? Math.max(0, input.cashback_share_percent) : null;
-  const shareFixedVal = typeof input.cashback_share_fixed === 'number' ? Math.max(0, input.cashback_share_fixed) : null;
-
-  if (sharePercentEntry !== null) {
-    sharePercent = Math.min(100, sharePercentEntry) / 100;
-  }
-  if (shareFixedVal !== null) {
-    shareFixed = shareFixedVal;
-  }
-
-  if (input.type === 'debt') {
-    const rawCashback = (sharePercent || 0) * originalAmount + (shareFixed || 0);
-    const cashbackGiven = Math.min(originalAmount, Math.max(0, rawCashback));
-    finalAmount = Math.max(0, originalAmount - cashbackGiven);
-  }
-
-  // Insert into transactions table directly
-  const { data: txn, error: txnError } = await (supabase
-    .from('transactions')
-    .insert as any)({
-      occurred_at: input.occurred_at,
-      note: input.note,
-      status: 'posted',
-      tag: tag,
-      persisted_cycle_tag: persistedCycleTag,
-      shop_id: input.shop_id ?? null,
-      created_by: userId,
-      type: input.type,
-      amount: finalAmount,
-      account_id: input.source_account_id,
-      target_account_id: targetAccountId,
-      category_id: categoryId,
-      person_id: personId,
-      cashback_share_percent: sharePercent,
-      cashback_share_fixed: shareFixed,
-      cashback_mode: input.cashback_mode ?? null,
-      linked_transaction_id: input.linked_transaction_id ?? null,
-    })
-    .select()
-    .single();
-
-  if (txnError || !txn) {
-    console.error('Error creating transaction:', txnError);
+  // 1. PB-PRIMARY Write
+  const transactionId = await createPBTransaction(input as any);
+  if (!transactionId) {
+    console.error('[DB:PB] Failed to create transaction in PocketBase');
     return null;
   }
 
-  // PB secondary write (fire-and-forget)
-  console.log('[DB:SB] transactions.create', { id: txn.id, type: txn.type, amount: txn.amount })
-  void createPocketBaseTransaction(txn.id, {
-    occurred_at: txn.occurred_at,
-    note: txn.note,
-    type: txn.type,
-    account_id: txn.account_id,
-    amount: txn.amount,
-    tag: txn.tag,
-    category_id: txn.category_id,
-    person_id: txn.person_id,
-    target_account_id: txn.target_account_id,
-    shop_id: txn.shop_id,
-    status: txn.status,
-    persisted_cycle_tag: txn.persisted_cycle_tag,
-    cashback_share_percent: txn.cashback_share_percent,
-    cashback_share_fixed: txn.cashback_share_fixed,
-    cashback_mode: txn.cashback_mode,
-  }).catch((err) => console.error('[DB:PB] transactions.create secondary failed:', err))
-
-  const shopInfo = await loadShopInfo(supabase, input.shop_id)
-
-  // Sheet Sync Logic
-  if (input.type === 'repayment' && personId && targetAccountId) {
-    const { data: destAccount } = await supabase
-      .from('accounts')
-      .select('name')
-      .eq('id', targetAccountId)
-      .single();
-
+  // 2. Additional logic (Sheet Sync)
+  const personId = input.person_id ?? null;
+  if (personId && (input.type === 'repayment' || input.type === 'debt' || input.type === 'transfer')) {
     void syncTransactionToSheet(
       personId,
       {
-        id: txn.id,
+        id: transactionId,
         occurred_at: input.occurred_at,
         note: input.note,
         tag,
-        shop_name: shopInfo?.name ?? (destAccount as any)?.name ?? null,
-        amount: finalAmount, // Repayment amount
-        original_amount: finalAmount,
-        cashback_share_percent: undefined,
-        cashback_share_fixed: undefined,
+        amount: input.amount,
+        original_amount: input.amount,
+        cashback_share_percent: input.cashback_share_percent ?? undefined,
+        cashback_share_fixed: input.cashback_share_fixed ?? undefined,
       },
       'create'
-    ).then(() => {
-      console.log(`[Sheet Sync] Triggered for Repayment to Person ${personId}`);
-    }).catch(err => {
-      console.error('Sheet Sync Error (Repayment):', err);
-    });
-
-  } else if ((input.type === 'debt' || input.type === 'transfer') && personId) {
-    // Standard debt sync
-    void syncTransactionToSheet(
-      personId,
-      {
-        id: txn.id,
-        occurred_at: input.occurred_at,
-        note: input.note,
-        tag,
-        shop_name: shopInfo?.name ?? null,
-        original_amount: originalAmount,
-        cashback_share_percent: sharePercent,
-        cashback_share_fixed: shareFixed,
-        amount: finalAmount,
-      },
-      'create'
-    )
-      .then(() => {
-        console.log(`[Sheet Sync] Triggered for Person ${personId}`);
-      })
-      .catch(err => {
-        console.error('Sheet Sync Error (Background):', err);
-      });
+    ).catch(err => console.error('Sheet Sync Error (Create):', err));
   }
 
-  // Cashback Integration (Create)
-  try {
-    const { data: rawTxn } = await supabase.from('transactions').select('*, categories(name)').eq('id', txn.id).single();
-    if (rawTxn) {
-      const txnShape: any = { ...(rawTxn as any), category_name: (rawTxn as any).categories?.name };
-      await upsertTransactionCashback(txnShape);
-    }
-  } catch (cbError) {
-    console.error('Failed to upsert cashback entry (action):', cbError);
-  }
-
-  return txn.id;
+  return transactionId;
 }
 
-export async function voidTransactionAction(id: string): Promise<boolean> {
-  const supabaseId = await resolveSupabaseId(id, 'transactions')
-  const supabase = createClient();
+export async function updateTransaction(id: string, input: CreateTransactionInput): Promise<boolean> {
+  const pbId = toPocketBaseId(id, 'transactions');
+  
+  // 1. PB-PRIMARY Write
+  const success = await updatePBTransaction(pbId, input as any);
+  if (!success) return false;
 
-  const { data: existing, error: fetchError } = await supabase
-    .from('transactions')
-    .select(
-      `
-        id,
-        occurred_at,
-        note,
+  // 2. Sheet Sync (Update)
+  const personId = input.person_id ?? null;
+  if (personId && (input.type === 'repayment' || input.type === 'debt' || input.type === 'transfer')) {
+    const tag = normalizeMonthTag(input.tag) ?? input.tag;
+    void syncTransactionToSheet(
+      personId,
+      {
+        id: pbId,
+        occurred_at: input.occurred_at,
+        note: input.note,
         tag,
-        account_id,
-        target_account_id,
-        person_id,
-        linked_transaction_id
-      `
-    )
-    .eq('id', id)
-    .maybeSingle();
-
-  if (fetchError || !existing) {
-    console.error('Failed to load transaction for void:', fetchError);
-    return false;
-  }
-
-  const metaData = (existing as any).metadata as Record<string, unknown> | null;
-  if (metaData?.type === 'batch_funding' || metaData?.type === 'batch_funding_additional') {
-    throw new Error(`BATCH_LOCKED:${metaData.batch_id}`);
-  }
-
-  // GUARD / CASCADE: Check for linked transactions
-  // User Request: If deleting one of a pair, delete/void the other.
-
-  // 1. Find Children (Transactions pointing to this one)
-  const { data: linkedChildren } = (await supabase
-    .from('transactions')
-    .select('id, status')
-    .neq('status', 'void')
-    .eq('linked_transaction_id', id)) as unknown as { data: { id: string }[], error: unknown };
-
-  // 2. Find Parent (Transaction this one points to)
-  let linkedParentId: string | null = null;
-  const existingWithLink = existing as unknown as { linked_transaction_id: string | null };
-  if (existingWithLink.linked_transaction_id) {
-    linkedParentId = existingWithLink.linked_transaction_id;
-  }
-
-  // 3. Mark current as void FIRST
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { error: updateError } = await (supabase.from('transactions').update as any)({ status: 'void' }).eq('id', supabaseId);
-
-  if (updateError) {
-    console.error('Failed to void transaction:', updateError);
-    return false;
-  }
-
-  // PB secondary write (fire-and-forget)
-  console.log('[DB:SB] transactions.void', { id })
-  void voidPocketBaseTransaction(id).catch((err) => console.error('[DB:PB] transactions.void secondary failed:', err))
-
-  // 3b. Revert Batch Item if linked
-  try {
-    const { revertBatchItem } = await import('@/services/batch.service');
-    await revertBatchItem(supabaseId);
-  } catch (err) {
-    console.error('[Void] Failed to revert batch item:', err);
-  }
-
-  // 4. Cascade Void to Children
-  if (linkedChildren && linkedChildren.length > 0) {
-
-    for (const child of linkedChildren) {
-      await voidTransactionAction(child.id); // Recursive void
-    }
-  }
-
-  // 5. Cascade Void to Parent (if parent is not already void)
-  if (linkedParentId) {
-    console.log(`[Void Cascade] Voiding parent ${linkedParentId} linked from ${id}`);
-    // Check parent status first to avoid infinite recursion if parent void triggered this
-    const { data: parent } = await supabase.from('transactions').select('status').eq('id', linkedParentId).single();
-    if (parent && (parent as unknown as { status: string }).status !== 'void') {
-      await voidTransactionAction(linkedParentId);
-    }
-  }
-
-  // ROLLBACK LOGIC (Refund Chain) - Keep existing rollback logic for metadata-based refunds
-  // Note: If we use linked_transaction_id for refund chains, the above cascade handles it.
-  // But metadata rollback logic handles specific status updates (pending vs posted).
-  // We keep it for safety but ensure it doesn't conflict.
-
-  // Phase 7X: Handle Metadata Undo logic (e.g. Refund Request Revert)
-  // ... (Keep existing metadata logic below if specific non-void updates are needed) ...
-  // [Snip: Previous metadata logic was focused on throwing error. Now we proceeded. 
-  // We should still run the metadata cleanup/revert logic for specific refund flows]
-
-  const { data: fullTxn } = await supabase
-    .from('transactions')
-    .select('metadata')
-    .eq('id', supabaseId)
-    .single();
-
-  const meta = parseMetadata((fullTxn as any)?.metadata);
-
-  // ... (Rest of metadata logic) ...
-
-  // Try to remove from sheet if it has person_id
-  if ((existing as any).person_id) {
-    const personId = (existing as any).person_id;
-    const payload = {
-      id: supabaseId,
-      occurred_at: (existing as any).occurred_at,
-      tag: (existing as any).tag,   // required: routes delete to the correct cycle tab
-      amount: 0
-    };
-    // Actually buildSheetPayload usually needs line info.
-    // But since lines might be gone or complex to fetch in single table (they ARE the txn now),
-    // We can try to construct enough info.
-    // However, for single table, we don't have separate lines.
-    // WE should just pass what we have.
-
-    // NOTE: The previous logic relied on legacy line items joins which were failing.
-    // We will attempt to sync deletion but purely based on ID.
-    void syncTransactionToSheet(personId, payload as any, 'delete').catch(err => {
-      console.error('Sheet Sync Error (Void):', err);
-    });
-
-    // Revalidate relevant paths
-    const { revalidatePath } = await import('next/cache');
-    revalidatePath('/transactions');
-    revalidatePath('/accounts');
-    revalidatePath('/people');
-    revalidatePath('/people/[id]', 'page');
+        amount: input.amount,
+        original_amount: input.amount,
+        cashback_share_percent: input.cashback_share_percent ?? undefined,
+        cashback_share_fixed: input.cashback_share_fixed ?? undefined,
+      },
+      'create' // Sheet usually handles create/update via the same method
+    ).catch(err => console.error('Sheet Sync Error (Update):', err));
   }
 
   return true;
+}
+
+export async function voidTransactionAction(id: string): Promise<boolean> {
+  const pbId = toPocketBaseId(id, 'transactions');
+  
+  // Fetch info for Sheet Sync BEFORE voiding
+  try {
+    const existing = await pocketbaseGetById<any>('transactions', pbId);
+    if (existing?.person_id) {
+       void syncTransactionToSheet(existing.person_id, {
+         id: pbId,
+         occurred_at: existing.occurred_at,
+         tag: existing.tag,
+         amount: 0
+       } as any, 'delete').catch(err => console.error('Sheet Sync Error (Void):', err));
+    }
+  } catch (err) {
+    console.error('Failed to fetch transaction for void sync:', err);
+  }
+
+  return await voidPBTransaction(pbId);
+}
+
+export async function restoreTransaction(id: string): Promise<boolean> {
+  const pbId = toPocketBaseId(id, 'transactions');
+  
+  try {
+    await pocketbaseUpdate('transactions', pbId, { status: 'posted' });
+    
+    // Sync restore to sheet
+    const existing = await pocketbaseGetById<any>('transactions', pbId);
+    if (existing?.person_id) {
+       void syncTransactionToSheet(existing.person_id, {
+         id: pbId,
+         occurred_at: existing.occurred_at,
+         note: existing.note,
+         tag: existing.tag,
+         amount: existing.amount,
+         original_amount: existing.amount
+       } as any, 'create').catch(err => console.error('Sheet Sync Error (Restore):', err));
+    }
+
+    revalidatePath('/transactions');
+    return true;
+  } catch (error) {
+    console.error('[DB:PB] restoreTransaction failed:', error);
+    return false;
+  }
 }
 
 export async function confirmRefundAction(
@@ -497,829 +154,246 @@ export async function confirmRefundAction(
   targetAccountId: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const { confirmRefund } = await import('@/services/transaction.service');
-    const result = await confirmRefund(pendingTransactionId, targetAccountId);
-    return { success: result.success, error: result.error };
+    const result = await confirmPBRefund(pendingTransactionId, targetAccountId);
+    return result;
   } catch (error: any) {
     console.error('Confirm Refund Action Error:', error);
     return { success: false, error: error.message };
   }
 }
 
-export async function getOriginalAccount(refundRequestId: string): Promise<any | null> {
-  const supabase = createClient();
-
-  const { data: refundTxn, error: refundError } = await supabase
-    .from('transactions')
-    .select('id, metadata')
-    .eq('id', refundRequestId)
-    .single();
-
-  if (refundError || !refundTxn) {
-    console.error(`[getOriginalAccount] Error fetching refund transaction:`, refundError);
-    return null;
-  }
-
-  const meta: any = parseMetadata((refundTxn as any).metadata);
-
-  // 1. FAST PATH: If original_account_id is stored directly (New Logic)
-  if (meta?.original_account_id) {
-    const { data: account, error: accError } = await supabase
-      .from('accounts')
-      .select('id, name, type, image_url, current_balance')
-      .eq('id', meta.original_account_id)
-      .single();
-
-    if (accError) {
-      console.error(`[getOriginalAccount] Error fetching account directly:`, accError);
-    }
-
-    if (account) {
-      const safeAccount = account as any;
-      return {
-        id: safeAccount.id,
-        name: safeAccount.name,
-        type: safeAccount.type || 'general',
-        image_url: safeAccount.image_url,
-        current_balance: safeAccount.current_balance || 0
-      };
-    }
-  }
-
-  // 2. FALLBACK PATH: Look up via original transaction (Legacy Logic)
-  const originalId = meta?.original_transaction_id || meta?.linked_transaction_id;
-
-  if (!originalId) return null;
-
-  // Fetch account details directly
-  // FIXED: Specify relationship explicitly to avoid PGRST201 (Ambiguous foreign key)
-  const { data: originalTxn, error: originalError } = await supabase
-    .from('transactions')
-    .select('account_id, accounts!transactions_account_id_fkey(name, type, image_url, current_balance)')
-    .eq('id', originalId)
-    .single();
-
-  if (originalError) {
-    console.error(`[getOriginalAccount] Error fetching original transaction:`, originalError);
-    return null;
-  }
-
-  const safeOriginalTxn = originalTxn as any;
-
-  if (!safeOriginalTxn || !safeOriginalTxn.account_id) {
-    return null;
-  }
-
-  const accName = safeOriginalTxn.accounts?.name || 'Unknown Account';
-  const accType = safeOriginalTxn.accounts?.type || 'general';
-  const accImage = safeOriginalTxn.accounts?.image_url || null;
-  const accBalance = safeOriginalTxn.accounts?.current_balance || 0;
-
-  return {
-    id: safeOriginalTxn.account_id,
-    name: accName,
-    type: accType,
-    image_url: accImage,
-    current_balance: accBalance
-  };
-}
-
-export async function restoreTransaction(id: string): Promise<boolean> {
-  const supabase = createClient();
-
-  // Fetch only flat fields
-  const { data: existing, error: fetchError } = await supabase
-    .from('transactions')
-    .select(
-      `
-        id,
-        occurred_at,
-        note,
-        tag,
-        amount,
-        type,
-        person_id,
-        account_id,
-        target_account_id,
-        cashback_share_percent,
-        cashback_share_fixed
-        `
-    )
-    .eq('id', id)
-    .maybeSingle();
-
-  if (fetchError || !existing) {
-    console.error('Failed to load transaction for restore:', fetchError);
-    return false;
-  }
-
-  const { error: updateError } = await (supabase
-    .from('transactions')
-    .update as any)({ status: 'posted' })
-    .eq('id', id);
-
-  if (updateError) {
-    console.error('Failed to restore transaction:', updateError);
-    return false;
-  }
-
-  // Sync back to sheet if person_id exists
-  if ((existing as any).person_id) {
-    const personId = (existing as any).person_id;
-    // Construct payload from flat transaction
-    const safeExisting = existing as any;
-    const payload = {
-      id: safeExisting.id,
-      occurred_at: safeExisting.occurred_at,
-      note: safeExisting.note ?? undefined,
-      tag: safeExisting.tag ?? undefined,
-      amount: Math.abs(safeExisting.amount), // Logic: Restore means re-create flow? existing.amount is strict value.
-      // Sheet usually wants positive amounts + Direction (for debt).
-      // Debt logic?
-      // If it was DEBT transaction, amount is Net Amount (Original - Cashback).
-      // We need Original Amount for sheet?
-      // Existing data has amount. Does it have original_amount stored? No, flat table doesn't have original_amount column except via calculation?
-      // `createTransaction` calculates `finalAmount`. `originalAmount` is lost if not stored?
-      // Let's check `transactions` schema in `transaction.service.ts` types.
-      // `FlatTransactionRow` does NOT have `original_amount`.
-      // But `TransactionWithDetails` in mapper has.
-      // If we store `cashback_share_percent`/fixed, we can reverse calc?
-      // Or maybe we treat `amount` as the value to sync?
-      // Sheet sync uses `original_amount` for Debt to calculate cashback.
-      // If we don't have it, logic might be off.
-      // BUT `createTransaction` stores `cashback_share_percent` etc.
-      // `finalAmount = original - cashback`.
-      // `cashback = (original * %) + fixed`.
-      // `original = amount` (if no cashback) OR `amount + cashback`.
-      // `amount = original - (original * % + fixed) = original * (1 - %) - fixed`.
-      // `amount + fixed = original * (1 - %)`.
-      // `original = (amount + fixed) / (1 - %)`.
-      // This reverse math is annoying.
-      // HOWEVER, `transactions` table usually stores what actually happened on the account.
-      // For Sheet Sync, if we miss exact original amount, maybe we just sync what we have?
-      // Legacy code iterated `lines`, and `lines` had `original_amount`.
-      // The legacy line items table stored `original_amount`.
-      // Use `existing.amount` + `cashback` logic approximation?
-      // Let's check `metadata`. `createTransaction` stores metadata?
-      // `restoreTransaction` is rare. Consistence is key.
-      // Let's use `Math.abs(existing.amount)` for now.
-      original_amount: Math.abs(safeExisting.amount),
-      cashback_share_percent: safeExisting.cashback_share_percent ? safeExisting.cashback_share_percent * 100 : undefined,
-      cashback_share_fixed: safeExisting.cashback_share_fixed ?? undefined,
+export async function updateTransactionMetadata(id: string, metadata: any): Promise<boolean> {
+  try {
+    const pbId = toPocketBaseId(id, 'transactions');
+    const existing = await pocketbaseGetById<any>('transactions', pbId);
+    
+    const newMetadata = {
+      ...(typeof existing.metadata === 'object' ? existing.metadata : {}),
+      ...metadata
     };
 
-    // Note: Re-creating might duplicate if not careful, but 'restore' implies it's back.
-    // Sheet sync usually handles 'create' or 'update'.
-    void syncTransactionToSheet(personId, payload as any, 'create').catch(err => {
-      console.error('Sheet Sync Error (Restore):', err);
-    });
-  }
-
-  return true;
-}
-
-export async function updateTransaction(id: string, input: CreateTransactionInput): Promise<boolean> {
-  const supabaseId = await resolveSupabaseId(id, 'transactions')
-  const supabase = createClient();
-
-  // GUARD: Block editing if this transaction has linked children (Void/Refund)
-  // 1. Check linked_transaction_id column (GD3 -> GD2 link)
-  const { data: linkedChildren, error: linkedError } = await supabase
-    .from('transactions')
-    .select('id, status')
-    .neq('status', 'void')
-    .eq('linked_transaction_id', supabaseId)
-    .limit(1);
-
-  if (linkedError) {
-    console.error('Failed to check linked transactions:', linkedError);
-    return false;
-  }
-
-  if (linkedChildren && linkedChildren.length > 0) {
-    throw new Error('Cannot edit this transaction because it has linked Void/Refund transactions. Please delete the linked transactions first.');
-  }
-
-  // 2. Check metadata fields (original_transaction_id, pending_refund_id)
-  const { data: metaChildren, error: metaError } = await supabase
-    .from('transactions')
-    .select('id, status')
-    .neq('status', 'void')
-    .or(`metadata.cs.{"original_transaction_id":"${supabaseId}"},metadata.cs.{"pending_refund_id":"${supabaseId}"}`)
-    .limit(1);
-
-  if (metaError) {
-    console.error('Failed to check metadata-linked transactions:', metaError);
-    return false;
-  }
-
-  if (metaChildren && metaChildren.length > 0) {
-    throw new Error('Cannot edit this transaction because it has linked Void/Refund transactions. Please delete the linked transactions first.');
-  }
-
-  // Fetch existing transaction data (single-table: person_id is directly on transactions)
-  const { data: existingData, error: existingError } = await supabase
-    .from('transactions')
-    .select(`
-      id,
-      occurred_at,
-      note,
-      tag,
-      person_id,
-      amount,
-      category_id,
-      metadata,
-      cashback_share_percent,
-      cashback_share_fixed
-    `)
-    .eq('id', supabaseId)
-    .maybeSingle();
-
-  if (existingError || !existingData) {
-    console.error('Failed to fetch transaction before update:', existingError);
-    return false;
-  }
-
-  const metaData = (existingData as any).metadata as Record<string, unknown> | null;
-  if (metaData?.type === 'batch_funding' || metaData?.type === 'batch_funding_additional') {
-    throw new Error(`BATCH_LOCKED:${metaData.batch_id}`);
-  }
-
-  const tag = normalizeMonthTag(input.tag) ?? input.tag;
-  const shopInfo = await loadShopInfo(supabase, input.shop_id);
-
-  const persistedCycleTag = await calculatePersistedCycleTag(
-    supabase,
-    input.source_account_id,
-    new Date(input.occurred_at)
-  );
-
-  // Calculate final amounts for single-table storage
-  const originalAmount = Math.round(Math.abs(input.amount));
-  const sharePercentEntry = typeof input.cashback_share_percent === 'number' ? Math.max(0, input.cashback_share_percent) : null;
-  let sharePercent = null;
-  if (sharePercentEntry !== null) {
-    sharePercent = Math.min(100, sharePercentEntry) / 100;
-  }
-  const shareFixed = typeof input.cashback_share_fixed === 'number' ? Math.max(0, input.cashback_share_fixed) : null;
-
-  const rawCashback = (sharePercent || 0) * originalAmount + (shareFixed || 0);
-  const cashbackGiven = Math.min(originalAmount, Math.max(0, rawCashback));
-  const finalAmount = input.type === 'debt'
-    ? (originalAmount - cashbackGiven)  // Debt: final = amount - cashback
-    : originalAmount;
-
-  // Update transaction header with all fields (single-table architecture)
-  const { error: headerError } = await (supabase
-    .from('transactions')
-    .update as any)({
-      occurred_at: input.occurred_at,
-      note: input.note,
-      tag: tag,
-      status: 'posted',
-      type: input.type,
-      amount: finalAmount,
-      account_id: input.source_account_id,
-      target_account_id: input.destination_account_id ?? input.debt_account_id ?? null,
-      category_id: input.category_id ?? null,
-      person_id: input.person_id ?? null,
-      cashback_share_percent: sharePercent,
-      cashback_share_fixed: shareFixed,
-      persisted_cycle_tag: persistedCycleTag,
-      shop_id: input.shop_id ?? null,
-      cashback_mode: input.cashback_mode ?? null,
-    })
-    .eq('id', supabaseId);
-
-  if (headerError) {
-    console.error('Failed to update transaction header:', headerError);
-    return false;
-  }
-
-  // PB secondary write (fire-and-forget)
-  console.log('[DB:SB] transactions.update', { id, type: input.type, amount: finalAmount })
-  void updatePocketBaseTransaction(id, {
-    occurred_at: input.occurred_at,
-    note: input.note,
-    type: input.type,
-    account_id: input.source_account_id,
-    amount: finalAmount,
-    tag: tag,
-    category_id: input.category_id ?? null,
-    person_id: input.person_id ?? null,
-    target_account_id: input.destination_account_id ?? input.debt_account_id ?? null,
-    shop_id: input.shop_id ?? null,
-    status: 'posted',
-    persisted_cycle_tag: persistedCycleTag,
-    cashback_share_percent: sharePercent,
-    cashback_share_fixed: shareFixed,
-    cashback_mode: input.cashback_mode ?? null,
-  }).catch((err) => console.error('[DB:PB] transactions.update secondary failed:', err))
-
-  // SHEET SYNC: Delete old entry if person existed
-  const oldPersonId = (existingData as any).person_id;
-  if (oldPersonId) {
-    const deletePayload = {
-      id: supabaseId,
-      occurred_at: (existingData as any).occurred_at,
-      note: (existingData as any).note,
-      tag: (existingData as any).tag,
-      amount: (existingData as any).amount ?? 0,
-    };
-    void syncTransactionToSheet(oldPersonId, deletePayload as any, 'delete').catch(err => {
-      console.error('Sheet Sync Error (Update/Delete):', err);
-    });
-  }
-
-  // SHEET SYNC: Create new entry if person exists
-  const newPersonId = input.person_id;
-  if (newPersonId) {
-    const syncPayload = {
-      id: supabaseId,
-      occurred_at: input.occurred_at,
-      note: input.note,
-      tag,
-      shop_name: shopInfo?.name ?? null,
-      amount: finalAmount,
-      original_amount: originalAmount,
-      cashback_share_percent: sharePercent,
-      cashback_share_fixed: shareFixed,
-      type: input.type === 'repayment' ? 'In' : 'Debt',
-    };
-    void syncTransactionToSheet(newPersonId, syncPayload as any, 'create').catch(err => {
-      console.error('Sheet Sync Error (Update/Create):', err);
-    });
-  }
-
-  // Cashback Integration (Update)
-  try {
-    const { data: rawTxn } = await supabase.from('transactions').select('*, categories(name)').eq('id', supabaseId).single();
-    if (rawTxn) {
-      const txnShape: any = { ...(rawTxn as any), category_name: (rawTxn as any).categories?.name };
-      await upsertTransactionCashback(txnShape);
-    }
-  } catch (cbError) {
-    console.error('Failed to update cashback entry (action):', cbError);
-  }
-
-  return true;
-}
-
-export async function updateTransactionMetadata(
-  transactionId: string,
-  patch: Record<string, unknown>,
-): Promise<boolean> {
-  if (!transactionId) return false
-  const supabase = createClient()
-  const { data, error } = await supabase
-    .from('transactions')
-    .select('metadata')
-    .eq('id', transactionId)
-    .maybeSingle()
-
-  if (error || !data) {
-    console.error('Failed to load transaction metadata:', error)
-    return false
-  }
-
-  const existing = parseMetadata((data as any).metadata) ?? {}
-  const merged = { ...existing, ...patch }
-  const { error: updateError } = await (supabase.from('transactions').update as any)({
-    metadata: merged,
-  }).eq('id', transactionId)
-
-  if (updateError) {
-    console.error('Failed to update transaction metadata:', updateError)
-    return false
-  }
-
-  return true
-}
-
-type RefundTransactionLine = {
-  id?: string
-  amount: number
-  type: 'debit' | 'credit'
-  account_id?: string | null
-  category_id?: string | null
-  metadata?: Json | null
-  categories?: {
-    name?: string | null
-  } | null
-}
-
-export async function markTransactionAsPendingRefund(transactionId: string): Promise<boolean> {
-  const supabase = createClient();
-  const { data: txn } = await supabase.from('transactions').select('amount').eq('id', transactionId).single();
-
-  if (!txn) return false;
-
-  const amount = Math.abs((txn as any).amount);
-  const result = await requestRefund(transactionId, amount, false); // Full refund
-  return result.success;
-}
-
-export async function requestRefund(
-  transactionId: string,
-  refundAmount: number,
-  partial: boolean
-): Promise<{ success: boolean; refundTransactionId?: string; error?: string }> {
-  console.log('Requesting refund for:', transactionId);
-  if (!transactionId) {
-    return { success: false, error: 'Thiếu thông tin giao dịch cần hoàn tiền.' }
-  }
-
-  const supabase = createClient()
-
-  const { data: existing, error: fetchError } = await supabase
-    .from('transactions')
-    .select(`
-      id,
-      occurred_at,
-      note,
-      tag,
-      shop_id,
-      person_id,
-      amount,
-      category_id,
-      metadata,
-      cashback_share_percent,
-      cashback_share_fixed
-    `)
-    .eq('id', transactionId)
-    .maybeSingle();
-
-  if (fetchError || !existing) {
-    console.error('Failed to load transaction for refund request:', fetchError)
-    return { success: false, error: 'Không tìm thấy giao dịch hoặc đã xảy ra lỗi.' }
-  }
-
-  const safeExisting = existing as any;
-
-  if (!safeExisting.category_id) {
-    return { success: false, error: 'Giao dịch không có danh mục phí để hoàn.' }
-  }
-
-  const maxAmount = Math.abs(safeExisting.amount ?? 0)
-  if (maxAmount <= 0) {
-    return { success: false, error: 'Không thể hoàn tiền cho giao dịch giá trị 0.' }
-  }
-
-  const requestedAmount = Number.isFinite(refundAmount) ? Math.abs(refundAmount) : maxAmount
-  const safeAmount = Math.min(Math.max(requestedAmount, 0), maxAmount)
-  if (safeAmount <= 0) {
-    return { success: false, error: 'Số tiền hoàn không hợp lệ.' }
-  }
-
-  const userId = await resolveCurrentUserId(supabase)
-  const requestNote = `Refund Request for ${safeExisting.note ?? transactionId}`
-  const lineMetadata = {
-    original_note: safeExisting.note ?? null,
-    original_category_id: safeExisting.category_id,
-    original_transaction_id: transactionId,
-  }
-
-  const refundCategoryId = await resolveSystemCategory(supabase, 'Refund', 'income');
-  if (!refundCategoryId) {
-    console.error('FATAL: "Refund" system category (income) not found.');
-    return { success: false, error: 'Hệ thống chưa cấu hình danh mục Hoàn tiền (Income).' }
-  }
-
-  // Single-table insert for Refund Request
-  const { data: requestTxn, error: createError } = await (supabase
-    .from('transactions')
-    .insert as any)({
-      occurred_at: new Date().toISOString(),
-      note: requestNote,
-      status: 'posted',
-      tag: safeExisting.tag,
-      created_by: userId,
-      shop_id: safeExisting.shop_id ?? null,
-      account_id: REFUND_PENDING_ACCOUNT_ID,
-      category_id: refundCategoryId,
-      amount: safeAmount,
-      type: 'income',
-      metadata: lineMetadata
-    })
-    .select()
-    .single()
-
-  if (createError || !requestTxn) {
-    console.error('Failed to insert refund request transaction:', createError)
-    return { success: false, error: 'Không thể tạo giao dịch yêu cầu hoàn tiền.' }
-  }
-
-  // No lines to insert for single-table schema
-
-  try {
-    // Update original transaction metadata
-    const mergedOriginalMeta = {
-      ...parseMetadata(safeExisting.metadata),
-      refund_request_id: requestTxn.id,
-      refund_requested_at: new Date().toISOString(),
-      has_refund_request: true,
-    }
-
-    // Update directly on transactions table
-    await (supabase.from('transactions').update as any)({ metadata: mergedOriginalMeta }).eq(
-      'id',
-      transactionId
-    )
-  } catch (err) {
-    console.error('Failed to tag original transaction with refund metadata:', err)
-  }
-
-  return { success: true, refundTransactionId: requestTxn.id }
-}
-
-export async function cancelOrder(
-  transactionId: string
-): Promise<{ success: boolean; error?: string }> {
-  try {
-    const supabase = createClient()
-    const { data: txn } = await supabase.from('transactions').select('amount').eq('id', transactionId).single()
-
-    if (!txn) {
-      return { success: false, error: 'Transaction not found' }
-    }
-
-    // Cancel order is essentially a full refund
-    // We could add specific metadata if needed, but for now reuse requestRefund
-    return await requestRefund(transactionId, Math.abs((txn as any).amount), false)
-  } catch (error: any) {
-    console.error('Cancel order error:', error)
-    return { success: false, error: error.message }
-  }
-}
-
-export async function confirmRefund(
-  pendingTransactionId: string,
-  targetAccountId: string
-): Promise<{ success: boolean; confirmTransactionId?: string; error?: string }> {
-  if (!pendingTransactionId || !targetAccountId) {
-    return { success: false, error: 'Thiếu thông tin xác nhận hoàn tiền.' }
-  }
-
-  const supabase = createClient()
-  const { data: pending, error: pendingError } = await supabase
-    .from('transactions')
-    .select(`
-        id,
-        note,
-        tag,
-        amount,
-        metadata
-        `)
-    .eq('id', pendingTransactionId)
-    .maybeSingle();
-
-  if (pendingError || !pending) {
-    console.error('Failed to load pending refund transaction:', pendingError)
-    return { success: false, error: 'Không tìm thấy giao dịch hoàn tiền hoặc đã xảy ra lỗi.' }
-  }
-
-  const amountToConfirm = Math.abs((pending as any).amount ?? 0)
-  if (amountToConfirm <= 0) {
-    return { success: false, error: 'Số tiền xác nhận không hợp lệ.' }
-  }
-
-  const userId = await resolveCurrentUserId(supabase)
-  const confirmNote = `Confirmed refund for ${(pending as any).note ?? (pending as any).id}`
-  const confirmationMetadata = {
-    refund_status: 'confirmed',
-    linked_transaction_id: pendingTransactionId,
-  }
-
-  // Single-table insert for Refund Confirmation
-  // Moving money FROM Pending TO Target.
-  // We model this as a transaction on the Target Account.
-
-  const { data: confirmTxn, error: confirmError } = await (supabase
-    .from('transactions')
-    .insert as any)({
-      occurred_at: new Date().toISOString(),
-      note: confirmNote,
-      status: 'posted',
-      tag: (pending as any).tag,
-      created_by: userId,
-      account_id: targetAccountId,
-      amount: amountToConfirm,
-      type: 'income',
-      metadata: confirmationMetadata
-    })
-    .select()
-    .single()
-
-  if (confirmError || !confirmTxn) {
-    console.error('Failed to insert refund confirm transaction:', confirmError)
-    return { success: false, error: 'Không thể tạo giao dịch xác nhận hoàn tiền.' }
-  }
-
-  // No lines to insert
-
-  try {
-    const updatedPendingMeta = {
-      ...parseMetadata((pending as any).metadata),
-      refund_status: 'confirmed',
-      refund_confirmed_transaction_id: confirmTxn.id,
-      refunded_at: new Date().toISOString(),
-    }
-
-    // Update Pending Transaction Metadata
-    await (supabase.from('transactions').update as any)({ metadata: updatedPendingMeta }).eq(
-      'id',
-      pendingTransactionId
-    )
-  } catch (err) {
-    console.error('Failed to update pending refund metadata:', err)
-  }
-
-  const pendingMeta = parseMetadata((pending as any).metadata)
-  const originalTransactionId =
-    typeof pendingMeta?.original_transaction_id === 'string' ? pendingMeta.original_transaction_id : null
-
-  if (originalTransactionId) {
-    try {
-      const { data: originalTxn } = await supabase
-        .from('transactions')
-        .select('metadata')
-        .eq('id', originalTransactionId)
-        .single()
-
-      if (originalTxn) {
-        const updatedOriginalMeta = mergeMetadata((originalTxn as any).metadata, {
-          refund_status: 'confirmed',
-          refund_confirmed_transaction_id: confirmTxn.id,
-          refund_confirmed_at: new Date().toISOString(),
-        })
-
-        await (supabase.from('transactions').update as any)({ metadata: updatedOriginalMeta }).eq(
-          'id',
-          originalTransactionId
-        )
-      }
-    } catch (err) {
-      console.error('Failed to link original transaction:', err)
-    }
-  }
-
-
-
-
-  return { success: true, confirmTransactionId: confirmTxn.id }
-}
-
-export async function getUnifiedTransactions(accountId?: string, limit: number = 50): Promise<TransactionWithDetails[]> {
-  const supabase = createClient();
-
-  let query = supabase
-    .from('transactions')
-    .select(`
-      id,
-      occurred_at,
-      note,
-      tag,
-      status,
-      created_at,
-      shop_id,
-      shops ( id, name, image_url ),
-      amount,
-      type,
-      account_id,
-      target_account_id,
-      category_id,
-      person_id,
-      metadata,
-      cashback_share_percent,
-      cashback_share_fixed,
-      accounts (name, type, image_url),
-      categories (name, image_url, icon)
-    `)
-    .order('occurred_at', { ascending: false })
-    .limit(limit);
-
-  if (accountId) {
-    query = query.eq('account_id', accountId);
-  }
-
-  const { data, error } = await query;
-
-  if (error) {
-    console.error('Error fetching unified transactions:', error);
-    return [];
-  }
-
-  return (data as any[]).map(txn => mapUnifiedTransaction(txn, accountId));
-}
-
-/**
- * SPLIT BILL MANAGEMENT ACTIONS
- */
-
-/**
- * Delete an entire split bill (base + all child transactions)
- */
-export async function deleteSplitBillAction(
-  baseTransactionId: string
-): Promise<{ success: boolean; deletedCount?: number; error?: string }> {
-  try {
-    const { deleteSplitBill } = await import('@/services/transaction.service');
-    const result = await deleteSplitBill(baseTransactionId);
-
-    if (result.success) {
-      // Revalidate all relevant pages
-      const { revalidatePath } = await import('next/cache');
-      revalidatePath('/transactions');
-      revalidatePath('/accounts');
-      revalidatePath('/people');
-      // Revalidate all people detail pages (can't target specific ID without knowing it)
-      revalidatePath('/people/[id]', 'page');
-    }
-
-    return result;
+    await pocketbaseUpdate('transactions', pbId, { metadata: newMetadata });
+    revalidatePath('/transactions');
+    return true;
   } catch (error) {
-    console.error('Delete Split Bill Action Error:', error);
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : String(error),
-    };
+    console.error('[DB:PB] updateTransactionMetadata failed:', error);
+    return false;
   }
 }
 
-/**
- * Update split bill amounts and participants
- */
+export async function deleteSplitBillAction(baseTransactionId: string): Promise<{ success: boolean; deletedCount?: number; error?: string }> {
+  try {
+    const pbBaseId = toPocketBaseId(baseTransactionId, 'transactions');
+    
+    // 1. Find all child transactions
+    // Note: PocketBase filter for JSON field might be tricky, usually metadata.split_parent_id
+    const children = await pocketbaseList<any>('transactions', {
+      filter: `metadata.split_parent_id = "${pbBaseId}"`,
+      perPage: 500
+    });
+
+    let deletedCount = 0;
+    
+    // 2. Delete children
+    for (const child of children.items) {
+      await pocketbaseUpdate('transactions', child.id, { status: 'void' }); // Prefer voiding over hard delete for consistency
+      deletedCount++;
+    }
+
+    // 3. Void base transaction
+    await pocketbaseUpdate('transactions', pbBaseId, { status: 'void' });
+    deletedCount++;
+
+    revalidatePath('/transactions');
+    return { success: true, deletedCount };
+  } catch (error: any) {
+    console.error('[DB:PB] deleteSplitBillAction failed:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+export async function bulkMoveTransactionsToCategory(transactionIds: string[], categoryId: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    const pbCategoryId = toPocketBaseId(categoryId, 'categories');
+
+    for (const id of transactionIds) {
+      const pbTxnId = toPocketBaseId(id, 'transactions');
+      await pocketbaseUpdate('transactions', pbTxnId, { category_id: pbCategoryId });
+    }
+
+    revalidatePath('/transactions');
+    return { success: true };
+  } catch (error: any) {
+    console.error('[DB:PB] bulkMoveTransactionsToCategory failed:', error);
+    return { success: false, error: error.message };
+  }
+}
+
 export async function updateSplitBillAction(
   baseTransactionId: string,
-  updates: {
-    title?: string;
-    note?: string;
-    qrImageUrl?: string | null;
-    participants: Array<{
+  data: {
+    title: string;
+    note: string;
+    qrImageUrl: string | null;
+    participants: {
       personId: string;
       amount: number;
       isNew?: boolean;
       isRemoved?: boolean;
       transactionId?: string;
-    }>;
+    }[];
   }
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const { updateSplitBillAmounts } = await import('@/services/transaction.service');
-    const result = await updateSplitBillAmounts(baseTransactionId, updates);
+    const pbBaseId = toPocketBaseId(baseTransactionId, 'transactions');
+    const baseTxn = await pocketbaseGetById<any>('transactions', pbBaseId);
 
-    if (result.success) {
-      // Revalidate all relevant pages
-      const { revalidatePath } = await import('next/cache');
-      revalidatePath('/transactions');
-      revalidatePath('/accounts');
-      revalidatePath('/people');
-      revalidatePath('/people/[id]', 'page');
+    // 1. Update base transaction
+    const baseMetadata = {
+      ...(typeof baseTxn.metadata === 'object' ? baseTxn.metadata : {}),
+      title: data.title,
+      note: data.note,
+      qr_image_url: data.qrImageUrl
+    };
+    await pocketbaseUpdate('transactions', pbBaseId, { metadata: baseMetadata, note: data.note });
+
+    // 2. Process participants
+    for (const p of data.participants) {
+      if (p.isRemoved && p.transactionId) {
+        const pbChildId = toPocketBaseId(p.transactionId, 'transactions');
+        await pocketbaseUpdate('transactions', pbChildId, { status: 'void' });
+      } else if (p.isNew) {
+        // Create new transaction for split
+        const pbPersonId = toPocketBaseId(p.personId, 'people');
+        // Find debt account for this person
+        const personWithDebt = await pocketbaseGetById<any>('people', pbPersonId);
+        const debtAccountId = personWithDebt.debt_account_id;
+
+        if (!debtAccountId) {
+          console.warn(`No debt account for person ${p.personId}`);
+          continue;
+        }
+
+        await pocketbaseCreate('transactions', {
+          date: baseTxn.date,
+          amount: p.amount,
+          type: 'debt',
+          to_account_id: debtAccountId,
+          from_account_id: baseTxn.from_account_id,
+          person_id: pbPersonId,
+          status: 'confirmed',
+          metadata: {
+            split_parent_id: pbBaseId,
+            split_title: data.title
+          }
+        });
+      } else if (p.transactionId) {
+        const pbChildId = toPocketBaseId(p.transactionId, 'transactions');
+        await pocketbaseUpdate('transactions', pbChildId, {
+          amount: p.amount,
+          metadata: {
+            split_parent_id: pbBaseId,
+            split_title: data.title
+          }
+        });
+      }
     }
 
-    return result;
-  } catch (error) {
-    console.error('Update Split Bill Action Error:', error);
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : String(error),
-    };
-  }
-}
-
-
-export async function getSplitChildrenAction(parentId: string) {
-  const supabase = createClient();
-
-  // Fetch transactions where metadata->parent_transaction_id == parentId
-  const { data, error } = await supabase
-    .from('transactions')
-    .select('id, amount, person_id, note, metadata, people:person_id(name)')
-    .eq('metadata->>parent_transaction_id', parentId);
-
-  if (error) {
-    console.error('Error fetching split children:', error);
-    return [];
-  }
-
-  return (data || []).map((txn: any) => ({
-    id: txn.id,
-    amount: txn.amount,
-    personId: txn.person_id,
-    name: (txn.people as any)?.name ?? 'Unknown',
-    note: txn.note
-  }));
-}
-
-
-
-export async function bulkMoveToCategory(transactionIds: string[], targetCategoryId: string): Promise<{ success: boolean; error?: string }> {
-  try {
-    const { bulkMoveToCategory: bulkMove } = await import('@/services/transaction.service');
-    const result = await bulkMove(transactionIds, targetCategoryId);
-    return result;
+    revalidatePath('/transactions');
+    return { success: true };
   } catch (error: any) {
-    console.error('Bulk Move Action Error:', error);
+    console.error('[DB:PB] updateSplitBillAction failed:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+export async function bulkMoveToCategory(transactionIds: string[], categoryId: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    const pbCatId = toPocketBaseId(categoryId, 'categories');
+    for (const id of transactionIds) {
+      const pbId = toPocketBaseId(id, 'transactions');
+      await pocketbaseUpdate('transactions', pbId, { category_id: pbCatId });
+    }
+    revalidatePath('/transactions');
+    return { success: true };
+  } catch (error: any) {
+    console.error('[DB:PB] bulkMoveToCategory failed:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+export async function getOriginalAccount(refundRequestId: string): Promise<any | null> {
+  try {
+    const pbId = toPocketBaseId(refundRequestId, 'transactions');
+    const record = await pocketbaseGetById<any>('transactions', pbId);
+    if (!record) return null;
+
+    const meta = parseMetadata(record.metadata);
+    const originalAccountId = meta?.original_account_id;
+    if (!originalAccountId) return null;
+
+    const account = await pocketbaseGetById<any>('accounts', originalAccountId as string);
+    if (!account) return null;
+
+    return {
+      id: account.id,
+      name: account.name,
+      type: account.type || 'general',
+      image_url: account.image_url,
+      current_balance: account.current_balance || 0
+    };
+  } catch (err) {
+    console.error('getOriginalAccount failed:', err);
+    return null;
+  }
+}
+
+/**
+ * Marks a transaction as waiting for refund.
+ */
+export async function requestRefund(
+  transactionId: string,
+  amount: number,
+  isPartial: boolean = false
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const pbId = toPocketBaseId(transactionId, 'transactions');
+    const existing = await pocketbaseGetById<any>('transactions', pbId);
+    if (!existing) throw new Error('Transaction not found');
+
+    const updateData: any = {
+      status: 'waiting_refund',
+      metadata: {
+        ...(typeof existing.metadata === 'object' ? existing.metadata : {}),
+        has_refund_request: true,
+        refund_amount: amount,
+        is_partial_refund: isPartial,
+        refund_requested_at: new Date().toISOString()
+      }
+    };
+
+    await pocketbaseUpdate('transactions', pbId, updateData);
+    revalidatePath('/transactions');
+    return { success: true };
+  } catch (error: any) {
+    console.error('[DB:PB] requestRefund failed:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Cancels an order and requests a full refund.
+ */
+export async function cancelOrder(transactionId: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    const pbId = toPocketBaseId(transactionId, 'transactions');
+    const existing = await pocketbaseGetById<any>('transactions', pbId);
+    if (!existing) throw new Error('Transaction not found');
+
+    const amount = Math.abs(existing.amount);
+    return await requestRefund(transactionId, amount, false);
+  } catch (error: any) {
+    console.error('[DB:PB] cancelOrder failed:', error);
     return { success: false, error: error.message };
   }
 }

@@ -180,12 +180,11 @@ export function MemberDetailView({
     // 4. Update Navigation Handlers
     const handleCycleChange = (tag: string) => {
         if (tag !== 'all') {
-            if (dateMode !== 'all' || dateRangeFilter) {
-                setDateMode('all')
-                setDateRangeValue(undefined)
-                setDateRangeFilter(undefined)
-                handleClearDateRange()
-            }
+            // Clear filters when tag is selected
+            setSelectedAccountId(undefined)
+            setDateMode('all')
+            setDateRangeValue(undefined)
+            setDateRangeFilter(undefined)
         }
 
         const params = new URLSearchParams(searchParams.toString())
@@ -199,16 +198,19 @@ export function MemberDetailView({
     }
 
     const handleCycleSelect = (tag: string, year: string | null) => {
+        const params = new URLSearchParams(searchParams.toString())
+        
         if (tag !== 'all') {
-            if (dateMode !== 'all' || dateRangeFilter) {
-                setDateMode('all')
-                setDateRangeValue(undefined)
-                setDateRangeFilter(undefined)
-                handleClearDateRange()
-            }
+            // Debt Cycle selected: Clear Account filter and custom date range
+            setSelectedAccountId(undefined)
+            setDateMode('all')
+            setDateRangeValue(undefined)
+            setDateRangeFilter(undefined)
+            params.delete('accountId') // Also clear from URL
+            params.delete('dateFrom')
+            params.delete('dateTo')
         }
 
-        const params = new URLSearchParams(searchParams.toString())
         params.set('tag', tag)
         if (year) {
             params.set('year', year)
@@ -792,6 +794,7 @@ export function MemberDetailView({
                 onOpenChange={setIsPersonSlideOpen}
                 person={person}
                 subscriptions={subscriptions}
+                accounts={accounts}
             />
             {/* Transaction Slide V2 */}
             <TransactionSlideV2

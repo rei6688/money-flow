@@ -1,6 +1,6 @@
 'use client'
 
-import { Person, Subscription } from '@/types/moneyflow.types'
+import { Person, Subscription, Account } from '@/types/moneyflow.types'
 import {
     Sheet,
     SheetContent,
@@ -17,6 +17,7 @@ interface PersonSlideV2Props {
     onOpenChange: (open: boolean) => void
     person: Person
     subscriptions: Subscription[]
+    accounts: Account[]
 }
 
 export function PersonSlideV2({
@@ -24,6 +25,7 @@ export function PersonSlideV2({
     onOpenChange,
     person,
     subscriptions,
+    accounts,
 }: PersonSlideV2Props) {
     const router = useRouter()
 
@@ -66,6 +68,7 @@ export function PersonSlideV2({
                     <PersonForm
                         mode="edit"
                         subscriptions={subscriptions}
+                        accounts={accounts}
                         initialValues={{
                             name: person.name,
                             image_url: person.image_url ?? '',

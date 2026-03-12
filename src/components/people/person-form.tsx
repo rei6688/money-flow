@@ -5,7 +5,7 @@ import { Loader2 } from 'lucide-react'
 import { z } from 'zod'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { Subscription } from '@/types/moneyflow.types'
+import { Subscription, Account } from '@/types/moneyflow.types'
 
 type PersonFormValues = {
   name: string
@@ -16,6 +16,7 @@ type PersonFormValues = {
   is_owner?: boolean
   is_archived?: boolean
   is_group?: boolean
+  sheet_linked_bank_id?: string
 }
 
 type PersonFormProps = {
@@ -24,6 +25,7 @@ type PersonFormProps = {
   submitLabel?: string
   initialValues?: Partial<PersonFormValues>
   subscriptions: Subscription[]
+  accounts: Account[]
   onCancel?: () => void
   onChange?: () => void
 }
@@ -37,6 +39,7 @@ const schema = z.object({
   is_owner: z.boolean().optional(),
   is_archived: z.boolean().optional(),
   is_group: z.boolean().optional(),
+  sheet_linked_bank_id: z.string().optional(),
 })
 
 const currencyFormatter = new Intl.NumberFormat('en-US', {
@@ -63,6 +66,7 @@ export function PersonForm({
   submitLabel,
   initialValues,
   subscriptions,
+  accounts,
   onCancel,
   onChange,
 }: PersonFormProps) {
@@ -88,6 +92,7 @@ export function PersonForm({
       is_owner: initialValues?.is_owner ?? false,
       is_archived: initialValues?.is_archived ?? false,
       is_group: initialValues?.is_group ?? false,
+      sheet_linked_bank_id: initialValues?.sheet_linked_bank_id ?? '',
     },
   })
 
@@ -107,6 +112,7 @@ export function PersonForm({
       is_owner: initialValues?.is_owner ?? false,
       is_archived: initialValues?.is_archived ?? false,
       is_group: initialValues?.is_group ?? false,
+      sheet_linked_bank_id: initialValues?.sheet_linked_bank_id ?? '',
     }
     reset(nextValues)
     setImagePreview(nextValues.image_url || null)
@@ -226,6 +232,20 @@ export function PersonForm({
                 <p className="text-sm text-rose-600">{errors.sheet_link.message}</p>
               )}
               <p className="text-xs text-slate-500">Used for Manage Sheet sync.</p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-slate-700">Default Bank Account</label>
+              <select
+                {...register('sheet_linked_bank_id')}
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 appearance-none bg-white"
+              >
+                <option value="">None / Not Linked</option>
+                {accounts.filter(a => a.type === 'bank' || a.type === 'credit_card').map(acc => (
+                  <option key={acc.id} value={acc.id}>{acc.name}</option>
+                ))}
+              </select>
+              <p className="text-xs text-slate-500">Auto-fill source for repayment transactions.</p>
             </div>
           </div >
         </div >

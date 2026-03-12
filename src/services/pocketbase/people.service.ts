@@ -32,7 +32,7 @@ type PocketBasePersonWrite = {
 
 function mapPerson(record: PocketBaseRecord): Person {
   return {
-    id: String(record.slug || record.id || ''),
+    id: String(record.id || ''),
     pocketbase_id: typeof record.id === 'string' ? record.id : null,
     created_at: typeof record.created === 'string' ? record.created : undefined,
     name: String(record.name || ''),
@@ -244,27 +244,17 @@ export async function getPocketBasePersonById(sourceOrPocketBaseId: string): Pro
 }
 
 export async function createPocketBasePerson(
-  supabaseId: string,
-  data: PocketBasePersonWrite
-): Promise<boolean> {
-  return executeWithFallback(
-    async () => {
-      const pbId = toPocketBaseId(supabaseId)
-      logSource('PB', 'people.create', { supabaseId, pbId, name: data.name })
-      await pocketbaseCreate<PocketBaseRecord>('people', {
-        id: pbId,
-        slug: supabaseId,
-        ...data,
-        group_parent_id: data.group_parent_id ? toPocketBaseId(data.group_parent_id) : null,
-      })
-      return true
-    },
-    async () => {
-      logSource('SB', 'people.create fallback', { supabaseId })
-      return false
-    },
-    'people.create'
-  )
+  data: PocketBasePersonWrite & { id?: string; slug?: string }
+): Promise<PocketBaseRecord> {
+  const pbId = data.id || toPocketBaseId(data.slug || crypto.randomUUID())
+  const payload = {
+    ...data,
+    id: pbId,
+    slug: data.slug || pbId,
+    group_parent_id: data.group_parent_id ? toPocketBaseId(data.group_parent_id) : null,
+  }
+  logSource('PB', 'people.create', { id: pbId, name: data.name })
+  return await pocketbaseCreate<PocketBaseRecord>('people', payload)
 }
 
 export async function updatePocketBasePerson(

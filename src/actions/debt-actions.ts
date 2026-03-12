@@ -1,6 +1,6 @@
 'use server'
 
-import { createClient } from '@/lib/supabase/server'
+import { pocketbaseCreate, pocketbaseUpdate, pocketbaseDelete, pocketbaseList, toPocketBaseId } from '@/services/pocketbase/server'
 import { revalidatePath } from 'next/cache'
 
 /**
@@ -15,75 +15,71 @@ export async function repayBatchDebt(
     allocations: Record<string, number>, // Maps tagLabel -> amount
     note?: string
 ) {
-    const supabase = createClient()
-
     try {
+        const pbPersonId = toPocketBaseId(personId, 'people');
+        const pbBankAccountId = toPocketBaseId(bankAccountId, 'accounts');
+
         // 1. Create PARENT Transaction (Money Movement)
-        // accounts: Bank +Total
-        // person: NULL (to avoid double counting with children)
+        const parentId = toPocketBaseId(crypto.randomUUID(), 'transactions');
         const parentTxn = {
+            id: parentId,
             occurred_at: new Date().toISOString(),
+            date: new Date().toISOString(),
             note: note ? `Repayment: ${note}` : 'Debt Repayment (Batch)',
-            type: 'income', // Income = Money In
-            account_id: bankAccountId,
+            description: note ? `Repayment: ${note}` : 'Debt Repayment (Batch)',
+            type: 'income',
+            account_id: pbBankAccountId,
             amount: Math.abs(totalAmount),
-            person_id: null,
+            person_id: '', // Using empty string for null in PB if needed
             metadata: {
                 is_debt_repayment_parent: true,
-                original_person_id: personId
+                original_person_id: pbPersonId
             },
             status: 'posted'
         }
 
-        const { data: parentData, error: parentError } = await supabase
-            .from('transactions')
-            .insert(parentTxn)
-            .select()
-            .single()
-
-        const parent = parentData as any
-
-        if (parentError || !parent) {
-            throw new Error(`Failed to create parent transaction: ${parentError?.message}`)
-        }
+        const parent = await pocketbaseCreate<any>('transactions', parentTxn);
 
         // 2. Create CHILD Transactions (Allocations)
-        // accounts: NULL (Virtual)
-        // person: assigned
-        // Linked to parent
         const childrenToInsert = Object.entries(allocations)
             .filter(([_, amount]) => amount > 0)
             .map(([tag, amount]) => ({
+                id: toPocketBaseId(crypto.randomUUID(), 'transactions'),
                 occurred_at: new Date().toISOString(),
+                date: new Date().toISOString(),
                 note: `Allocated Repayment for ${tag}`,
+                description: `Allocated Repayment for ${tag}`,
                 type: 'income',
-                account_id: null as string | null, // Virtual transaction
-                person_id: personId,
+                account_id: '', // Virtual transaction
+                person_id: pbPersonId,
                 amount: Math.abs(amount),
-                tag: tag as string | null, // Using the tagLabel as the tag
+                tag: tag,
                 linked_transaction_id: parent.id,
                 status: 'posted',
                 metadata: {
                     is_debt_repayment_child: true,
                     parent_transaction_id: parent.id
                 }
-            }))
+            }));
 
-        // Handle Excess (Unallocated) -> generic credit to person
+        // Handle Excess (Unallocated)
         const allocatedSum = Object.values(allocations).reduce((a, b) => a + b, 0)
         const excess = Math.abs(totalAmount) - allocatedSum
 
         if (excess > 0.01) {
             childrenToInsert.push({
+                id: toPocketBaseId(crypto.randomUUID(), 'transactions'),
                 occurred_at: new Date().toISOString(),
+                date: new Date().toISOString(),
                 note: `Unallocated Repayment (Excess)`,
+                description: `Unallocated Repayment (Excess)`,
                 type: 'income',
-                account_id: null,
-                person_id: personId,
+                account_id: '',
+                person_id: pbPersonId,
                 amount: excess,
-                tag: null,
+                tag: '',
                 linked_transaction_id: parent.id,
-                status: 'posted', // posted immediately
+                status: 'posted',
                 metadata: {
                     is_debt_repayment_child: true,
                     is_excess: true,
@@ -92,26 +88,23 @@ export async function repayBatchDebt(
             })
         }
 
-        if (childrenToInsert.length > 0) {
-            const { error: childrenError } = await supabase
-                .from('transactions')
-                .insert(childrenToInsert as any)
-
-            if (childrenError) {
-                // Formatting error for better debugging
-                console.error("Child Creation Error:", childrenError)
-
-                // Rollback parent
-                await supabase.from('transactions').delete().eq('id', parent.id)
-                throw new Error(`Failed to create child transactions: ${childrenError.message}`)
+        // PocketBase sequential creation for children
+        const createdChildren = [];
+        try {
+            for (const child of childrenToInsert) {
+                const created = await pocketbaseCreate<any>('transactions', child);
+                createdChildren.push(created);
             }
+        } catch (childError) {
+            console.error("[DB:PB] Child Creation Error:", childError);
+            // Rollback parent
+            await pocketbaseDelete('transactions', parent.id);
+            throw childError;
         }
 
         // 3. Recalculate Bank Balance
-        // We need to trigger recalculation for the bank account
         const { recalculateBalance, getAccountDetails } = await import('@/services/account.service')
 
-        // Fetch Bank Name for Sync
         let bankName = "Bank Transfer"
         try {
             const bankAccount = await getAccountDetails(bankAccountId)
@@ -121,12 +114,8 @@ export async function repayBatchDebt(
         }
 
         // Update Parent with Shop Name (for Sync)
-        await supabase
-            .from('transactions')
-            .update({ shop: bankName })
-            .eq('id', parent.id)
-
-        await recalculateBalance(bankAccountId)
+        await pocketbaseUpdate('transactions', parent.id, { shop: bankName });
+        await recalculateBalance(bankAccountId);
 
         // 4. Revalidate UI
         revalidatePath('/people')
@@ -137,7 +126,7 @@ export async function repayBatchDebt(
         return { success: true, parentId: parent.id }
 
     } catch (error: any) {
-        console.error("repayBatchDebt failed:", error)
+        console.error("[DB:PB] repayBatchDebt failed:", error)
         return { success: false, error: error.message }
     }
 }

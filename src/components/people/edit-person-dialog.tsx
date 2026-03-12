@@ -4,7 +4,7 @@ import { MouseEvent, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { X } from 'lucide-react'
 import { PersonForm } from './person-form'
-import { Subscription, Person } from '@/types/moneyflow.types'
+import { Subscription, Person, Account } from '@/types/moneyflow.types'
 import { updatePersonAction } from '@/actions/people-actions'
 
 import { Slot } from '@radix-ui/react-slot'
@@ -12,6 +12,7 @@ import { Slot } from '@radix-ui/react-slot'
 type EditPersonDialogProps = {
   person: Person
   subscriptions: Subscription[]
+  accounts: Account[]
   initiallyOpen?: boolean
   onClose?: () => void
   trigger?: React.ReactNode
@@ -21,6 +22,7 @@ type EditPersonDialogProps = {
 export function EditPersonDialog({
   person,
   subscriptions,
+  accounts,
   initiallyOpen,
   onClose,
   trigger,
@@ -90,6 +92,7 @@ export function EditPersonDialog({
             <PersonForm
               mode="edit"
               subscriptions={subscriptions}
+              accounts={accounts}
               initialValues={{
                 name: person.name,
                 image_url: person.image_url ?? '',

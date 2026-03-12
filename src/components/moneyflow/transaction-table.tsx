@@ -19,10 +19,10 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { TransactionForm, TransactionFormValues } from "./transaction-form"
 import {
   restoreTransaction,
-  voidTransaction,
+  voidTransactionAction as voidTransaction,
   requestRefund,
-  confirmRefund,
-} from "@/services/transaction.service"
+  confirmRefundAction as confirmRefund,
+} from "@/actions/transaction-actions"
 import { REFUND_PENDING_ACCOUNT_ID } from "@/constants/refunds"
 import { generateTag } from "@/lib/tag"
 
@@ -299,7 +299,7 @@ export function TransactionTable({
   const handleRestore = (txn: TransactionWithDetails) => {
     setIsRestoring(true)
     void restoreTransaction(txn.id)
-      .then(ok => {
+      .then((ok: any) => {
         if (!ok) {
           setVoidError('Unable to restore transaction. Please try again.')
           return
@@ -309,7 +309,7 @@ export function TransactionTable({
         setStatusOverrides(prev => ({ ...prev, [txn.id]: 'posted' }))
         router.refresh()
       })
-      .catch(err => {
+      .catch((err: any) => {
         console.error('Failed to restore transaction:', err)
         setVoidError('Unable to restore transaction. Please try again.')
       })
@@ -402,7 +402,7 @@ export function TransactionTable({
         }
 
         const confirmResult = await confirmRefund(
-          requestResult.refundTransactionId ?? '',
+          refundDialogTxn.id,
           refundTargetAccountId
         )
         if (!confirmResult.success) {
@@ -423,7 +423,7 @@ export function TransactionTable({
     setVoidError(null)
     setIsVoiding(true)
     void voidTransaction(confirmVoidTarget.id)
-      .then(ok => {
+      .then((ok: any) => {
         if (!ok) {
           setVoidError('Unable to void transaction. Please try again.')
           return
@@ -432,7 +432,7 @@ export function TransactionTable({
         closeVoidDialog()
         router.refresh()
       })
-      .catch(err => {
+      .catch((err: any) => {
         console.error('Failed to void transaction:', err)
         setVoidError('Unable to void transaction. Please try again.')
       })

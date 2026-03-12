@@ -329,27 +329,29 @@ export async function deletePocketBaseCategory(supabaseId: string): Promise<bool
 export async function togglePocketBaseCategoriesArchiveBulk(
   supabaseIds: string[],
   isArchived: boolean
-): Promise<void> {
+): Promise<boolean> {
   console.log('[DB:PB] categories.toggleArchiveBulk', { count: supabaseIds.length, isArchived })
-  await Promise.allSettled(
+  const results = await Promise.allSettled(
     supabaseIds.map((sbId) =>
       pocketbaseRequest(`/api/collections/categories/records/${toPocketBaseId(sbId)}`, {
         method: 'PATCH',
         body: { is_archived: isArchived },
-      }).catch((err) => console.error('[DB:PB] categories.toggleArchiveBulk item failed:', sbId, err))
+      })
     )
   )
+  return results.some(r => r.status === 'fulfilled')
 }
 
-export async function deletePocketBaseCategoriesBulk(supabaseIds: string[]): Promise<void> {
+export async function deletePocketBaseCategoriesBulk(supabaseIds: string[]): Promise<boolean> {
   console.log('[DB:PB] categories.deleteBulk', { count: supabaseIds.length })
-  await Promise.allSettled(
+  const results = await Promise.allSettled(
     supabaseIds.map((sbId) =>
       pocketbaseRequest(`/api/collections/categories/records/${toPocketBaseId(sbId)}`, {
         method: 'DELETE',
-      }).catch((err) => console.error('[DB:PB] categories.deleteBulk item failed:', sbId, err))
+      })
     )
   )
+  return results.some(r => r.status === 'fulfilled')
 }
 
 export async function getPocketBasePeople(): Promise<Person[]> {
@@ -464,27 +466,29 @@ export async function deletePocketBaseShop(supabaseId: string): Promise<boolean>
 export async function togglePocketBaseShopsArchiveBulk(
   supabaseIds: string[],
   isArchived: boolean
-): Promise<void> {
+): Promise<boolean> {
   console.log('[DB:PB] shops.toggleArchiveBulk', { count: supabaseIds.length, isArchived })
-  await Promise.allSettled(
+  const results = await Promise.allSettled(
     supabaseIds.map((sbId) =>
       pocketbaseRequest(`/api/collections/shops/records/${toPocketBaseId(sbId)}`, {
         method: 'PATCH',
         body: { is_archived: isArchived },
-      }).catch((err) => console.error('[DB:PB] shops.toggleArchiveBulk item failed:', sbId, err))
+      })
     )
   )
+  return results.some(r => r.status === 'fulfilled');
 }
 
-export async function deletePocketBaseShopsBulk(supabaseIds: string[]): Promise<void> {
+export async function deletePocketBaseShopsBulk(supabaseIds: string[]): Promise<boolean> {
   console.log('[DB:PB] shops.deleteBulk', { count: supabaseIds.length })
-  await Promise.allSettled(
+  const results = await Promise.allSettled(
     supabaseIds.map((sbId) =>
       pocketbaseRequest(`/api/collections/shops/records/${toPocketBaseId(sbId)}`, {
         method: 'DELETE',
-      }).catch((err) => console.error('[DB:PB] shops.deleteBulk item failed:', sbId, err))
+      })
     )
   )
+  return results.some(r => r.status === 'fulfilled');
 }
 
 // ─── People write functions (Phase 3) ────────────────────────────────────────
@@ -1354,7 +1358,7 @@ type TransactionWriteData = {
 }
 
 export async function createPocketBaseTransaction(supabaseId: string, data: TransactionWriteData): Promise<void> {
-  console.log('[DB:PB] transactions.create', { id: supabaseId, type: data.type, amount: data.amount })
+  // console.log('[DB:PB] transactions.create', { id: supabaseId, type: data.type, amount: data.amount })
   const pbId = toPocketBaseId(supabaseId)
   // Merge source_id into metadata so mapTransaction can reverse-lookup the SB UUID via record.metadata.source_id
   const mergedMetadata = {
@@ -1390,7 +1394,7 @@ export async function createPocketBaseTransaction(supabaseId: string, data: Tran
 }
 
 export async function updatePocketBaseTransaction(supabaseId: string, data: Partial<TransactionWriteData>): Promise<void> {
-  console.log('[DB:PB] transactions.update', { id: supabaseId })
+  // console.log('[DB:PB] transactions.update', { id: supabaseId })
   const pbId = toPocketBaseId(supabaseId)
   const payload: Record<string, unknown> = {}
   if (data.occurred_at !== undefined) payload.occurred_at = data.occurred_at

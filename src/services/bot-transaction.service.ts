@@ -1,10 +1,9 @@
 "use server";
 
-import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Database, Json } from "@/types/database.types";
 import { normalizeAmountForType } from "@/services/transaction.service";
-import { recalculateBalanceWithClient } from "@/services/account.service";
+import { recalculateBalance } from "@/services/account.service";
 import { generateTag } from "@/lib/tag";
+import { pocketbaseCreate } from "@/services/pocketbase/server";
 
 export type BotTransactionType =
   | "expense"
@@ -33,8 +32,6 @@ export type BotTransactionDraft = {
 
 const SPLIT_BILL_SYSTEM_ACCOUNT_ID = "88888888-9999-9999-9999-888888888888";
 
-type InsertRow = Database["public"]["Tables"]["transactions"]["Insert"];
-
 const toIso = (value: string) => {
   const trimmed = value.trim();
   if (trimmed.length === 10) {
@@ -53,7 +50,7 @@ const buildTransactionRow = async (
     destination_account_id?: string | null;
     note?: string | null;
     tag?: string | null;
-    metadata?: Json | null;
+    metadata?: any;
     created_by?: string | null;
     category_id?: string | null;
     shop_id?: string | null;
@@ -61,7 +58,7 @@ const buildTransactionRow = async (
     cashback_share_fixed?: number | null;
     cashback_mode?: string | null;
   },
-): Promise<InsertRow> => {
+): Promise<any> => {
   const normalizedAmount = await normalizeAmountForType(
     input.type,
     input.amount,
@@ -78,7 +75,7 @@ const buildTransactionRow = async (
     baseType === "transfer" ? input.destination_account_id ?? null : null;
 
   return {
-    occurred_at: toIso(input.occurred_at),
+    date: toIso(input.occurred_at),
     note: input.note ?? null,
     status: "posted",
     tag: input.tag ?? null,
@@ -86,7 +83,7 @@ const buildTransactionRow = async (
     amount: normalizedAmount,
     type: input.type,
     account_id: input.source_account_id,
-    target_account_id: targetAccountId,
+    to_account_id: targetAccountId,
     category_id: input.category_id ?? null,
     person_id: input.person_id ?? null,
     metadata: input.metadata ?? null,
@@ -101,16 +98,14 @@ const buildTransactionRow = async (
 };
 
 const recalcAccounts = async (
-  supabase: SupabaseClient,
   accountIds: Set<string>,
 ) => {
   for (const accountId of accountIds) {
-    await recalculateBalanceWithClient(supabase, accountId);
+    await recalculateBalance(accountId);
   }
 };
 
 export async function createBotTransactions(
-  supabase: SupabaseClient<Database>,
   draft: BotTransactionDraft,
 ) {
   const tag = generateTag(new Date(draft.occurred_at));
@@ -121,17 +116,12 @@ export async function createBotTransactions(
     impactedAccounts.add(draft.destination_account_id);
   }
 
-  const addTransaction = async (row: InsertRow) => {
-    const { data, error } = await supabase
-      .from("transactions")
-      .insert(row as any)
-      .select("id")
-      .single();
-
-    if (error || !data) {
-      throw new Error(error?.message ?? "Failed to create transaction.");
+  const addTransaction = async (row: any) => {
+    const data = await pocketbaseCreate<any>("transactions", row);
+    if (!data) {
+      throw new Error("Failed to create transaction in PocketBase.");
     }
-    createdIds.push((data as unknown as { id: string }).id);
+    createdIds.push(data.id);
   };
 
   const isSplit =
@@ -157,7 +147,7 @@ export async function createBotTransactions(
       cashback_mode: draft.cashback_mode ?? null,
     });
     await addTransaction(row);
-    await recalcAccounts(supabase, impactedAccounts);
+    await recalcAccounts(impactedAccounts);
     return createdIds;
   }
 
@@ -220,6 +210,6 @@ export async function createBotTransactions(
     await addTransaction(row);
   }
 
-  await recalcAccounts(supabase, impactedAccounts);
+  await recalcAccounts(impactedAccounts);
   return createdIds;
 }

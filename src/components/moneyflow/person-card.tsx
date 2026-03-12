@@ -440,6 +440,7 @@ export function PersonCard({ person, subscriptions, variant = 'detailed', isSele
         onOpenChange={setIsEditOpen}
         person={person}
         subscriptions={subscriptions}
+        accounts={accounts}
       />
     </>
   )

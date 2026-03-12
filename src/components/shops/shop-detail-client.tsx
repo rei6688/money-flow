@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select } from "@/components/ui/select"
-import { bulkMoveToCategory } from "@/actions/transaction-actions"
+import { bulkMoveTransactionsToCategory } from "@/actions/transaction-actions"
 import { toast } from "sonner"
 import { useRouter } from "next/navigation"
 import { UnifiedTransactionTable } from "@/components/moneyflow/unified-transaction-table"
@@ -55,7 +55,7 @@ export function ShopDetailClient({ shop, transactions, allShops, allCategories, 
         const ids = Array.from(selectedIds)
 
         try {
-            const result = await bulkMoveToCategory(ids, targetCategoryId)
+            const result = await bulkMoveTransactionsToCategory(ids, targetCategoryId)
             if (result.success) {
                 toast.success(`Moved ${ids.length} transactions to new category`)
                 setSelectedIds(new Set())
