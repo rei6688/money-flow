@@ -115,12 +115,22 @@ export async function getPeople(options?: { includeArchived?: boolean }): Promis
       const type = String(txn.type || '').toLowerCase()
       
       // Determine which person this belongs to
+      // Determine which person this belongs to
       let personId: string | null = null
+      
+      // 1. Direct link
       if (txn.person_id && personIds.includes(txn.person_id)) {
         personId = txn.person_id
-      } else {
+      } 
+      
+      // 2. Link via account (from or to)
+      if (!personId) {
+        const fromAccId = txn.account_id
         const toAccId = txn.to_account_id || txn.target_account_id
-        if (toAccId && debtAccountToPersonMap.has(toAccId)) {
+        
+        if (fromAccId && debtAccountToPersonMap.has(fromAccId)) {
+          personId = debtAccountToPersonMap.get(fromAccId) || null
+        } else if (toAccId && debtAccountToPersonMap.has(toAccId)) {
           personId = debtAccountToPersonMap.get(toAccId) || null
         }
       }
@@ -141,6 +151,9 @@ export async function getPeople(options?: { includeArchived?: boolean }): Promis
       
       const stats = personStats.get(personId)!
       const rawAmount = Math.abs(Number(txn.amount || 0))
+      const fromAccId = txn.account_id
+      const toAccId = txn.to_account_id || txn.target_account_id
+      const debtAccountId = debtAccounts.find(acc => acc.owner_id === personId)?.id
       
       // Cashback calculation
       const percentVal = Number(txn.cashback_share_percent ?? txn.metadata?.cashback_share_percent ?? 0)
@@ -156,10 +169,13 @@ export async function getPeople(options?: { includeArchived?: boolean }): Promis
       const normalizedTag = normalizeMonthTag(tag) ?? tag
       const isCurrentCycle = tag ? (normalizedTag === currentMonthTag) : (txnDate && txnDate >= currentMonthStart)
 
-      if (['debt', 'expense'].includes(type)) {
-        // Only count expense if it has person_id (meaning person owes us for this expense)
-        if (type === 'expense' && !txn.person_id) return
-        
+      // BALANCE CALCULATION logic (Consistent with detailed view)
+      // Outbound (Lend/Expense)
+      const isOutbound = (['debt', 'expense'].includes(type) && (Number(txn.amount) || 0) < 0) || (fromAccId === debtAccountId)
+      // Inbound (Repay/Repayment/Income)
+      const isInbound = (['repayment', 'repay'].includes(type)) || (['debt', 'income'].includes(type) && (Number(txn.amount) || 0) > 0) || (toAccId === debtAccountId)
+
+      if (isOutbound) {
         stats.baseLend += rawAmount
         stats.cashback += cashback
         stats.totalBalance += netAmount
@@ -169,7 +185,7 @@ export async function getPeople(options?: { includeArchived?: boolean }): Promis
         } else {
           stats.outstandingDebt += netAmount
         }
-      } else if (['repayment', 'income'].includes(type)) {
+      } else if (isInbound) {
         stats.repaid += rawAmount
         stats.totalBalance -= rawAmount
         

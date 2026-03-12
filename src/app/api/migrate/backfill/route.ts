@@ -156,25 +156,43 @@ async function loadPocketBaseLookupRows(collection: string, fields: string): Pro
 }
 
 async function purgeCollectionRecords(collection: string): Promise<{ deleted: number; failed: number; errors: string[] }> {
+  const records = await loadPocketBaseLookupRows(collection, 'id')
+  let deleted = 0, failed = 0
   const errors: string[] = []
-  let deleted = 0
-  let failed = 0
 
-  const rows = await loadPocketBaseLookupRows(collection, 'id')
-
-  await runBatched(rows, 20, async (row) => {
+  await runBatched(records, 20, async (record) => {
     try {
-      await pocketbaseRequest(`/api/collections/${collection}/records/${row.id}`, {
+      await pocketbaseRequest(`/api/collections/${collection}/records/${record.id}`, {
         method: 'DELETE',
       })
-      deleted += 1
+      deleted++
     } catch (err) {
-      failed += 1
-      errors.push(`[purge:${collection}:${row.id}] ${String(err)}`)
+      failed++
+      errors.push(`[${collection}:${record.id}] ${String(err)}`)
     }
   })
 
   return { deleted, failed, errors }
+}
+
+async function purgeAllCollections(): Promise<Record<string, { deleted: number; failed: number; errors: string[] }>> {
+  const results: Record<string, { deleted: number; failed: number; errors: string[] }> = {}
+  
+  // Order matters if there are hard FK restraints, but usually DELETE is fine
+  const collections = [
+    PB_TRANSACTIONS_COLLECTION,
+    PB_ACCOUNTS_COLLECTION,
+    PB_CATEGORIES_COLLECTION,
+    PB_SHOPS_COLLECTION,
+    PB_PEOPLE_COLLECTION
+  ]
+
+  for (const coll of collections) {
+    console.log(`[Purge] Clearing ${coll}...`)
+    results[coll] = await purgeCollectionRecords(coll)
+  }
+
+  return results
 }
 
 async function buildIdBridgeMaps() {
@@ -418,6 +436,8 @@ async function backfillAccounts(): Promise<BackfillResult> {
   let failed = 0
   const errors: string[] = []
 
+  const { categoryMap } = await buildIdBridgeMaps()
+
   // Two passes: first without FK references (so parent accounts land before children),
   // then a second pass to set FK fields like parent_account_id.
   const withFKs: Array<{ pbId: string; fkBody: Record<string, unknown> }> = []
@@ -426,6 +446,25 @@ async function backfillAccounts(): Promise<BackfillResult> {
   await runBatched(accounts, 10, async (account) => {
     const pbId = toPocketBaseId(account.id)
     try {
+      // Deep clone and translate cashback_config
+      let cashbackConfig = account.cashback_config ? JSON.parse(JSON.stringify(account.cashback_config)) : null
+      
+      if (cashbackConfig && typeof cashbackConfig === 'object') {
+        // Handle newer structure (rules_json_v2 or program.rules_json_v2)
+        const rules = cashbackConfig.rules_json_v2 || cashbackConfig.program?.rules_json_v2
+        if (Array.isArray(rules)) {
+          rules.forEach((rule: any) => {
+            if (Array.isArray(rule.cat_ids)) {
+              rule.cat_ids = rule.cat_ids.map((id: string) => categoryMap.get(id) || id)
+            }
+          })
+        }
+        // Handle legacy structure
+        if (Array.isArray(cashbackConfig.cat_ids)) {
+          cashbackConfig.cat_ids = cashbackConfig.cat_ids.map((id: string) => categoryMap.get(id) || id)
+        }
+      }
+
       const body: Record<string, unknown> = {
         slug: account.id,
         name: account.name,
@@ -439,7 +478,7 @@ async function backfillAccounts(): Promise<BackfillResult> {
         receiver_name: account.receiver_name ?? null,
         total_in: account.total_in ?? 0,
         total_out: account.total_out ?? 0,
-        cashback_config: account.cashback_config ?? null,
+        cashback_config: cashbackConfig,
         cashback_config_version: account.cashback_config_version ?? 1,
         annual_fee: account.annual_fee ?? null,
         annual_fee_waiver_target: account.annual_fee_waiver_target ?? null,
@@ -720,9 +759,18 @@ export async function GET(request: NextRequest) {
   const collection = request.nextUrl.searchParams.get('collection') ?? 'all'
   const cleanupLegacy = ['1', 'true', 'yes'].includes((request.nextUrl.searchParams.get('cleanupLegacy') ?? '').toLowerCase())
   const fresh = ['1', 'true', 'yes'].includes((request.nextUrl.searchParams.get('fresh') ?? '').toLowerCase())
-  const results: Record<string, BackfillResult> = {}
+  const results: Record<string, any> = {}
 
-  // Always run accounts before transactions so FK relations resolve
+  if (collection === 'purge_all' || fresh) {
+    console.log('[Backfill] Performing total fresh purge...')
+    results.purge_all = await purgeAllCollections()
+  }
+
+  if (collection === 'purge_all') {
+    return NextResponse.json(results, { status: 200 })
+  }
+
+  // Always run base collections before accounts/transactions so FK relations resolve
   if (collection === 'all' || collection === 'categories') {
     results.categories = await backfillCategories()
   }
@@ -739,16 +787,6 @@ export async function GET(request: NextRequest) {
   }
 
   if (collection === 'all' || collection === 'transactions') {
-    if (fresh) {
-      const purge = await purgeCollectionRecords(PB_TRANSACTIONS_COLLECTION)
-      results.transactions_purge = {
-        created: 0,
-        updated: purge.deleted,
-        failed: purge.failed,
-        errors: purge.errors,
-      }
-    }
-
     console.log('[Backfill] Starting transactions...')
     results.transactions = await backfillTransactions()
     console.log('[Backfill] Transactions done:', results.transactions.created, 'created,', results.transactions.updated, 'updated,', results.transactions.failed, 'failed')

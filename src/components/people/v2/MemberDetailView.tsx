@@ -200,23 +200,24 @@ export function MemberDetailView({
     const handleCycleSelect = (tag: string, year: string | null) => {
         const params = new URLSearchParams(searchParams.toString())
         
-        if (tag !== 'all') {
-            // Debt Cycle selected: Clear Account filter and custom date range
-            setSelectedAccountId(undefined)
-            setDateMode('all')
-            setDateRangeValue(undefined)
-            setDateRangeFilter(undefined)
-            params.delete('accountId') // Also clear from URL
-            params.delete('dateFrom')
-            params.delete('dateTo')
+        // Clear secondary filters when cycle is explicitly selected
+        params.delete('accountId')
+        params.delete('dateFrom')
+        params.delete('dateTo')
+        params.delete('status')
+        params.delete('type')
+        
+        if (tag === 'all') {
+            params.set('tag', 'all')
+            if (year) params.set('year', year)
+            else params.delete('year')
+        } else {
+            params.set('tag', tag)
+            if (tag.includes('-')) {
+                params.set('year', tag.split('-')[0])
+            }
         }
 
-        params.set('tag', tag)
-        if (year) {
-            params.set('year', year)
-        } else {
-            params.delete('year')
-        }
         startTransition(() => {
             router.push(`?${params.toString()}`, { scroll: false })
         })
@@ -231,6 +232,9 @@ export function MemberDetailView({
             params.set('tag', 'all')
             params.set('year', year)
         }
+        params.delete('dateFrom')
+        params.delete('dateTo')
+        
         startTransition(() => {
             router.push(`?${params.toString()}`, { scroll: false })
         })
@@ -296,7 +300,15 @@ export function MemberDetailView({
     }
 
     const handleClearDateRange = () => {
-        updateDateRangeParams('', '')
+        const params = new URLSearchParams(searchParams.toString())
+        params.set('tag', 'all')
+        params.delete('year')
+        params.delete('dateFrom')
+        params.delete('dateTo')
+        
+        startTransition(() => {
+            router.push(`?${params.toString()}`, { scroll: false })
+        })
     }
 
     const handlePickerDateChange = (nextDate: Date) => {

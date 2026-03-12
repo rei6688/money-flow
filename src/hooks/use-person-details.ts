@@ -160,7 +160,6 @@ export function usePersonDetails({
                 }
             }
 
-            // Calculate Stats for this cycle
             const stats = txns.reduce(
                 (acc, txn) => {
                     const amount = Math.abs(Number(txn.amount) || 0)
@@ -186,8 +185,12 @@ export function usePersonDetails({
                     }
 
                     if (isOutboundDebt) {
-                        const effectiveFinal = txn.final_price !== null && txn.final_price !== undefined ? Math.abs(Number(txn.final_price)) : amount
-                        acc.lend += effectiveFinal // This is NET LEND
+                        // FIX: Ensure lend is ALWAYS Net Lend (Original - Isolate-able Cashback)
+                        const effectiveNetLend = (txn.final_price !== null && txn.final_price !== undefined)
+                            ? Math.abs(Number(txn.final_price))
+                            : (amount - cashback)
+                        
+                        acc.lend += effectiveNetLend
                         acc.originalLend += amount
                         if (isRollover) acc.receiveRollover += amount
                     }
@@ -217,7 +220,7 @@ export function usePersonDetails({
             const serverRemainingPrincipal = serverStatus && Number.isFinite(Number(serverStatus.remainingPrincipal))
                 ? Number(serverStatus.remainingPrincipal)
                 : null
-            const remains = serverRemainingPrincipal ?? (stats.lend - stats.repay)
+            const remains = stats.lend - stats.repay
 
             const isSettled = serverStatus ? serverStatus.status === 'settled' : (txns.length === 0 ? false : Math.abs(remains) < 100)
 
