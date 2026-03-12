@@ -84,7 +84,7 @@ export function PeopleHeader({
     const remainsPercent = Math.min(100, Math.round((Math.abs(stats.remains) / totalProgress) * 100))
 
     // Current Cycle Summary calculations
-    const currentCycleNetLend = activeCycle ? activeCycle.stats.originalLend - activeCycle.stats.cashback : 0
+    const currentCycleNetLend = activeCycle ? activeCycle.stats.lend : 0
     const currentCycleDisplayValueRaw = activeCycle ? activeCycle.remains : 0
     const currentCycleDisplayValue = isNearZero(currentCycleDisplayValueRaw) ? 0 : currentCycleDisplayValueRaw
     const currentCycleProgress = activeCycle ? Math.max(
@@ -148,128 +148,146 @@ export function PeopleHeader({
                         </div>
                     </div>
 
-                    {/* 2. Center: Current Cycle Section */}
-                    {activeCycle && selectedYear !== null && (
-                        <div className="flex items-center gap-3 px-4 py-2 border border-slate-200 rounded-xl bg-slate-50/30">
-                            <StatsPopover
-                                originalLend={activeCycle.stats.originalLend}
-                                cashback={activeCycle.stats.cashback}
-                                netLend={currentCycleNetLend}
-                                repay={activeCycle.stats.repay}
-                                remains={activeCycle.remains}
-                                paidRollover={activeCycle.stats.paidRollover}
-                                receiveRollover={activeCycle.stats.receiveRollover}
-                            >
-                                <button className="flex items-center justify-center h-7 w-7 rounded-md border border-slate-200 text-amber-600 bg-white hover:bg-amber-50 transition-colors shadow-sm" title="Current cycle details">
-                                    <Calendar className="h-3.5 w-3.5" />
-                                </button>
-                            </StatsPopover>
-
-                            <div className="flex flex-col gap-1.5 min-w-[260px]">
-                                <div className="flex items-center gap-2">
-                                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Current Cycle</span>
+                    {/* 2. Integrated Cycle Summary & Balance Breakdown */}
+                    <div className="flex items-center gap-4 px-4 py-2 border border-slate-200 rounded-xl bg-slate-50/30 flex-1 min-w-0 group hover:border-indigo-300 hover:shadow-xl hover:shadow-indigo-500/5 transition-all duration-300">
+                        {/* Cycle Meta (Tag & History) */}
+                        <div className="flex flex-col gap-1 pr-4 border-r border-slate-200 shrink-0">
+                            <div className="flex items-center gap-2">
+                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Cycle</span>
+                                {activeCycle && (
                                     <span className={cn(
                                         "text-[9px] uppercase font-bold px-2 py-0.5 rounded-full",
-                                        isCycleSettled
-                                            ? "bg-emerald-100 text-emerald-700"
-                                            : "bg-amber-100 text-amber-700"
+                                        isCycleSettled ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"
                                     )}>
                                         {formatCycleLabel(activeCycle.tag)}
                                     </span>
-                                    {activeCycle.tag !== new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit' }).format(new Date()) && (
-                                        <div className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 text-[8px] font-black text-slate-500 uppercase tracking-tighter animate-in fade-in zoom-in duration-300">
-                                            <History className="h-2 w-2" />
-                                            Past
-                                        </div>
-                                    )}
-                                    <span className="text-sm font-bold text-slate-900 ml-auto tabular-nums">
-                                        {numberFormatter.format(currentCycleDisplayValue)}
-                                    </span>
-                                </div>
-                                {isCycleSettled ? (
-                                    <div className="h-3.5 w-full rounded-full border border-emerald-200 bg-emerald-50 text-[10px] font-bold text-emerald-700 flex items-center justify-center uppercase tracking-wide">
-                                        Settled
-                                    </div>
-                                ) : (
-                                    <div className="relative flex h-3.5 w-full overflow-hidden rounded-full bg-slate-100 shadow-inner border border-slate-200/50">
-                                        <div
-                                            className="bg-emerald-500 flex items-center justify-center text-[9px] font-bold text-white shadow-sm"
-                                            style={{ width: `${currentCycleRepayPercent}%` }}
-                                        >
-                                            {currentCycleRepayPercent > 15 && `${currentCycleRepayPercent}%`}
-                                        </div>
-                                        <div
-                                            className="bg-rose-500 flex items-center justify-center text-[9px] font-bold text-white shadow-sm"
-                                            style={{ width: `${currentCycleRemainsPercent}%` }}
-                                        >
-                                            {currentCycleRemainsPercent > 15 && `${currentCycleRemainsPercent}%`}
-                                        </div>
-                                    </div>
                                 )}
                             </div>
+                            {activeCycle && activeCycle.tag !== new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit' }).format(new Date()) && (
+                                <div className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 text-[8px] font-black text-slate-500 uppercase tracking-tighter w-fit">
+                                    <History className="h-2 w-2" />
+                                    Past
+                                </div>
+                            )}
                         </div>
-                    )}
 
-                    {/* 3. Current Balance Section */}
-                    <div className="flex items-center gap-3 px-4 py-2 border border-slate-200 rounded-xl bg-slate-50/30 min-w-[280px] group transition-all duration-300 hover:border-emerald-300 hover:shadow-md hover:shadow-emerald-500/5">
-                        <StatsPopover
-                            originalLend={stats.originalLend}
-                            cashback={stats.cashback}
-                            netLend={stats.netLend}
-                            repay={stats.repay}
-                            remains={stats.remains}
-                            paidRollover={stats.paidRollover}
-                            receiveRollover={stats.receiveRollover}
-                            tabs={activeCycle ? [
-                                {
-                                    key: 'current',
-                                    label: 'Current',
-                                    stats: {
-                                        originalLend: activeCycle.stats.originalLend,
-                                        cashback: activeCycle.stats.cashback,
-                                        netLend: currentCycleNetLend,
-                                        repay: activeCycle.stats.repay,
-                                        remains: activeCycle.remains,
-                                        paidRollover: activeCycle.stats.paidRollover,
-                                        receiveRollover: activeCycle.stats.receiveRollover,
-                                    },
-                                },
-                                {
-                                    key: 'year',
-                                    label: 'Entire Year',
-                                    stats: {
-                                        originalLend: stats.originalLend,
-                                        cashback: stats.cashback,
-                                        netLend: stats.netLend,
-                                        repay: stats.repay,
-                                        remains: stats.remains,
-                                        paidRollover: stats.paidRollover,
-                                        receiveRollover: stats.receiveRollover,
-                                    },
-                                },
-                            ] : undefined}
-                        >
-                            <button className="flex items-center justify-center h-7 w-7 rounded-md border border-slate-200 text-emerald-600 bg-white hover:bg-emerald-50 transition-colors shadow-sm group-hover:scale-110 group-hover:bg-emerald-50 duration-300" title="Balance for entire selected year">
-                                <TrendingUp className="h-3.5 w-3.5 animate-pulse" />
-                            </button>
-                        </StatsPopover>
-                        <div className="flex flex-col gap-1.5 flex-1">
-                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider whitespace-nowrap group-hover:text-emerald-500 transition-colors">Current Balance</span>
-                            <div className="flex items-center justify-between">
-                                <span className="text-[10px] font-bold text-slate-500 uppercase">Status</span>
+                        {/* Progress Indicator */}
+                        <div className="flex flex-col gap-1.5 min-w-[120px] max-w-[200px] shrink-0">
+                            <div className="flex justify-between items-center px-0.5">
+                                <span className="text-[9px] font-black text-slate-400 uppercase">Progress</span>
+                                <span className="text-[10px] font-black tabular-nums text-slate-600">
+                                    {isCycleSettled ? '100%' : `${currentCycleRepayPercent}%`}
+                                </span>
+                            </div>
+                            {isCycleSettled ? (
+                                <div className="h-3 w-full rounded-full border border-emerald-200 bg-emerald-50 text-[8px] font-black text-emerald-700 flex items-center justify-center uppercase tracking-wide">
+                                    Settled
+                                </div>
+                            ) : (
+                                <div className="relative flex h-3 w-full overflow-hidden rounded-full bg-slate-200/50 shadow-inner border border-slate-200/50">
+                                    <div
+                                        className="bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.3)] transition-all duration-500"
+                                        style={{ width: `${currentCycleRepayPercent}%` }}
+                                    />
+                                    <div
+                                        className="bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.3)] transition-all duration-500"
+                                        style={{ width: `${currentCycleRemainsPercent}%` }}
+                                    />
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Stats Grid */}
+                        <div className="grid grid-cols-4 gap-x-6 gap-y-0.5 px-6 border-r border-slate-200">
+                            <div className="flex flex-col">
+                                <span className="text-[8px] font-black text-slate-400 uppercase tracking-wider mb-0.5">Orig. Spend</span>
+                                <span className="text-[12px] font-bold text-slate-700 tabular-nums">
+                                    {numberFormatter.format(isSpecificCycleView && activeCycle ? activeCycle.stats.originalLend : stats.originalLend)}
+                                </span>
+                            </div>
+                            <div className="flex flex-col">
+                                <span className="text-[8px] font-black text-slate-400 uppercase tracking-wider mb-0.5">Cashback</span>
+                                <span className="text-[12px] font-bold text-amber-600 tabular-nums">
+                                    -{numberFormatter.format(isSpecificCycleView && activeCycle ? activeCycle.stats.cashback : stats.cashback)}
+                                </span>
+                            </div>
+                            <div className="flex flex-col">
+                                <span className="text-[8px] font-black text-slate-400 uppercase tracking-wider mb-0.5">Net Lend</span>
+                                <span className="text-[12px] font-bold text-blue-600 tabular-nums">
+                                    {numberFormatter.format(isSpecificCycleView && activeCycle ? activeCycle.stats.lend : stats.netLend)}
+                                </span>
+                            </div>
+                            <div className="flex flex-col">
+                                <span className="text-[8px] font-black text-slate-400 uppercase tracking-wider mb-0.5">Total Repay</span>
+                                <span className="text-[12px] font-bold text-emerald-600 tabular-nums">
+                                    -{numberFormatter.format(isSpecificCycleView && activeCycle ? activeCycle.stats.repay : stats.repay)}
+                                </span>
+                            </div>
+                        </div>
+
+                        {/* REMAINS Card */}
+                        <div className="flex items-center gap-4 pl-2 shrink-0">
+                            <div className="flex flex-col">
+                                <span className="text-[9px] font-black text-slate-400 uppercase tracking-[0.2em] mb-1">REMAINS</span>
                                 {displayedBalance === 0 ? (
-                                    <span className="text-xs font-bold uppercase px-2 py-0.5 rounded bg-emerald-100 text-emerald-700">Settled</span>
+                                    <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded bg-emerald-100 text-emerald-700 border border-emerald-200">Settled</span>
                                 ) : (
-                                    <span className="text-xl font-bold tabular-nums ml-auto text-emerald-600 drop-shadow-[0_1px_1px_rgba(16,185,129,0.1)]">
+                                    <span className="text-2xl font-black tabular-nums text-rose-600 leading-none drop-shadow-sm group-hover:scale-105 transition-transform">
                                         {numberFormatter.format(displayedBalance)}
                                     </span>
                                 )}
                             </div>
+
+                            <StatsPopover
+                                originalLend={stats.originalLend}
+                                cashback={stats.cashback}
+                                netLend={stats.netLend}
+                                repay={stats.repay}
+                                remains={stats.remains}
+                                paidRollover={stats.paidRollover}
+                                receiveRollover={stats.receiveRollover}
+                                tabs={activeCycle ? [
+                                    {
+                                        key: 'current',
+                                        label: 'Current Cycle',
+                                        stats: {
+                                            originalLend: activeCycle.stats.originalLend,
+                                            cashback: activeCycle.stats.cashback,
+                                            netLend: currentCycleNetLend,
+                                            repay: activeCycle.stats.repay,
+                                            remains: activeCycle.remains,
+                                            paidRollover: activeCycle.stats.paidRollover,
+                                            receiveRollover: activeCycle.stats.receiveRollover,
+                                        },
+                                    },
+                                    {
+                                        key: 'total',
+                                        label: selectedYear ? `Year ${selectedYear}` : 'All Time',
+                                        stats: {
+                                            originalLend: stats.originalLend,
+                                            cashback: stats.cashback,
+                                            netLend: stats.netLend,
+                                            repay: stats.repay,
+                                            remains: stats.remains,
+                                            paidRollover: stats.paidRollover,
+                                            receiveRollover: stats.receiveRollover,
+                                        },
+                                    }
+                                ] : undefined}
+                            >
+                                <button className="h-8 w-8 rounded-lg border border-slate-200 text-slate-400 bg-white hover:bg-indigo-50 hover:text-indigo-600 transition-all shadow-sm flex items-center justify-center">
+                                    <TrendingUp className="h-4 w-4" />
+                                </button>
+                            </StatsPopover>
                         </div>
 
-                        {cashbackStatus && selectedYear !== null && (
-                            <div className="px-4 py-2 border border-slate-200 rounded-xl bg-slate-50/30 min-w-[300px]">
-                                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Cashback Performance</div>
+                        {/* Reward Progress Integration */}
+                        <div className="pl-6 border-l border-slate-200 hidden lg:flex flex-col justify-center min-w-[150px]">
+                            <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1.5 flex items-center gap-1.5">
+                                <div className="h-1 w-1 rounded-full bg-amber-400 animate-pulse" />
+                                Reward Progress
+                            </span>
+                            {cashbackStatus ? (
                                 <CashbackStatusDisplay
                                     earned={cashbackStatus.earned}
                                     cap={cashbackStatus.cap}
@@ -279,8 +297,15 @@ export function PeopleHeader({
                                     remaining={cashbackStatus.remaining}
                                     variant="header"
                                 />
-                            </div>
-                        )}
+                            ) : (
+                                <div className="flex flex-col gap-1">
+                                    <div className="h-1.5 w-full bg-slate-200 rounded-full overflow-hidden">
+                                        <div className="h-full bg-slate-300 w-1/3 opacity-20" />
+                                    </div>
+                                    <span className="text-[9px] font-medium text-slate-400 italic">Select card to view rewards</span>
+                                </div>
+                            )}
+                        </div>
                     </div>
 
                 </div>

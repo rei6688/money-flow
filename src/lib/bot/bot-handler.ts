@@ -331,7 +331,7 @@ export async function handleBotMessage(params: {
 
       try {
         const createdBy = await resolveCreatedBy(supabase, link.profile_id);
-        await createBotTransactions(supabase, {
+        await createBotTransactions({
           ...draft,
           created_by: createdBy,
         });

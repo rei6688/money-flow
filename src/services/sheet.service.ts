@@ -1,7 +1,8 @@
 'use server'
 
-import { createClient } from '@/lib/supabase/server'
+import { toPocketBaseId, pocketbaseGetById, pocketbaseList, pocketbaseCreate, pocketbaseUpdate } from './pocketbase/server'
 import { yyyyMMToLegacyMMMYY } from '@/lib/month-tag'
+import { Account, Person } from '@/types/moneyflow.types'
 
 type SheetSyncTransaction = {
   id: string
@@ -83,23 +84,14 @@ function extractSheetId(sheetUrl: string | null | undefined): string | null {
 }
 
 async function getProfileSheetLink(personId: string): Promise<string | null> {
-  const supabase = createClient()
-  const { data: profile, error } = await supabase
-    .from('people')
-    .select('id, sheet_link')
-    .eq('id', personId)
-    .maybeSingle()
+  const pbId = toPocketBaseId(personId, 'people')
+  const profile = await pocketbaseGetById<Person>('people', pbId)
 
-  if (error) {
-    console.error('Failed to fetch profile for sheet sync:', error)
-  }
-
-  const profileRow = profile as { id?: string; sheet_link?: string | null } | null
-  if (profileRow) {
-    const sheetLink = profileRow.sheet_link?.trim() ?? null
+  if (profile) {
+    const sheetLink = profile.sheet_link?.trim() ?? null
     console.log('[Sheet] Profile lookup result', {
       lookupId: personId,
-      profileId: profileRow.id ?? null,
+      pbId,
       sheet_link: sheetLink,
     })
     if (isValidWebhook(sheetLink)) {
@@ -107,65 +99,41 @@ async function getProfileSheetLink(personId: string): Promise<string | null> {
     }
   }
 
-  const { data: accountRow, error: accountError } = await supabase
-    .from('accounts')
-    .select('owner_id, people!accounts_owner_id_fkey (id, sheet_link)')
-    .eq('id', personId)
-    .eq('type', 'debt')
-    .maybeSingle()
-
-  if (accountError) {
-    console.error('Failed to fetch account for sheet sync:', accountError)
-  }
-
-  const ownerProfile = (accountRow as any)?.people as { id?: string; sheet_link?: string | null } | null
-  const ownerProfileId = ((accountRow as any)?.owner_id as string | null) ?? ownerProfile?.id ?? null
-  if (ownerProfile) {
-    const sheetLink = ownerProfile.sheet_link?.trim() ?? null
-    console.log('[Sheet] Account-owner lookup result', {
-      lookupId: personId,
-      profileId: ownerProfileId,
-      sheet_link: sheetLink,
-    })
-    if (isValidWebhook(sheetLink)) {
-      return sheetLink
+  // Fallback: Check if it's a debt account (which also has owner_id)
+  // Actually, people should be enough.
+  const account = await pocketbaseGetById<Account>('accounts', pbId)
+  if (account && account.owner_id) {
+    const owner = await pocketbaseGetById<Person>('people', account.owner_id as string)
+    if (owner?.sheet_link) {
+      const sheetLink = owner.sheet_link?.trim()
+      if (isValidWebhook(sheetLink)) return sheetLink
     }
   }
 
-  console.warn('[Sheet] No valid sheet link configured', {
-    lookupId: personId,
-    profileId: ownerProfileId ?? profileRow?.id ?? null,
-  })
+  console.warn('[Sheet] No valid sheet link configured for', personId)
   return null
 }
 
 async function getProfileSheetInfo(personId: string): Promise<{ sheetUrl: string | null; sheetId: string | null }> {
-  const supabase = createClient()
-  const attempt = await supabase
-    .from('people')
-    .select('id, google_sheet_url')
-    .eq('id', personId)
-    .maybeSingle()
+  const pbId = toPocketBaseId(personId, 'people')
+  const profile = await pocketbaseGetById<Person>('people', pbId)
 
-  if (attempt.error?.code === '42703' || attempt.error?.code === 'PGRST204') {
-    return { sheetUrl: null, sheetId: null }
-  }
-
-  if (!attempt.error && (attempt.data as any)?.google_sheet_url) {
-    const sheetUrl = (attempt.data as any).google_sheet_url?.trim() ?? null
+  if (profile?.google_sheet_url) {
+    const sheetUrl = profile.google_sheet_url.trim()
     return { sheetUrl, sheetId: extractSheetId(sheetUrl) }
   }
 
-  const { data: accountRow } = await supabase
-    .from('accounts')
-    .select('owner_id, people!accounts_owner_id_fkey (id, google_sheet_url)')
-    .eq('id', personId)
-    .eq('type', 'debt')
-    .maybeSingle()
+  // Fallback to account owner
+  const account = await pocketbaseGetById<Account>('accounts', pbId)
+  if (account?.owner_id) {
+    const owner = await pocketbaseGetById<Person>('people', account.owner_id as string)
+    if (owner?.google_sheet_url) {
+      const sheetUrl = owner.google_sheet_url.trim()
+      return { sheetUrl, sheetId: extractSheetId(sheetUrl) }
+    }
+  }
 
-  const ownerProfile = (accountRow as any)?.people as { id?: string; google_sheet_url?: string | null } | null
-  const sheetUrl = ownerProfile?.google_sheet_url?.trim() ?? null
-  return { sheetUrl, sheetId: extractSheetId(sheetUrl) }
+  return { sheetUrl: null, sheetId: null }
 }
 
 type SheetPostResult = {
@@ -254,36 +222,24 @@ export async function syncTransactionToSheet(
     const sheetLink = await getProfileSheetLink(personId)
     if (!sheetLink) return
 
-    // Fetch person's sheet preferences (replaces hardcoded ANH_SCRIPT)
-    const supabaseTxn = await createClient()
-    const { data: personData, error: personError } = await supabaseTxn
-      .from('people')
-      .select('sheet_show_bank_account, sheet_bank_info, sheet_linked_bank_id, sheet_show_qr_image, sheet_full_img')
-      .eq('id', personId)
-      .single()
+    const pbPersonId = toPocketBaseId(personId, 'people')
+    const personData = await pocketbaseGetById<Person>('people', pbPersonId)
+    if (!personData) return
 
-    if (personError) {
-      console.error('[syncTransactionToSheet] Error fetching person preferences:', personError)
-    }
-
-    const showBankAccount = (personData as any)?.sheet_show_bank_account ?? false
-    const manualBankInfo = (personData as any)?.sheet_bank_info ?? ''
-    const linkedBankId = (personData as any)?.sheet_linked_bank_id
-    const showQrImage = (personData as any)?.sheet_show_qr_image ?? false
-    const qrImageUrl = (personData as any)?.sheet_full_img ?? null
+    const showBankAccount = personData.sheet_show_bank_account ?? false
+    const manualBankInfo = personData.sheet_bank_info ?? ''
+    const linkedBankId = personData.sheet_linked_bank_id
+    const showQrImage = personData.sheet_show_qr_image ?? false
+    const qrImageUrl = personData.sheet_full_img ?? null
 
     let resolvedBankInfo = manualBankInfo
     if (showBankAccount && linkedBankId) {
-      const { data: acc } = await supabaseTxn
-        .from('accounts')
-        .select('name, receiver_name, account_number')
-        .eq('id', linkedBankId)
-        .single()
+      const acc = await pocketbaseGetById<Account>('accounts', linkedBankId)
       if (acc) {
         const parts = [
-          (acc as any).name,
-          (acc as any).account_number,
-          (acc as any).receiver_name
+          acc.name,
+          acc.account_number,
+          acc.receiver_name
         ].filter(Boolean)
         resolvedBankInfo = parts.join(' ') || manualBankInfo
       }
@@ -359,82 +315,54 @@ export async function syncAllTransactions(personId: string) {
       return { success: false, message: 'No valid sheet link configured' }
     }
 
-    const supabase = createClient()
-
-    // Query transactions table directly - legacy line items removed
-    const { data, error } = await supabase
-      .from('transactions')
-      .select(`
-        id,
-        occurred_at,
-        note,
-        status,
-        tag,
-        type,
-        amount,
-        cashback_share_percent,
-        cashback_share_fixed,
-        shop_id,
-        shops ( name ),
-        account_id,
-        accounts!account_id ( name ),
-        categories ( name )
-      `)
-      .eq('person_id', personId)
-      .neq('status', 'void')
-      .order('occurred_at', { ascending: true })
+    const pbPersonId = toPocketBaseId(personId, 'people')
+    const data = await pocketbaseList('transactions', {
+      filter: `person_id = "${pbPersonId}" && status != "void"`,
+      expand: 'shop_id,account_id,category_id',
+      sort: 'occurred_at'
+    })
 
     // Fetch person's sheet preferences for bank info & QR
-    const { data: personData } = await supabase
-      .from('people')
-      .select('sheet_show_bank_account, sheet_bank_info, sheet_linked_bank_id, sheet_show_qr_image, sheet_full_img')
-      .eq('id', personId)
-      .single()
+    const personData = await pocketbaseGetById<Person>('people', pbPersonId)
 
-    const showBankAccount = (personData as any)?.sheet_show_bank_account ?? false
-    const manualBankInfo = (personData as any)?.sheet_bank_info ?? ''
-    const linkedBankId = (personData as any)?.sheet_linked_bank_id
-    const showQrImage = (personData as any)?.sheet_show_qr_image ?? false
-    const qrImageUrl = (personData as any)?.sheet_full_img ?? null
+    const showBankAccount = personData?.sheet_show_bank_account ?? false
+    const manualBankInfo = personData?.sheet_bank_info ?? ''
+    const linkedBankId = personData?.sheet_linked_bank_id
+    const showQrImage = personData?.sheet_show_qr_image ?? false
+    const qrImageUrl = personData?.sheet_full_img ?? null
 
     let resolvedBankInfo = manualBankInfo
     if (showBankAccount && linkedBankId) {
-      const { data: acc } = await supabase
-        .from('accounts')
-        .select('name, receiver_name, account_number')
-        .eq('id', linkedBankId)
-        .single()
+      const acc = await pocketbaseGetById<Account>('accounts', linkedBankId)
       if (acc) {
         const parts = [
-          (acc as any).name,
-          (acc as any).account_number,
-          (acc as any).receiver_name
+          acc.name,
+          acc.account_number,
+          acc.receiver_name
         ].filter(Boolean)
         resolvedBankInfo = parts.join(' ') || manualBankInfo
       }
     }
 
-    if (error) {
-      console.error('Failed to load transactions for sync:', error)
-      return { success: false, message: 'Failed to load transactions' }
-    }
-
-    const rows = (data ?? []) as unknown as {
-      id: string
-      occurred_at: string
-      note: string | null
-      status: string
-      tag: string | null
-      type: string | null
-      amount: number
-      cashback_share_percent?: number | null
-      cashback_share_fixed?: number | null
-      shop_id: string | null
-      shops: { name: string | null } | null
-      account_id: string | null
-      accounts: { name: string | null } | null
-      categories: { name: string | null } | null
-    }[]
+    const rows = (data.items || []).map(txn => {
+      const expanded = (txn as any).expand || {}
+      return {
+        id: (txn as any).id,
+        occurred_at: (txn as any).occurred_at || (txn as any).date,
+        note: (txn as any).note || (txn as any).description,
+        status: (txn as any).status,
+        tag: (txn as any).tag || (txn as any).debt_cycle_tag,
+        type: (txn as any).type,
+        amount: (txn as any).amount,
+        cashback_share_percent: (txn as any).cashback_share_percent,
+        cashback_share_fixed: (txn as any).cashback_share_fixed,
+        shop_id: (txn as any).shop_id,
+        shops: expanded.shop_id ? { name: expanded.shop_id.name } : null,
+        account_id: (txn as any).account_id,
+        accounts: expanded.account_id ? { name: expanded.account_id.name } : null,
+        categories: expanded.category_id ? { name: expanded.category_id.name } : null,
+      }
+    })
 
     const eligibleRows = rows.filter(txn => !shouldExcludeFromSheet(txn.note))
 
@@ -576,48 +504,31 @@ export async function syncCycleTransactions(
   sheetId?: string | null
 ) {
   try {
-    const sheetLink = await getProfileSheetLink(personId)
-    if (!sheetLink) {
-      return { success: false, message: 'No valid sheet link configured' }
-    }
-
-    const supabase = createClient()
+    const pbId = toPocketBaseId(personId, 'people')
     const legacyTag = yyyyMMToLegacyMMMYY(cycleTag)
     const tags = legacyTag ? [cycleTag, legacyTag] : [cycleTag]
 
-    const { data, error } = await supabase
-      .from('transactions')
-      .select(`
-        id,
-        occurred_at,
-        note,
-        status,
-        tag,
-        type,
-        amount,
-        cashback_share_percent,
-        cashback_share_fixed,
-        shop_id,
-        shops ( name ),
-        account_id,
-        accounts!account_id ( name ),
-        categories ( name )
-      `)
-      .eq('person_id', personId)
-      .in('tag', tags)
-      .neq('status', 'void')
-      .order('occurred_at', { ascending: true })
+    // Construct filter for tags
+    const tagFilter = tags.map(t => `tag = "${t}"`).join(' || ')
+    const data = await pocketbaseList('transactions', {
+      filter: `person_id = "${pbId}" && status != "void" && (${tagFilter})`,
+      expand: 'shop_id,account_id,category_id',
+      sort: 'occurred_at'
+    })
 
-    if (error) {
-      console.error('Failed to load cycle transactions:', error)
+    if (!data) {
+      console.error('Failed to load cycle transactions from PB')
       return { success: false, message: 'Failed to load transactions' }
     }
 
-    const rows = ((data ?? []) as any[])
-      .filter(txn => !shouldExcludeFromSheet(txn.note))
+    const sheetLink = await getProfileSheetLink(personId)
+    if (!sheetLink) return { success: false, message: 'No valid sheet link' }
+
+    const rows = (data.items as any[])
+      .filter(txn => !shouldExcludeFromSheet(txn.note || txn.description))
       .map(txn => {
-        const shopData = txn.shops as any
-        let shopName = Array.isArray(shopData) ? shopData[0]?.name : shopData?.name
+        const expanded = txn.expand || {}
+        let shopName = expanded.shop_id?.name
 
         if (!shopName) {
           const categoryName = (txn.categories as any)?.name
@@ -638,36 +549,23 @@ export async function syncCycleTransactions(
 
     console.log(`[Sheet Sync] Sending ${rows.length} mapped transactions to ${personId} for cycle ${cycleTag}`)
 
-    // Fetch person's sheet preferences (replaces hardcoded ANH_SCRIPT)
-    const supabaseCycle = await createClient()
-    const { data: personData, error: personError } = await supabaseCycle
-      .from('people')
-      .select('sheet_show_bank_account, sheet_bank_info, sheet_linked_bank_id, sheet_show_qr_image, sheet_full_img')
-      .eq('id', personId)
-      .single()
+    // Fetch person's sheet preferences
+    const personData: any = await pocketbaseGetById('people', pbId)
 
-    if (personError) {
-      console.error('[syncCycleTransactions] Error fetching person preferences:', personError)
-    }
-
-    const showBankAccount = (personData as any)?.sheet_show_bank_account ?? false
-    const manualBankInfo = (personData as any)?.sheet_bank_info ?? ''
-    const linkedBankId = (personData as any)?.sheet_linked_bank_id
-    const showQrImage = (personData as any)?.sheet_show_qr_image ?? false
-    const qrImageUrl = (personData as any)?.sheet_full_img ?? null
+    const showBankAccount = personData?.sheet_show_bank_account ?? false
+    const manualBankInfo = personData?.sheet_bank_info ?? ''
+    const linkedBankId = personData?.sheet_linked_bank_id
+    const showQrImage = personData?.sheet_show_qr_image ?? false
+    const qrImageUrl = personData?.sheet_full_img ?? null
 
     let resolvedBankInfo = manualBankInfo
     if (showBankAccount && linkedBankId) {
-      const { data: acc } = await supabaseCycle
-        .from('accounts')
-        .select('name, receiver_name, account_number')
-        .eq('id', linkedBankId)
-        .single()
+      const acc = await pocketbaseGetById<Account>('accounts', linkedBankId)
       if (acc) {
         const parts = [
-          (acc as any).name,
-          (acc as any).account_number,
-          (acc as any).receiver_name
+          acc.name,
+          acc.account_number,
+          acc.receiver_name
         ].filter(Boolean)
         resolvedBankInfo = parts.join(' ') || manualBankInfo
       }
@@ -729,14 +627,12 @@ export async function autoSyncCycleSheetIfNeeded(personId: string, cycleTag: str
       return
     }
 
-    // 2. Check if cycle sheet already exists
-    const supabase = createClient()
-    const { data: existing } = await (supabase as any)
-      .from('person_cycle_sheets')
-      .select('id, sheet_id, sheet_url')
-      .eq('person_id', personId)
-      .eq('cycle_tag', cycleTag)
-      .maybeSingle()
+    // 2. Check if cycle sheet already exists in PB
+    const pbId = toPocketBaseId(personId, 'people')
+    const existingList = await pocketbaseList('person_cycle_sheets', {
+      filter: `person_id = "${pbId}" && cycle_tag = "${cycleTag}"`
+    })
+    const existing = existingList.items[0] as any
 
     if (existing?.sheet_id || existing?.sheet_url) {
       console.log(`[AutoSync] Skipping ${personId}: Cycle sheet already exists`)
@@ -759,23 +655,18 @@ export async function autoSyncCycleSheetIfNeeded(personId: string, cycleTag: str
       return
     }
 
-    // 5. Update database
+    // 5. Update PB
     const payload = {
-      person_id: personId,
+      person_id: pbId,
       cycle_tag: cycleTag,
       sheet_id: createResult.sheetId,
       sheet_url: createResult.sheetUrl,
     }
 
     if (existing?.id) {
-      await (supabase as any)
-        .from('person_cycle_sheets')
-        .update(payload)
-        .eq('id', existing.id)
+        await pocketbaseUpdate('person_cycle_sheets', existing.id, payload)
     } else {
-      await (supabase as any)
-        .from('person_cycle_sheets')
-        .insert(payload)
+        await pocketbaseCreate('person_cycle_sheets', payload)
     }
 
     console.log(`[AutoSync] Successfully auto-synced ${personId} / ${cycleTag}`)

@@ -47,7 +47,7 @@ export function MemberDetailLayout({
 
           {/* Avatar */}
           {personAvatar ? (
-            <AvatarWrapper fallback={personName.charAt(0).toUpperCase()} src={personAvatar} className="h-20 w-20 rounded-full border-4 border-white shadow-lg" />
+            <AvatarWrapper fallback={personName.charAt(0).toUpperCase()} src={personAvatar} className="h-20 w-20 rounded-none border-4 border-white shadow-lg" />
           ) : (
             <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-blue-50 text-lg font-bold text-blue-600">
               {personName.charAt(0).toUpperCase()}

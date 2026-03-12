@@ -1,6 +1,6 @@
 'use server'
 
-import { createClient } from '@/lib/supabase/server'
+import { pocketbaseGetById, pocketbaseCreate, toPocketBaseId } from '@/services/pocketbase/server'
 import { SYSTEM_ACCOUNTS } from '@/lib/constants'
 import { revalidatePath } from 'next/cache'
 
@@ -13,65 +13,49 @@ export async function confirmRefundMoneyReceived(
     targetAccountId: string
 ) {
     try {
-        const supabase: any = await createClient()
+        const pbTxnId = toPocketBaseId(transactionId, 'transactions');
+        const pbTargetId = toPocketBaseId(targetAccountId, 'accounts');
+        const pbPendingRefundsId = toPocketBaseId(SYSTEM_ACCOUNTS.PENDING_REFUNDS, 'accounts');
 
-        // 1. Get the original transaction to find the refund amount
-        const { data: originalTx, error: txError } = await supabase
-            .from('transactions')
-            .select('*')
-            .eq('id', transactionId)
-            .single()
+        // 1. Get the original transaction
+        const originalTx = await pocketbaseGetById<any>('transactions', pbTxnId);
 
-        if (txError || !originalTx) {
-            throw new Error('Transaction not found')
+        if (!originalTx) {
+            throw new Error('Transaction not found');
         }
 
         // Verify this is a refund to Pending Refunds
-        // In flat schema: Transaction with target_account_id = PENDING_REFUNDS
-        if (originalTx.target_account_id !== SYSTEM_ACCOUNTS.PENDING_REFUNDS) {
-            // Fallback/Legacy check: if it was a legacy txn, we might be stuck.
-            // But for now strict enforcement preferred.
-            throw new Error('Transaction is not a valid pending refund (Target != Pending Refunds)')
+        if (originalTx.target_account_id !== pbPendingRefundsId) {
+            throw new Error('Transaction is not a valid pending refund (Target != Pending Refunds)');
         }
 
-        const refundAmount = Math.abs(originalTx.amount)
+        const refundAmount = Math.abs(originalTx.amount);
 
-        // 2. Get current user
-        const {
-            data: { user },
-        } = await supabase.auth.getUser()
-        const userId = user?.id ?? SYSTEM_ACCOUNTS.DEFAULT_USER_ID
+        // 2. Create new transaction (Transfer: Pending Refunds -> Target Account)
+        const id = toPocketBaseId(crypto.randomUUID(), 'transactions');
+        await pocketbaseCreate('transactions', {
+            id,
+            occurred_at: new Date().toISOString(),
+            date: new Date().toISOString(),
+            note: `Refund Received: ${originalTx.note || 'Pending refund'}`,
+            status: 'posted',
+            tag: 'REFUND_CONFIRMED',
+            type: 'transfer',
+            account_id: pbPendingRefundsId,
+            target_account_id: pbTargetId,
+            amount: -refundAmount, // Standard transfer logic: negative from source
+        });
 
-        // 3. Create new transaction for confirmation (Pending Refunds -> Target Account)
-        // This is a Transfer.
-        const { data: newTx, error: newTxError } = await supabase
-            .from('transactions')
-            .insert({
-                occurred_at: new Date().toISOString(),
-                note: `Refund Received: ${originalTx.note || 'Pending refund'}`,
-                status: 'posted',
-                tag: 'REFUND_CONFIRMED',
-                created_by: userId,
-                type: 'transfer',
-                account_id: SYSTEM_ACCOUNTS.PENDING_REFUNDS,
-                target_account_id: targetAccountId,
-                amount: -refundAmount, // Standard transfer logic: negative from source
-            })
-            .select()
-            .single()
+        // 3. Recalculate balances
+        const { recalculateBalance } = await import('@/services/account.service');
+        await recalculateBalance(SYSTEM_ACCOUNTS.PENDING_REFUNDS);
+        await recalculateBalance(targetAccountId);
 
-        if (newTxError) throw newTxError
-
-        // 5. Recalculate balances
-        const { recalculateBalance } = await import('@/services/account.service')
-        await recalculateBalance(SYSTEM_ACCOUNTS.PENDING_REFUNDS)
-        await recalculateBalance(targetAccountId)
-
-        revalidatePath('/')
-        return { success: true, transactionId: newTx.id }
+        revalidatePath('/');
+        return { success: true, transactionId: id };
     } catch (error: any) {
-        console.error('Error confirming refund:', error)
-        return { success: false, error: error.message }
+        console.error('[DB:PB] confirmRefundMoneyReceived failed:', error);
+        return { success: false, error: error.message };
     }
 }
 

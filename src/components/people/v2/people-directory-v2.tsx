@@ -265,6 +265,7 @@ export function PeopleDirectoryV2({
                 onOpenChange={setIsSlideOpen}
                 person={selectedPerson}
                 subscriptions={subscriptions}
+                accounts={accounts}
             />
 
             <TransactionSlideV2

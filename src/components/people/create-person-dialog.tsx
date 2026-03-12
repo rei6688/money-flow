@@ -4,15 +4,16 @@ import { MouseEvent, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { X } from 'lucide-react'
 import { PersonForm } from './person-form'
-import { Subscription } from '@/types/moneyflow.types'
+import { Subscription, Account } from '@/types/moneyflow.types'
 import { createPersonAction } from '@/actions/people-actions'
 
 type CreatePersonDialogProps = {
   subscriptions: Subscription[]
+  accounts: Account[]
   trigger?: React.ReactNode
 }
 
-export function CreatePersonDialog({ subscriptions, trigger, open: controlledOpen, onOpenChange: setControlledOpen }: CreatePersonDialogProps & { open?: boolean, onOpenChange?: (open: boolean) => void }) {
+export function CreatePersonDialog({ subscriptions, accounts, trigger, open: controlledOpen, onOpenChange: setControlledOpen }: CreatePersonDialogProps & { open?: boolean, onOpenChange?: (open: boolean) => void }) {
   const [internalOpen, setInternalOpen] = useState(false)
   const isControlled = controlledOpen !== undefined
   const open = isControlled ? controlledOpen : internalOpen
@@ -78,6 +79,7 @@ export function CreatePersonDialog({ subscriptions, trigger, open: controlledOpe
             <PersonForm
               mode="create"
               subscriptions={subscriptions}
+              accounts={accounts}
               onCancel={closeDialog}
               onSubmit={async values => {
                 await createPersonAction({

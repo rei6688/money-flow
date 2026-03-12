@@ -1,0 +1,40 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { AccountRow } from '@/types/moneyflow.types';
+
+export function mapPocketBaseAccountRow(record: any): AccountRow {
+  return {
+    id: record.id,
+    name: record.name ?? '',
+    type: record.type ?? 'bank',
+    currency: record.currency ?? 'VND',
+    current_balance: Number(record.current_balance ?? 0),
+    credit_limit: Number(record.credit_limit ?? 0),
+    parent_account_id: record.parent_account_id || null,
+    account_number: record.account_number || null,
+    owner_id: record.owner_id || null,
+    cashback_config: record.cashback_config ?? null,
+    cashback_config_version: Number(record.cashback_config_version ?? 1),
+    secured_by_account_id: record.secured_by_account_id || null,
+    is_active: record.is_active ?? true,
+    image_url: typeof record.image_url === 'string' && record.image_url.startsWith('http') ? record.image_url : null,
+    receiver_name: record.receiver_name || null,
+    total_in: Number(record.total_in ?? 0),
+    total_out: Number(record.total_out ?? 0),
+    annual_fee: Number(record.annual_fee ?? 0),
+    annual_fee_waiver_target: Number(record.annual_fee_waiver_target ?? 0),
+    cb_type: record.cb_type ?? 'none',
+    cb_base_rate: Number(record.cb_base_rate ?? 0),
+    cb_max_budget: Number(record.cb_max_budget ?? 0),
+    cb_is_unlimited: record.cb_is_unlimited ?? false,
+    cb_rules_json: record.cb_rules_json ?? null,
+    cb_min_spend: Number(record.cb_min_spend ?? 0),
+    cb_rules: record.cb_rules ?? null,
+    cb_cycle_type: record.cb_cycle_type ?? 'calendar_month',
+    statement_day: Number(record.statement_day ?? 0),
+    due_date: Number(record.due_date ?? 0),
+    holder_type: record.holder_type ?? null,
+    holder_person_id: record.holder_person_id ?? null,
+    created_at: record.created ?? null,
+    updated_at: record.updated ?? null,
+  } as AccountRow;
+}

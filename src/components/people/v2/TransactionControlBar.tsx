@@ -241,7 +241,8 @@ export function TransactionControlBar({
                                 id: account.id,
                                 name: account.name,
                                 image: account.image_url || undefined,
-                                type: 'account' as const
+                                type: 'account' as const,
+                                badge: (account as any).type || (accounts.find(a => a.id === account.id)?.type) || null
                             }))}
                             value={selectedAccountId}
                             onValueChange={onAccountChange}
@@ -270,7 +271,6 @@ export function TransactionControlBar({
                             }
                             onCycleChange(tag)
                         }}
-                        accountCycleTags={allCycles.map(cycle => cycle.tag)}
                     />
                 </div>
 

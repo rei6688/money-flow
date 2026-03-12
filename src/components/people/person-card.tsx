@@ -417,6 +417,7 @@ function PersonCardComponent({
                     onOpenChange={setShowEditDialog}
                     person={person}
                     subscriptions={subscriptions}
+                    accounts={accounts}
                 />
                 <TransactionSlideV2
                     open={isSlideOpen}

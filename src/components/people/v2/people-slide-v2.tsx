@@ -8,7 +8,7 @@ import {
     SheetTitle,
     SheetDescription
 } from "@/components/ui/sheet";
-import { Person, Subscription } from "@/types/moneyflow.types";
+import { Person, Subscription, Account } from "@/types/moneyflow.types";
 import { PersonForm } from "../person-form";
 import { createPersonAction, updatePersonAction } from "@/actions/people-actions";
 import { useRouter } from "next/navigation";
@@ -20,6 +20,7 @@ interface PeopleSlideV2Props {
     onOpenChange: (open: boolean) => void;
     person?: Person | null;
     subscriptions: Subscription[];
+    accounts: Account[];
     onSuccess?: (result: { success: boolean, profileId?: string, debtAccountId?: string, person?: any }) => void;
 }
 
@@ -28,6 +29,7 @@ export function PeopleSlideV2({
     onOpenChange,
     person,
     subscriptions,
+    accounts,
     onSuccess,
     onBack,
     zIndex = 600,
@@ -92,6 +94,7 @@ export function PeopleSlideV2({
                 image_url: values.image_url,
                 sheet_link: values.sheet_link,
                 google_sheet_url: values.google_sheet_url,
+                sheet_linked_bank_id: (values as any).sheet_linked_bank_id,
                 subscriptionIds: values.subscriptionIds,
                 is_owner: values.is_owner,
                 is_archived: values.is_archived,
@@ -104,6 +107,7 @@ export function PeopleSlideV2({
                 image_url: values.image_url,
                 sheet_link: values.sheet_link,
                 google_sheet_url: values.google_sheet_url,
+                sheet_linked_bank_id: (values as any).sheet_linked_bank_id,
                 subscriptionIds: values.subscriptionIds,
                 is_owner: values.is_owner,
                 is_archived: values.is_archived,
@@ -171,11 +175,13 @@ export function PeopleSlideV2({
                                 image_url: person.image_url ?? '',
                                 sheet_link: person.sheet_link ?? '',
                                 google_sheet_url: person.google_sheet_url ?? '',
+                                sheet_linked_bank_id: person.sheet_linked_bank_id ?? '',
                                 subscriptionIds: person.subscription_ids ?? [],
                                 is_owner: person.is_owner ?? false,
                                 is_archived: person.is_archived ?? false,
                                 is_group: person.is_group ?? false,
                             } : undefined}
+                            accounts={accounts}
                             onSubmit={handleApply}
                             onChange={() => setIsDirty(true)}
                             onCancel={() => handleOpenChange(false)}

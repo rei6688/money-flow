@@ -231,6 +231,10 @@ export function TransactionHeader({
   const [confirmClearOpen, setConfirmClearOpen] = useState(false)
   const [mobileFilterOpen, setMobileFilterOpen] = useState(false)
 
+  const isCreditCard = useMemo(() => {
+    return localAccountId ? accounts.find(a => a.id === localAccountId)?.type === 'credit_card' : false
+  }, [localAccountId, accounts])
+
   // Sync props to local state when they change externally (or after apply)
   useEffect(() => {
     setLocalAccountId(accountId)
@@ -429,15 +433,12 @@ export function TransactionHeader({
         disabledRange={disabledRange}
         availableMonths={availableMonths}
         availableDateRange={availableDateRange}
-        accountCycleTags={(() => {
-          const selected = localAccountId ? accounts.find((account) => account.id === localAccountId) : undefined
-          return selected?.type === 'credit_card' ? cycles.map(cycle => cycle.value) : undefined
-        })()}
-        cycles={cycles}
-        selectedCycleValue={localCycle}
+        accountCycleTags={isCreditCard ? cycles.map(cycle => cycle.value) : undefined}
+        cycles={isCreditCard ? cycles : []}
+        selectedCycleValue={isCreditCard ? localCycle : undefined}
         onCycleSelect={handleCycleChange}
         isCycleLoading={false}
-        locked={!!localCycle}
+        locked={isCreditCard ? !!localCycle : false}
       />
 
       {/* Filter Action Button */}
@@ -638,7 +639,7 @@ export function TransactionHeader({
                 cycles={cycles}
                 value={localCycle}
                 onChange={setLocalCycle}
-                disabled={cycles.length === 0}
+                disabled={!isCreditCard || cycles.length === 0}
                 fullWidth
               />
             </div>
@@ -660,7 +661,10 @@ export function TransactionHeader({
                 disabledRange={disabledRange}
                 availableMonths={availableMonths}
                 fullWidth
-                locked={!!localCycle}
+                accountCycleTags={isCreditCard ? cycles.map(cycle => cycle.value) : undefined}
+                cycles={isCreditCard ? cycles : []}
+                selectedCycleValue={isCreditCard ? localCycle : undefined}
+                locked={isCreditCard ? !!localCycle : false}
               />
             </div>
           </div>

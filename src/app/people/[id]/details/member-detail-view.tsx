@@ -267,6 +267,7 @@ export function MemberDetailView({
                         <EditPersonButton
                             person={person}
                             subscriptions={[]} // You might need to pass subscriptions prop if available or fetch them
+                            accounts={accounts}
                         />
                     </div>
                 </div>

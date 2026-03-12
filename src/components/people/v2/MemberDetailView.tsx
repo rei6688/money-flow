@@ -180,12 +180,11 @@ export function MemberDetailView({
     // 4. Update Navigation Handlers
     const handleCycleChange = (tag: string) => {
         if (tag !== 'all') {
-            if (dateMode !== 'all' || dateRangeFilter) {
-                setDateMode('all')
-                setDateRangeValue(undefined)
-                setDateRangeFilter(undefined)
-                handleClearDateRange()
-            }
+            // Clear filters when tag is selected
+            setSelectedAccountId(undefined)
+            setDateMode('all')
+            setDateRangeValue(undefined)
+            setDateRangeFilter(undefined)
         }
 
         const params = new URLSearchParams(searchParams.toString())
@@ -199,22 +198,26 @@ export function MemberDetailView({
     }
 
     const handleCycleSelect = (tag: string, year: string | null) => {
-        if (tag !== 'all') {
-            if (dateMode !== 'all' || dateRangeFilter) {
-                setDateMode('all')
-                setDateRangeValue(undefined)
-                setDateRangeFilter(undefined)
-                handleClearDateRange()
+        const params = new URLSearchParams(searchParams.toString())
+        
+        // Clear secondary filters when cycle is explicitly selected
+        params.delete('accountId')
+        params.delete('dateFrom')
+        params.delete('dateTo')
+        params.delete('status')
+        params.delete('type')
+        
+        if (tag === 'all') {
+            params.set('tag', 'all')
+            if (year) params.set('year', year)
+            else params.delete('year')
+        } else {
+            params.set('tag', tag)
+            if (tag.includes('-')) {
+                params.set('year', tag.split('-')[0])
             }
         }
 
-        const params = new URLSearchParams(searchParams.toString())
-        params.set('tag', tag)
-        if (year) {
-            params.set('year', year)
-        } else {
-            params.delete('year')
-        }
         startTransition(() => {
             router.push(`?${params.toString()}`, { scroll: false })
         })
@@ -229,6 +232,9 @@ export function MemberDetailView({
             params.set('tag', 'all')
             params.set('year', year)
         }
+        params.delete('dateFrom')
+        params.delete('dateTo')
+        
         startTransition(() => {
             router.push(`?${params.toString()}`, { scroll: false })
         })
@@ -294,7 +300,15 @@ export function MemberDetailView({
     }
 
     const handleClearDateRange = () => {
-        updateDateRangeParams('', '')
+        const params = new URLSearchParams(searchParams.toString())
+        params.set('tag', 'all')
+        params.delete('year')
+        params.delete('dateFrom')
+        params.delete('dateTo')
+        
+        startTransition(() => {
+            router.push(`?${params.toString()}`, { scroll: false })
+        })
     }
 
     const handlePickerDateChange = (nextDate: Date) => {
@@ -792,6 +806,7 @@ export function MemberDetailView({
                 onOpenChange={setIsPersonSlideOpen}
                 person={person}
                 subscriptions={subscriptions}
+                accounts={accounts}
             />
             {/* Transaction Slide V2 */}
             <TransactionSlideV2

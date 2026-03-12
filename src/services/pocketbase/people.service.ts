@@ -32,7 +32,7 @@ type PocketBasePersonWrite = {
 
 function mapPerson(record: PocketBaseRecord): Person {
   return {
-    id: String(record.slug || record.id || ''),
+    id: String(record.id || ''),
     pocketbase_id: typeof record.id === 'string' ? record.id : null,
     created_at: typeof record.created === 'string' ? record.created : undefined,
     name: String(record.name || ''),
@@ -143,105 +143,65 @@ export async function getPocketBasePersonDetails(sourceOrPocketBaseId: string): 
         return mapped
       }
 
-      const supabase = createClient()
-      const { data, error } = await supabase
-        .from('people')
-        .select('sheet_link, google_sheet_url, sheet_full_img, sheet_show_bank_account, sheet_bank_info, sheet_linked_bank_id, sheet_show_qr_image')
-        .eq('id', sourcePersonId)
-        .maybeSingle()
-
-      if (error || !data) {
-        const { data: webhookDataByName } = await supabase
-          .from('sheet_webhook_links')
-          .select('url, name, created_at')
-          .ilike('name', mapped.name)
-          .order('created_at', { ascending: false })
-          .limit(1)
-
-        let webhookLink = Array.isArray(webhookDataByName) ? webhookDataByName[0] : null
-        if (!webhookLink) {
-          const { data: webhookDataLatest } = await supabase
-            .from('sheet_webhook_links')
-            .select('url, name, created_at')
-            .order('created_at', { ascending: false })
-            .limit(1)
-          webhookLink = Array.isArray(webhookDataLatest) ? webhookDataLatest[0] : null
-        }
-
-        let cycleSheetUrl: string | null = null
-        const { data: cycleSheetRows } = await supabase
-          .from('person_cycle_sheets')
-          .select('sheet_url, updated_at, created_at')
-          .eq('person_id', sourcePersonId)
-          .not('sheet_url', 'is', null)
-          .order('updated_at', { ascending: false, nullsFirst: false })
-          .order('created_at', { ascending: false, nullsFirst: false })
-          .limit(1)
-
-        const latest = Array.isArray(cycleSheetRows) ? cycleSheetRows[0] : null
-        cycleSheetUrl = (latest?.sheet_url as string | null | undefined) ?? null
-
-        return {
-          ...mapped,
-          sheet_link: mapped.sheet_link ?? (webhookLink?.url ?? null),
-          google_sheet_url: mapped.google_sheet_url ?? cycleSheetUrl,
-        }
-      }
-
-      const sbPerson = data as any
-
+      // 1. Base hydration from people table (Wait! PB Schema now has these fields, rely on PB)
       const hydrated = {
         ...mapped,
-        sheet_link: mapped.sheet_link ?? sbPerson.sheet_link,
-        google_sheet_url: mapped.google_sheet_url ?? sbPerson.google_sheet_url,
-        sheet_full_img: mapped.sheet_full_img ?? sbPerson.sheet_full_img,
-        sheet_show_bank_account: mapped.sheet_show_bank_account ?? sbPerson.sheet_show_bank_account,
-        sheet_bank_info: mapped.sheet_bank_info ?? sbPerson.sheet_bank_info,
-        sheet_linked_bank_id: mapped.sheet_linked_bank_id ?? sbPerson.sheet_linked_bank_id,
-        sheet_show_qr_image: mapped.sheet_show_qr_image ?? sbPerson.sheet_show_qr_image,
       }
 
-      if (hydrated.sheet_link) {
-        return hydrated
+      // 2. Fallbacks for missing configurations
+      // Fallback for sheet_link (webhook link)
+      if (!hydrated.sheet_link) {
+        try {
+          const escapedName = mapped.name.replace(/'/g, "\\'")
+          const webhookDataByName = await pocketbaseList<PocketBaseRecord>('sheet_webhook_links', {
+            filter: `name ~ '${escapedName}'`,
+            sort: '-created',
+            perPage: 1
+          })
+          
+          let webhookLink = webhookDataByName.items?.[0] || null
+
+          if (!webhookLink) {
+            const webhookDataLatest = await pocketbaseList<PocketBaseRecord>('sheet_webhook_links', {
+              sort: '-created',
+              perPage: 1
+            })
+            webhookLink = webhookDataLatest.items?.[0] || null
+          }
+
+          if (webhookLink?.url) {
+            hydrated.sheet_link = String(webhookLink.url)
+          }
+        } catch (err) {
+          console.warn('[PB: Fallback] Failed to fetch sheet_webhook_links from PocketBase', err)
+        }
       }
 
-      const { data: webhookDataByName } = await supabase
-        .from('sheet_webhook_links')
-        .select('url, name, created_at')
-        .ilike('name', mapped.name)
-        .order('created_at', { ascending: false })
-        .limit(1)
+      // Fallback for google_sheet_url (from cycle sheets)
+      if (!hydrated.google_sheet_url && personRecord.id) {
+        try {
+          const cycleSheetRows = await pocketbaseList<PocketBaseRecord>('person_cycle_sheets', {
+            filter: `person_id='${personRecord.id}' && sheet_url != null && sheet_url != ''`,
+            sort: '-updated,-created',
+            perPage: 1
+          })
 
-      let webhookLink = Array.isArray(webhookDataByName) ? webhookDataByName[0] : null
-      if (!webhookLink) {
-        const { data: webhookDataLatest } = await supabase
-          .from('sheet_webhook_links')
-          .select('url, name, created_at')
-          .order('created_at', { ascending: false })
-          .limit(1)
-        webhookLink = Array.isArray(webhookDataLatest) ? webhookDataLatest[0] : null
+          const latest = cycleSheetRows.items?.[0] || null
+          if (latest?.sheet_url) {
+            hydrated.google_sheet_url = String(latest.sheet_url)
+          }
+        } catch (err) {
+           console.warn('[PB: Fallback] Failed to fetch person_cycle_sheets from PocketBase', err)
+        }
       }
 
-      let cycleSheetUrl: string | null = null
-      if (!hydrated.google_sheet_url && sourcePersonId) {
-        const { data: cycleSheetRows } = await supabase
-          .from('person_cycle_sheets')
-          .select('sheet_url, updated_at, created_at')
-          .eq('person_id', sourcePersonId)
-          .not('sheet_url', 'is', null)
-          .order('updated_at', { ascending: false, nullsFirst: false })
-          .order('created_at', { ascending: false, nullsFirst: false })
-          .limit(1)
+      console.log(`[people.service] Merge config for ${mapped.name}:`, {
+        sheet_link: !!hydrated.sheet_link,
+        google_sheet_url: !!hydrated.google_sheet_url,
+        sheet_linked_bank_id: !!hydrated.sheet_linked_bank_id
+      })
 
-        const latest = Array.isArray(cycleSheetRows) ? cycleSheetRows[0] : null
-        cycleSheetUrl = (latest?.sheet_url as string | null | undefined) ?? null
-      }
-
-      return {
-        ...hydrated,
-        sheet_link: hydrated.sheet_link ?? (webhookLink?.url ?? null),
-        google_sheet_url: hydrated.google_sheet_url ?? cycleSheetUrl,
-      }
+      return hydrated
     },
     async () => {
       logSource('SB', 'people.get fallback', { sourceOrPocketBaseId })
@@ -284,27 +244,17 @@ export async function getPocketBasePersonById(sourceOrPocketBaseId: string): Pro
 }
 
 export async function createPocketBasePerson(
-  supabaseId: string,
-  data: PocketBasePersonWrite
-): Promise<boolean> {
-  return executeWithFallback(
-    async () => {
-      const pbId = toPocketBaseId(supabaseId)
-      logSource('PB', 'people.create', { supabaseId, pbId, name: data.name })
-      await pocketbaseCreate<PocketBaseRecord>('people', {
-        id: pbId,
-        slug: supabaseId,
-        ...data,
-        group_parent_id: data.group_parent_id ? toPocketBaseId(data.group_parent_id) : null,
-      })
-      return true
-    },
-    async () => {
-      logSource('SB', 'people.create fallback', { supabaseId })
-      return false
-    },
-    'people.create'
-  )
+  data: PocketBasePersonWrite & { id?: string; slug?: string }
+): Promise<PocketBaseRecord> {
+  const pbId = data.id || toPocketBaseId(data.slug || crypto.randomUUID())
+  const payload = {
+    ...data,
+    id: pbId,
+    slug: data.slug || pbId,
+    group_parent_id: data.group_parent_id ? toPocketBaseId(data.group_parent_id) : null,
+  }
+  logSource('PB', 'people.create', { id: pbId, name: data.name })
+  return await pocketbaseCreate<PocketBaseRecord>('people', payload)
 }
 
 export async function updatePocketBasePerson(

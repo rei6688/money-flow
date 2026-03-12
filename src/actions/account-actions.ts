@@ -1,39 +1,49 @@
 'use server'
 
-import { createClient } from '@/lib/supabase/server'
 import { revalidatePath } from 'next/cache'
-import type { Json } from '@/types/database.types'
 import {
   createPocketBaseAccount,
   updatePocketBaseAccountInfo,
 } from '@/services/pocketbase/account-details.service'
-
-export async function updateAccountInfo(accountId: string, data: { account_number?: string, receiver_name?: string }) {
-  const supabase = await createClient()
-  console.log('[DB:SB] accounts.updateInfo', { accountId })
-
-  try {
-    const { error } = await supabase
-      .from('accounts')
-      .update(data)
-      .eq('id', accountId)
-
-    if (error) throw error
-
-    revalidatePath(`/accounts/${accountId}`)
-
-    // PB secondary write (fire-and-forget)
-    void updatePocketBaseAccountInfo(accountId, {
-      account_number: data.account_number ?? null,
-      receiver_name: data.receiver_name ?? null,
-    }).catch((err) => console.error('[DB:PB] accounts.updateInfo secondary failed:', err))
-
-    return { success: true }
-  } catch (error) {
-    console.error('[DB:SB] accounts.updateInfo failed:', error)
-    return { success: false, error }
+import { pocketbaseList, toPocketBaseId } from '@/services/pocketbase/server'
+// Inline mapper to avoid circular 'use server' module issues
+function mapAccountRow(record: any) {
+  return {
+    id: record.id,
+    name: record.name ?? '',
+    type: record.type ?? 'bank',
+    currency: record.currency ?? 'VND',
+    current_balance: Number(record.current_balance ?? 0),
+    credit_limit: Number(record.credit_limit ?? 0),
+    parent_account_id: record.parent_account_id || null,
+    account_number: record.account_number || null,
+    owner_id: record.owner_id || null,
+    cashback_config: record.cashback_config ?? null,
+    cashback_config_version: Number(record.cashback_config_version ?? 1),
+    secured_by_account_id: record.secured_by_account_id || null,
+    is_active: record.is_active ?? true,
+    image_url: typeof record.image_url === 'string' && record.image_url.startsWith('http') ? record.image_url : null,
+    receiver_name: record.receiver_name || null,
+    total_in: Number(record.total_in ?? 0),
+    total_out: Number(record.total_out ?? 0),
+    annual_fee: Number(record.annual_fee ?? 0),
+    annual_fee_waiver_target: Number(record.annual_fee_waiver_target ?? 0),
+    cb_type: record.cb_type ?? 'none',
+    cb_base_rate: Number(record.cb_base_rate ?? 0),
+    cb_max_budget: Number(record.cb_max_budget ?? 0),
+    cb_is_unlimited: record.cb_is_unlimited ?? false,
+    cb_rules_json: record.cb_rules_json ?? null,
+    cb_min_spend: Number(record.cb_min_spend ?? 0),
+    cb_cycle_type: record.cb_cycle_type ?? 'calendar_month',
+    statement_day: Number(record.statement_day ?? 0),
+    due_date: Number(record.due_date ?? 0),
+    holder_type: record.holder_type ?? null,
+    holder_person_id: record.holder_person_id ?? null,
+    created_at: record.created ?? null,
+    updated_at: record.updated ?? null,
   }
 }
+import { Json } from '@/types/database.types'
 
 type CreateAccountParams = {
   name: string
@@ -47,7 +57,6 @@ type CreateAccountParams = {
   parentAccountId?: string | null
   accountNumber?: string | null
   receiverName?: string | null
-  // New Cashback Columns
   cb_type?: 'none' | 'simple' | 'tiered'
   cb_base_rate?: number
   cb_max_budget?: number | null
@@ -62,126 +71,66 @@ type CreateAccountParams = {
 }
 
 export async function createAccount(params: CreateAccountParams) {
-  const supabase = await createClient()
-  console.log('[DB:SB] accounts.create', { name: params.name, type: params.type })
+  console.log('[DB:PB] accounts.create', { name: params.name, type: params.type })
 
-  // Get current user
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) {
-    return { error: { message: 'User not authenticated' } }
+  // For PB-only, we can generate a random ID or let PB generate it.
+  // But our createPocketBaseAccount expects a supabase-style ID to hash.
+  // We'll generate a random UUID-like string to hash.
+  const tempId = crypto.randomUUID()
+  
+  try {
+    const success = await createPocketBaseAccount(tempId, {
+      ...params,
+      owner_id: 'SYSTEM_MIGRATED', // Update this if you have a real user system in PB
+      current_balance: 0,
+      is_active: true,
+      statement_day: params.statementDay,
+      due_date: params.dueDate,
+    } as any)
+
+    if (!success) throw new Error('Failed to create account in PocketBase')
+
+    revalidatePath('/accounts')
+    return { success: true }
+  } catch (error) {
+    console.error('[DB:PB] accounts.create failed:', error)
+    return { success: false, error: (error as any).message }
   }
+}
 
-  const {
-    name,
-    type,
-    creditLimit,
-    cashbackConfig,
-    securedByAccountId,
-    imageUrl,
-    annualFee,
-    annualFeeWaiverTarget,
-    parentAccountId,
-    accountNumber,
-    receiverName,
-    cb_type,
-    cb_base_rate,
-    cb_max_budget,
-    cb_is_unlimited,
-    cb_rules_json,
-    cb_min_spend,
-    cb_cycle_type,
-    statementDay,
-    dueDate,
-    holder_type,
-    holder_person_id
-  } = params
+export async function updateAccountInfo(accountId: string, data: { account_number?: string, receiver_name?: string }) {
+  console.log('[DB:PB] accounts.updateInfo', { accountId })
 
-  // Insert into DB and get back the created ID
-  const { data: insertedAccount, error } = await (supabase
-    .from('accounts')
-    .insert({
-      owner_id: user.id,
-      name,
-      type,
-      credit_limit: creditLimit,
-      cashback_config: cashbackConfig,
-      secured_by_account_id: securedByAccountId,
-      image_url: imageUrl,
-      annual_fee: annualFee,
-      annual_fee_waiver_target: annualFeeWaiverTarget,
-      parent_account_id: parentAccountId,
-      account_number: accountNumber,
-      receiver_name: receiverName,
-      current_balance: 0, // Default starting balance
-      cb_type,
-      cb_base_rate,
-      cb_max_budget,
-      cb_is_unlimited,
-      cb_rules_json,
-      cb_min_spend,
-      cb_cycle_type,
-      statement_day: statementDay,
-      due_date: dueDate,
-      holder_type: holder_type ?? 'me',
-      holder_person_id: holder_person_id
-    }) as any).select('id').single() as any
+  try {
+    const success = await updatePocketBaseAccountInfo(accountId, {
+      account_number: data.account_number ?? null,
+      receiver_name: data.receiver_name ?? null,
+    })
 
-  if (error) {
-    console.error('[DB:SB] accounts.create failed:', error)
-    return { error }
+    if (!success) throw new Error('Failed to update account info in PocketBase')
+
+    revalidatePath(`/accounts/${accountId}`)
+    return { success: true }
+  } catch (error) {
+    console.error('[DB:PB] accounts.updateInfo failed:', error)
+    return { success: false, error: (error as any).message }
   }
-
-  if (insertedAccount?.id) {
-    void createPocketBaseAccount(insertedAccount.id, {
-      name,
-      type,
-      owner_id: user.id,
-      credit_limit: creditLimit ?? null,
-      image_url: imageUrl ?? null,
-      annual_fee: annualFee ?? null,
-      annual_fee_waiver_target: annualFeeWaiverTarget ?? null,
-      parent_account_id: parentAccountId ?? null,
-      secured_by_account_id: securedByAccountId ?? null,
-      account_number: accountNumber ?? null,
-      receiver_name: receiverName ?? null,
-      cb_type,
-      cb_base_rate,
-      cb_max_budget: cb_max_budget ?? null,
-      cb_is_unlimited,
-      cb_rules_json: cb_rules_json ?? null,
-      cb_min_spend: cb_min_spend ?? null,
-      cb_cycle_type,
-      statement_day: statementDay ?? null,
-      due_date: dueDate ?? null,
-      holder_type,
-      holder_person_id: holder_person_id ?? null,
-    }).catch((err) => console.error('[DB:PB] accounts.create secondary failed:', err))
-  }
-
-  revalidatePath('/accounts')
-  return { error: null }
 }
 
 export async function getAccountsAction() {
-  const supabase = await createClient()
-
-  const { data, error } = await supabase
-    .from('accounts')
-    .select('*')
-    .order('name')
-
-  if (error) {
-    console.error('Failed to fetch accounts:', error)
+  console.log('[DB:PB] accounts.getBatch')
+  try {
+    const response = await pocketbaseList<any>('accounts', {
+      perPage: 200,
+      sort: 'name'
+    })
+    return response.items.map(mapAccountRow)
+  } catch (error) {
+    console.error('[DB:PB] getAccountsAction failed:', error)
     return []
   }
-
-  return data
 }
 
-/**
- * Action wrapper for updating account configuration
- * Matches the interface expected by EditAccountDialog
- */
 export async function updateAccountConfigAction(params: {
   id: string
   name?: string
@@ -196,9 +145,8 @@ export async function updateAccountConfigAction(params: {
   parentAccountId?: string | null
   accountNumber?: string | null
   receiverName?: string | null
-  // New Cashback Columns
   cb_type?: 'none' | 'simple' | 'tiered'
-  cb_base_rate?: number | null
+  cb_base_rate?: number
   cb_max_budget?: number | null
   cb_is_unlimited?: boolean
   cb_rules_json?: Json | null
@@ -209,82 +157,74 @@ export async function updateAccountConfigAction(params: {
   holder_type?: 'me' | 'relative' | 'other'
   holder_person_id?: string | null
 }) {
-  const { updateAccountConfig } = await import('@/services/account.service')
-
-  const success = await updateAccountConfig(params.id, {
-    name: params.name,
-    credit_limit: params.creditLimit,
-    annual_fee: params.annualFee,
-    annual_fee_waiver_target: params.annualFeeWaiverTarget,
-    cashback_config: params.cashbackConfig,
-    type: params.type as any,
-    secured_by_account_id: params.securedByAccountId,
-    is_active: params.isActive,
-    image_url: params.imageUrl,
-    parent_account_id: params.parentAccountId,
-    account_number: params.accountNumber,
-    receiver_name: params.receiverName,
-    // New Cashback Columns
-    cb_type: params.cb_type,
-    cb_base_rate: params.cb_base_rate ?? undefined,
-    cb_max_budget: params.cb_max_budget,
-    cb_is_unlimited: params.cb_is_unlimited,
-    cb_rules_json: params.cb_rules_json,
-    cb_min_spend: params.cb_min_spend,
-    cb_cycle_type: params.cb_cycle_type,
-    statement_day: params.statementDay,
-    due_date: params.dueDate,
-    holder_type: params.holder_type,
-    holder_person_id: params.holder_person_id
-  })
-
-  if (success) {
-    revalidatePath('/accounts')
-    revalidatePath(`/accounts/${params.id}`)
-  }
-
-  return success
-}
-
-export async function getLastTransactionAccountId() {
-  const supabase = await createClient()
+  console.log('[DB:PB] accounts.updateConfig', { id: params.id })
 
   try {
-    const { data, error } = await supabase
-      .from('transactions')
-      .select('account_id')
-      .neq('status', 'void')
-      .order('occurred_at', { ascending: false })
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle() as any
+    const success = await updatePocketBaseAccountInfo(params.id, {
+      name: params.name,
+      credit_limit: params.creditLimit,
+      annual_fee: params.annualFee,
+      annual_fee_waiver_target: params.annualFeeWaiverTarget,
+      type: params.type,
+      secured_by_account_id: params.securedByAccountId,
+      is_active: params.isActive ?? undefined,
+      image_url: params.imageUrl,
+      parent_account_id: params.parentAccountId,
+      account_number: params.accountNumber,
+      receiver_name: params.receiverName,
+      statement_day: params.statementDay,
+      due_date: params.dueDate,
+      holder_type: params.holder_type,
+      holder_person_id: params.holder_person_id,
+      // Mapping these because updatePocketBaseAccountInfo uses partial fields
+      ...({
+        cb_type: params.cb_type,
+        cb_base_rate: params.cb_base_rate,
+        cb_max_budget: params.cb_max_budget,
+        cb_is_unlimited: params.cb_is_unlimited,
+        cb_rules_json: params.cb_rules_json,
+        cb_min_spend: params.cb_min_spend,
+        cb_cycle_type: params.cb_cycle_type
+      } as any)
+    })
 
-    if (error) throw error
-    return data?.account_id || null
+    if (!success) throw new Error('Failed to update account config in PocketBase')
+
+    revalidatePath('/accounts')
+    revalidatePath(`/accounts/${params.id}`)
+    return { success: true }
   } catch (error) {
-    console.error('Failed to fetch last transaction account', error)
+    console.error('[DB:PB] accounts.updateConfig failed:', error)
+    return { success: false, error: (error as any).message }
+  }
+}
+
+export async function getLastTransactionPersonId(): Promise<string | null> {
+  try {
+    const response = await pocketbaseList<any>('transactions', {
+      filter: 'person_id != ""',
+      sort: '-occurred_at',
+      perPage: 1,
+      fields: 'person_id'
+    })
+    return response.items[0]?.person_id ?? null
+  } catch (error) {
+    console.error('[DB:PB] getLastTransactionPersonId failed:', error)
     return null
   }
 }
 
-export async function getLastTransactionPersonId() {
-  const supabase = await createClient()
-
+export async function getLastTransactionAccountId(): Promise<string | null> {
   try {
-    const { data, error } = await supabase
-      .from('transactions')
-      .select('person_id')
-      .not('person_id', 'is', null)
-      .neq('status', 'void')
-      .order('occurred_at', { ascending: false })
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle() as any
-
-    if (error) throw error
-    return data?.person_id || null
+    const response = await pocketbaseList<any>('transactions', {
+      filter: 'account_id != ""',
+      sort: '-occurred_at',
+      perPage: 1,
+      fields: 'account_id'
+    })
+    return response.items[0]?.account_id ?? null
   } catch (error) {
-    console.error('Failed to fetch last transaction person', error)
+    console.error('[DB:PB] getLastTransactionAccountId failed:', error)
     return null
   }
 }

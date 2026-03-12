@@ -3,14 +3,15 @@
 import { useState } from 'react'
 import { Pencil } from 'lucide-react'
 import { PersonSlideV2 } from '@/components/people/slide-v2/person-slide-v2'
-import { Person, Subscription } from '@/types/moneyflow.types'
+import { Person, Subscription, Account } from '@/types/moneyflow.types'
 
 interface EditPersonButtonProps {
     person: Person
     subscriptions: Subscription[]
+    accounts: Account[]
 }
 
-export function EditPersonButton({ person, subscriptions }: EditPersonButtonProps) {
+export function EditPersonButton({ person, subscriptions, accounts }: EditPersonButtonProps) {
     const [showDialog, setShowDialog] = useState(false)
 
     return (
@@ -30,6 +31,7 @@ export function EditPersonButton({ person, subscriptions }: EditPersonButtonProp
                     subscriptions={subscriptions}
                     open={showDialog}
                     onOpenChange={setShowDialog}
+                    accounts={accounts}
                 />
             )}
         </>

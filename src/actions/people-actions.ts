@@ -1,13 +1,13 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { createClient } from '@/lib/supabase/server'
 import { createPerson, ensureDebtAccount, updatePerson, getPersonWithSubs, getPeople } from '@/services/people.service'
 import { getPersonDetails, getDebtByTags } from '@/services/debt.service';
 import { getAccounts, getAccountTransactions } from '@/services/account.service';
 import { getCategories } from '@/services/category.service';
 import { getShops, createShop } from '@/services/shop.service';
 import { syncAllTransactions, testConnection, syncTransactionToSheet } from '@/services/sheet.service';
+import { pocketbaseUpdate } from '@/services/pocketbase/server';
 
 async function findOrCreateBankShop() {
   const shops = await getShops()
@@ -29,6 +29,7 @@ export type CreatePersonPayload = {
   is_archived?: boolean
   is_group?: boolean
   group_parent_id?: string | null
+  sheet_linked_bank_id?: string | null
 }
 
 export async function createPersonAction(payload: CreatePersonPayload) {
@@ -43,6 +44,7 @@ export async function createPersonAction(payload: CreatePersonPayload) {
       is_group: payload.is_group,
       group_parent_id: payload.group_parent_id,
       google_sheet_url: payload.google_sheet_url?.trim(),
+      sheet_linked_bank_id: payload.sheet_linked_bank_id
     }
   )
 
@@ -271,9 +273,8 @@ export async function rolloverDebtAction(
   }, 'create').catch((err) => console.error('[rollover] sheet sync (open) failed:', err))
 
   // Link Transaction 1 to Transaction 2 (Bidirectional for easier voiding)
-  const supabase = createClient()
-  await (supabase.from('transactions').update as any)({ linked_transaction_id: openRes }).eq('id', settleRes);
-  await (supabase.from('transactions').update as any)({ linked_transaction_id: settleRes }).eq('id', openRes);
+  await pocketbaseUpdate('transactions', settleRes, { linked_transaction_id: openRes });
+  await pocketbaseUpdate('transactions', openRes, { linked_transaction_id: settleRes });
 
   revalidatePath(`/people/${personId}`)
   return { success: true, message: 'Debt rolled over successfully' }

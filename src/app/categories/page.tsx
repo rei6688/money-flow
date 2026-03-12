@@ -25,8 +25,8 @@ export default async function ClassificationsPage({
         getPeople()
     ])
 
-    const categoryResult = { source: 'Supabase' as const, data: categories }
-    const shopResult = { source: 'Supabase' as const, data: shops }
+    const categoryResult = { source: 'PB' as const, data: categories }
+    const shopResult = { source: 'PB' as const, data: shops }
 
     const tab = params?.tab || "categories"
 

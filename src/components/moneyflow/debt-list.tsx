@@ -56,7 +56,7 @@ export function DebtList({ debts, accounts, categories, people, shops }: DebtLis
             className="flex items-center justify-between border rounded-lg p-4 hover:bg-slate-50 transition-colors relative"
           >
             <Link
-               href={`/people/${debt.id}`}
+               href={`/people/${people.find(p => p.id === debt.id)?.pocketbase_id || debt.id}`}
                className="flex items-center gap-3 flex-1"
             >
               <div className="h-12 w-12 rounded-full bg-slate-100 text-slate-600 flex items-center justify-center font-semibold">

@@ -176,6 +176,7 @@ export function PeopleGrid({ people, subscriptions, accounts, categories, shops 
           {/* Add Person Button */}
           <CreatePersonDialog
             subscriptions={subscriptions}
+            accounts={accounts}
             trigger={
               <CustomTooltip content="Add new person">
                 <button className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:border-blue-500 hover:text-blue-600">

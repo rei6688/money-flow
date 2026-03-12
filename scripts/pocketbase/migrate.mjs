@@ -29,9 +29,12 @@ const COLLECTION_ORDER = [
     'shops',
     'accounts',
     'transactions',
+    'transaction_history',
+    'installments',
     'cashback_cycles',
     'services',
-    'batches'
+    'batches',
+    'batch_items'
 ];
 
 const PHASE_TO_COLLECTIONS = {
@@ -40,10 +43,11 @@ const PHASE_TO_COLLECTIONS = {
     people: ['people', 'person_cycle_sheets'],
     shops: ['shops'],
     accounts: ['accounts'],
-    transactions: ['transactions'],
+    installments: ['installments'],
+    transactions: ['transactions', 'transaction_history'],
     cashback: ['cashback_cycles'],
     services: ['services'],
-    batches: ['batches']
+    batches: ['batches', 'batch_items']
 };
 
 function normalizeAccountType(value) {
@@ -190,13 +194,20 @@ async function cleanupCollections(baseUrl, collections, headers, mode) {
         for (let i = 0; i < ids.length; i += concurrency) {
             const chunk = ids.slice(i, i + concurrency);
             const results = await Promise.all(chunk.map(async (id) => {
-                const res = await fetch(`${baseUrl}/api/collections/${coll}/records/${id}`, { method: 'DELETE', headers });
-                if (!res.ok) {
-                    const text = await res.text();
-                    throw new Error(`Delete failed ${coll}/${id}: ${text}`);
+                try {
+                    const res = await fetch(`${baseUrl}/api/collections/${coll}/records/${id}`, { method: 'DELETE', headers });
+                    if (!res.ok) {
+                        const text = await res.text();
+                        console.warn(`⚠️  Skip delete ${coll}/${id} (likely referenced by other tables)`);
+                        return false;
+                    }
+                    return true;
+                } catch (err) {
+                    console.warn(`⚠️  Error deleting ${coll}/${id}: ${err.message}`);
+                    return false;
                 }
             }));
-            deleted += results.length;
+            deleted += results.filter(r => r === true).length;
         }
         console.log(`- ${coll}: deleted ${deleted}`);
     }
@@ -490,6 +501,7 @@ async function migrate() {
     });
     if (accountsResult) summary.push(accountsResult);
 
+
     if (targetCollections.includes('transactions')) {
         console.log('💸 Migrating transactions...');
         const { data: txns, error: tError } = await supabase
@@ -528,9 +540,15 @@ async function migrate() {
                 cashback_amount: parseFloat(t.cashback_share_fixed || 0),
                 is_installment: t.is_installment || false,
                 parent_transaction_id: t.parent_transaction_id ? toPocketBaseId(t.parent_transaction_id, 'transactions') : null,
+                debt_cycle_tag: t.tag ?? null,
+                persisted_cycle_tag: persistedCycleTag ?? null,
+                cashback_share_percent: t.cashback_share_percent ?? null,
+                cashback_share_fixed: t.cashback_share_fixed ?? null,
+                cashback_mode: t.cashback_mode ?? null,
                 metadata: {
                     ...(t.metadata || {}),
-                    persisted_cycle_tag: persistedCycleTag
+                    persisted_cycle_tag: persistedCycleTag,
+                    debt_cycle_tag: t.tag ?? null,
                 }
             };
 
@@ -543,6 +561,57 @@ async function migrate() {
         console.log(`✅ transactions: total=${total}, created=${created}, updated=${updated}`);
         summary.push({ collection: 'transactions', total, created, updated });
     }
+
+    if (targetCollections.includes('transaction_history')) {
+        console.log('📜 Migrating transaction history...');
+        const { data: historyItems, error: hError } = await supabase
+            .from('transaction_history')
+            .select('*');
+        if (hError) throw hError;
+
+        let created = 0;
+        let updated = 0;
+        for (const item of historyItems || []) {
+            const payload = {
+                transaction_id: toPocketBaseId(item.transaction_id, 'transactions'),
+                changed_at: item.changed_at || item.created_at,
+                changed_by: item.changed_by,
+                change_type: item.change_type,
+                snapshot_before: item.snapshot_before,
+                diff_note: item.diff_note,
+            };
+
+            const mode = await upsertRecord(PB_URL, 'transaction_history', toPocketBaseId(item.id, 'transaction_history'), payload, headers);
+            if (mode === 'created') created += 1;
+            if (mode === 'updated') updated += 1;
+        }
+
+        const total = (historyItems || []).length;
+        console.log(`✅ transaction_history: total=${total}, created=${created}, updated=${updated}`);
+        summary.push({ collection: 'transaction_history', total, created, updated });
+    }
+
+    const installmentsResult = await migrateTable({
+        phaseKey: 'installments',
+        tableName: 'installments',
+        pbCollection: 'installments',
+        mapper: (i) => ({
+            name: i.name,
+            original_transaction_id: i.original_transaction_id ? toPocketBaseId(i.original_transaction_id, 'transactions') : null,
+            owner_id: i.owner_id,
+            debtor_id: i.debtor_id ? toPocketBaseId(i.debtor_id, 'people') : null,
+            total_amount: parseFloat(i.total_amount || 0),
+            conversion_fee: parseFloat(i.conversion_fee || 0),
+            term_months: parseInt(i.term_months || 0),
+            monthly_amount: parseFloat(i.monthly_amount || 0),
+            start_date: i.start_date,
+            remaining_amount: parseFloat(i.remaining_amount || 0),
+            next_due_date: i.next_due_date,
+            status: i.status || 'active',
+            type: i.type || 'credit_card'
+        })
+    });
+    if (installmentsResult) summary.push(installmentsResult);
 
     const cashbackResult = await migrateTable({
         phaseKey: 'cashback_cycles',
@@ -591,6 +660,22 @@ async function migrate() {
         })
     });
     if (batchesResult) summary.push(batchesResult);
+
+    const batchItemsResult = await migrateTable({
+        phaseKey: 'batches',
+        tableName: 'batch_items',
+        pbCollection: 'batch_items',
+        mapper: (item) => ({
+            batch_id: toPocketBaseId(item.batch_id, 'batches'),
+            receiver_name: item.receiver_name,
+            target_account_id: item.target_account_id ? toPocketBaseId(item.target_account_id, 'accounts') : null,
+            amount: parseFloat(item.amount || 0),
+            note: item.note,
+            status: item.status || 'pending',
+            metadata: item.metadata || {}
+        })
+    });
+    if (batchItemsResult) summary.push(batchItemsResult);
 
     console.log('📊 Phase summary:');
     for (const row of summary) {

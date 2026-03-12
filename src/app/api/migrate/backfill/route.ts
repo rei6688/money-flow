@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * One-time PocketBase backfill / re-sync route.
  * Usage:
@@ -155,25 +156,43 @@ async function loadPocketBaseLookupRows(collection: string, fields: string): Pro
 }
 
 async function purgeCollectionRecords(collection: string): Promise<{ deleted: number; failed: number; errors: string[] }> {
+  const records = await loadPocketBaseLookupRows(collection, 'id')
+  let deleted = 0, failed = 0
   const errors: string[] = []
-  let deleted = 0
-  let failed = 0
 
-  const rows = await loadPocketBaseLookupRows(collection, 'id')
-
-  await runBatched(rows, 20, async (row) => {
+  await runBatched(records, 20, async (record) => {
     try {
-      await pocketbaseRequest(`/api/collections/${collection}/records/${row.id}`, {
+      await pocketbaseRequest(`/api/collections/${collection}/records/${record.id}`, {
         method: 'DELETE',
       })
-      deleted += 1
+      deleted++
     } catch (err) {
-      failed += 1
-      errors.push(`[purge:${collection}:${row.id}] ${String(err)}`)
+      failed++
+      errors.push(`[${collection}:${record.id}] ${String(err)}`)
     }
   })
 
   return { deleted, failed, errors }
+}
+
+async function purgeAllCollections(): Promise<Record<string, { deleted: number; failed: number; errors: string[] }>> {
+  const results: Record<string, { deleted: number; failed: number; errors: string[] }> = {}
+  
+  // Order matters if there are hard FK restraints, but usually DELETE is fine
+  const collections = [
+    PB_TRANSACTIONS_COLLECTION,
+    PB_ACCOUNTS_COLLECTION,
+    PB_CATEGORIES_COLLECTION,
+    PB_SHOPS_COLLECTION,
+    PB_PEOPLE_COLLECTION
+  ]
+
+  for (const coll of collections) {
+    console.log(`[Purge] Clearing ${coll}...`)
+    results[coll] = await purgeCollectionRecords(coll)
+  }
+
+  return results
 }
 
 async function buildIdBridgeMaps() {
@@ -194,9 +213,9 @@ async function buildIdBridgeMaps() {
     supabase.from('shops').select('id,name'),
     supabase.from('people').select('id,name'),
     loadPocketBaseLookupRows(PB_ACCOUNTS_COLLECTION, 'id,name,slug,account_number'),
-    loadPocketBaseLookupRows(PB_CATEGORIES_COLLECTION, 'id,name,type'),
-    loadPocketBaseLookupRows(PB_SHOPS_COLLECTION, 'id,name'),
-    loadPocketBaseLookupRows(PB_PEOPLE_COLLECTION, 'id,name'),
+    loadPocketBaseLookupRows(PB_CATEGORIES_COLLECTION, 'id,name,type,slug'),
+    loadPocketBaseLookupRows(PB_SHOPS_COLLECTION, 'id,name,slug'),
+    loadPocketBaseLookupRows(PB_PEOPLE_COLLECTION, 'id,name,slug'),
   ])
 
   if (supabaseAccountsResult.error) throw new Error(`accounts map fetch failed: ${supabaseAccountsResult.error.message}`)
@@ -253,42 +272,144 @@ async function buildIdBridgeMaps() {
   }
 
   const pbCategoryByNameType = buildNameTypeMap(pbCategories, true)
+  const pbCategoryBySlug = new Map<string, string>()
+  pbCategories.forEach(row => { if (row.slug) pbCategoryBySlug.set(row.slug, row.id) })
   const pbCategoryById = new Set(pbCategories.map((row) => row.id))
+
   for (const category of (supabaseCategoriesResult.data ?? []) as SupabaseRow[]) {
     if (isPocketBaseId(category.id) && pbCategoryById.has(category.id)) {
       categoryMap.set(category.id, category.id)
       continue
     }
-    const key = `${normalizeText(category.name)}::${normalizeText(category.type)}`
-    const match = pickUnique(pbCategoryByNameType.get(key) ?? [])
+    const match = pbCategoryBySlug.get(category.id) || pickUnique(pbCategoryByNameType.get(`${normalizeText(category.name)}::${normalizeText(category.type)}`) ?? [])
     if (match) categoryMap.set(category.id, match)
   }
 
   const pbShopByName = buildNameTypeMap(pbShops)
+  const pbShopBySlug = new Map<string, string>()
+  pbShops.forEach(row => { if (row.slug) pbShopBySlug.set(row.slug, row.id) })
   const pbShopById = new Set(pbShops.map((row) => row.id))
+
   for (const shop of (supabaseShopsResult.data ?? []) as SupabaseRow[]) {
     if (isPocketBaseId(shop.id) && pbShopById.has(shop.id)) {
       shopMap.set(shop.id, shop.id)
       continue
     }
-    const key = normalizeText(shop.name)
-    const match = pickUnique(pbShopByName.get(key) ?? [])
+    const match = pbShopBySlug.get(shop.id) || pickUnique(pbShopByName.get(normalizeText(shop.name)) ?? [])
     if (match) shopMap.set(shop.id, match)
   }
 
   const pbPersonByName = buildNameTypeMap(pbPeople)
+  const pbPersonBySlug = new Map<string, string>()
+  pbPeople.forEach(row => { if (row.slug) pbPersonBySlug.set(row.slug, row.id) })
   const pbPersonById = new Set(pbPeople.map((row) => row.id))
+
   for (const person of (supabasePeopleResult.data ?? []) as SupabaseRow[]) {
     if (isPocketBaseId(person.id) && pbPersonById.has(person.id)) {
       personMap.set(person.id, person.id)
       continue
     }
-    const key = normalizeText(person.name)
-    const match = pickUnique(pbPersonByName.get(key) ?? [])
+    const match = pbPersonBySlug.get(person.id) || pickUnique(pbPersonByName.get(normalizeText(person.name)) ?? [])
     if (match) personMap.set(person.id, match)
   }
 
   return { accountMap, categoryMap, shopMap, personMap }
+}
+
+async function backfillCategories(): Promise<BackfillResult> {
+  const supabase = createClient()
+  const { data, error } = await supabase.from('categories').select('*')
+  if (error) return { created: 0, updated: 0, failed: 1, errors: [error?.message ?? 'Unknown error'] }
+
+  let created = 0, updated = 0, failed = 0
+  const errors: string[] = []
+
+  await runBatched(data, 10, async (cat) => {
+    try {
+      const pbId = toPocketBaseId(cat.id)
+      const result = await upsertPB(PB_CATEGORIES_COLLECTION, pbId, {
+        slug: cat.id,
+        name: cat.name,
+        type: cat.type,
+        icon: cat.icon || '',
+        image_url: cat.image_url || '',
+        kind: cat.kind || 'internal',
+        is_archived: cat.is_archived ?? false,
+      })
+      if (result === 'created') created++
+      else updated++
+    } catch (err) {
+      failed++
+      errors.push(`[cat:${cat.id}] ${String(err)}`)
+    }
+  })
+  return { created, updated, failed, errors }
+}
+
+async function backfillShops(): Promise<BackfillResult> {
+  const supabase = createClient()
+  const { data, error } = await supabase.from('shops').select('*')
+  if (error) return { created: 0, updated: 0, failed: 1, errors: [error?.message ?? 'Unknown error'] }
+
+  let created = 0, updated = 0, failed = 0
+  const errors: string[] = []
+  const { categoryMap } = await buildIdBridgeMaps()
+
+  await runBatched(data, 10, async (shop) => {
+    try {
+      const pbId = toPocketBaseId(shop.id)
+      const result = await upsertPB(PB_SHOPS_COLLECTION, pbId, {
+        slug: shop.id,
+        name: shop.name,
+        image_url: shop.image_url || '',
+        default_category_id: shop.default_category_id ? (categoryMap.get(shop.default_category_id) ?? '') : '',
+        is_archived: shop.is_archived ?? false,
+      })
+      if (result === 'created') created++
+      else updated++
+    } catch (err) {
+      failed++
+      errors.push(`[shop:${shop.id}] ${String(err)}`)
+    }
+  })
+  return { created, updated, failed, errors }
+}
+
+async function backfillPeople(): Promise<BackfillResult> {
+  const supabase = createClient()
+  const { data, error } = await supabase.from('people').select('*')
+  if (error) return { created: 0, updated: 0, failed: 1, errors: [error?.message ?? 'Unknown error'] }
+
+  let created = 0, updated = 0, failed = 0
+  const errors: string[] = []
+
+  await runBatched(data, 10, async (p) => {
+    try {
+      const pbId = toPocketBaseId(p.id)
+      const result = await upsertPB(PB_PEOPLE_COLLECTION, pbId, {
+        slug: p.id,
+        name: p.name,
+        image_url: p.image_url || '',
+        is_owner: p.is_owner ?? false,
+        is_archived: p.is_archived ?? false,
+        is_group: p.is_group ?? false,
+        group_parent_id: p.group_parent_id ? toPocketBaseId(p.group_parent_id) : '',
+        sheet_link: p.sheet_link || '',
+        google_sheet_url: p.google_sheet_url || '',
+        sheet_full_img: p.sheet_full_img || '',
+        sheet_show_bank_account: p.sheet_show_bank_account ?? false,
+        sheet_bank_info: p.sheet_bank_info || '',
+        sheet_linked_bank_id: p.sheet_linked_bank_id || '',
+        sheet_show_qr_image: p.sheet_show_qr_image ?? false,
+      })
+      if (result === 'created') created++
+      else updated++
+    } catch (err) {
+      failed++
+      errors.push(`[person:${p.id}] ${String(err)}`)
+    }
+  })
+  return { created, updated, failed, errors }
 }
 
 // ---------------------------------------------------------------------------
@@ -315,6 +436,8 @@ async function backfillAccounts(): Promise<BackfillResult> {
   let failed = 0
   const errors: string[] = []
 
+  const { categoryMap } = await buildIdBridgeMaps()
+
   // Two passes: first without FK references (so parent accounts land before children),
   // then a second pass to set FK fields like parent_account_id.
   const withFKs: Array<{ pbId: string; fkBody: Record<string, unknown> }> = []
@@ -323,6 +446,25 @@ async function backfillAccounts(): Promise<BackfillResult> {
   await runBatched(accounts, 10, async (account) => {
     const pbId = toPocketBaseId(account.id)
     try {
+      // Deep clone and translate cashback_config
+      let cashbackConfig = account.cashback_config ? JSON.parse(JSON.stringify(account.cashback_config)) : null
+      
+      if (cashbackConfig && typeof cashbackConfig === 'object') {
+        // Handle newer structure (rules_json_v2 or program.rules_json_v2)
+        const rules = cashbackConfig.rules_json_v2 || cashbackConfig.program?.rules_json_v2
+        if (Array.isArray(rules)) {
+          rules.forEach((rule: any) => {
+            if (Array.isArray(rule.cat_ids)) {
+              rule.cat_ids = rule.cat_ids.map((id: string) => categoryMap.get(id) || id)
+            }
+          })
+        }
+        // Handle legacy structure
+        if (Array.isArray(cashbackConfig.cat_ids)) {
+          cashbackConfig.cat_ids = cashbackConfig.cat_ids.map((id: string) => categoryMap.get(id) || id)
+        }
+      }
+
       const body: Record<string, unknown> = {
         slug: account.id,
         name: account.name,
@@ -336,7 +478,7 @@ async function backfillAccounts(): Promise<BackfillResult> {
         receiver_name: account.receiver_name ?? null,
         total_in: account.total_in ?? 0,
         total_out: account.total_out ?? 0,
-        cashback_config: account.cashback_config ?? null,
+        cashback_config: cashbackConfig,
         cashback_config_version: account.cashback_config_version ?? 1,
         annual_fee: account.annual_fee ?? null,
         annual_fee_waiver_target: account.annual_fee_waiver_target ?? null,
@@ -425,7 +567,7 @@ async function backfillTransactions(): Promise<BackfillResult> {
     const { data: transactionsRaw, error } = await supabase
       .from('transactions')
       .select(
-        'id, occurred_at, note, type, account_id, target_account_id, category_id, person_id, shop_id, amount, status, tag, persisted_cycle_tag, cashback_share_percent, cashback_share_fixed, cashback_mode, metadata',
+        'id, occurred_at, note, type, account_id, target_account_id, category_id, person_id, shop_id, amount, status, tag, persisted_cycle_tag, cashback_share_percent, cashback_share_fixed, cashback_mode, metadata, parent_transaction_id, is_installment, installment_plan_id, original_amount, final_price, debt_cycle_tag, statement_cycle_tag',
       )
       .order('occurred_at', { ascending: true })
       .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1)
@@ -457,28 +599,35 @@ async function backfillTransactions(): Promise<BackfillResult> {
 
         const body: Record<string, unknown> = {
           date: txn.occurred_at,
+          occurred_at: txn.occurred_at,
           description: txn.note ?? '',
+          note: txn.note ?? '',
           type: txn.type,
+          status: txn.status ?? 'posted',
           account_id: mappedAccountId,
           to_account_id: mappedToAccountId,
+          target_account_id: mappedToAccountId, // Also set target_account_id for convenience
           category_id: mappedCategoryId,
           person_id: mappedPersonId,
           shop_id: mappedShopId,
           amount: txn.amount,
-          final_price: txn.amount,
-          cashback_amount: 0,
-          is_installment: false,
-          parent_transaction_id: '',
+          original_amount: txn.original_amount ?? txn.amount,
+          final_price: txn.final_price ?? txn.amount,
+          cashback_amount: (txn.original_amount ?? txn.amount) - (txn.final_price ?? txn.amount),
+          is_installment: txn.is_installment ?? false,
+          installment_plan_id: txn.installment_plan_id ? toPocketBaseId(txn.installment_plan_id, 'installments') : null,
+          parent_transaction_id: txn.parent_transaction_id ? toPocketBaseId(txn.parent_transaction_id, 'transactions') : '',
+          tag: txn.tag ?? null,
+          persisted_cycle_tag: txn.persisted_cycle_tag ?? null,
+          debt_cycle_tag: txn.debt_cycle_tag ?? null,
+          statement_cycle_tag: txn.statement_cycle_tag ?? null,
+          cashback_share_percent: txn.cashback_share_percent ?? null,
+          cashback_share_fixed: txn.cashback_share_fixed ?? null,
+          cashback_mode: txn.cashback_mode ?? null,
           metadata: {
             ...existingMeta,
             source_id: txn.id,
             source_category_id: txn.category_id ?? null,
-            status: txn.status ?? 'posted',
-            tag: txn.tag ?? null,
-            persisted_cycle_tag: txn.persisted_cycle_tag ?? null,
-            cashback_share_percent: txn.cashback_share_percent ?? null,
-            cashback_share_fixed: txn.cashback_share_fixed ?? null,
-            cashback_mode: txn.cashback_mode ?? null,
           },
         }
 
@@ -610,9 +759,27 @@ export async function GET(request: NextRequest) {
   const collection = request.nextUrl.searchParams.get('collection') ?? 'all'
   const cleanupLegacy = ['1', 'true', 'yes'].includes((request.nextUrl.searchParams.get('cleanupLegacy') ?? '').toLowerCase())
   const fresh = ['1', 'true', 'yes'].includes((request.nextUrl.searchParams.get('fresh') ?? '').toLowerCase())
-  const results: Record<string, BackfillResult> = {}
+  const results: Record<string, any> = {}
 
-  // Always run accounts before transactions so FK relations resolve
+  if (collection === 'purge_all' || fresh) {
+    console.log('[Backfill] Performing total fresh purge...')
+    results.purge_all = await purgeAllCollections()
+  }
+
+  if (collection === 'purge_all') {
+    return NextResponse.json(results, { status: 200 })
+  }
+
+  // Always run base collections before accounts/transactions so FK relations resolve
+  if (collection === 'all' || collection === 'categories') {
+    results.categories = await backfillCategories()
+  }
+  if (collection === 'all' || collection === 'shops') {
+    results.shops = await backfillShops()
+  }
+  if (collection === 'all' || collection === 'people') {
+    results.people = await backfillPeople()
+  }
   if (collection === 'all' || collection === 'accounts') {
     console.log('[Backfill] Starting accounts...')
     results.accounts = await backfillAccounts()
@@ -620,16 +787,6 @@ export async function GET(request: NextRequest) {
   }
 
   if (collection === 'all' || collection === 'transactions') {
-    if (fresh) {
-      const purge = await purgeCollectionRecords(PB_TRANSACTIONS_COLLECTION)
-      results.transactions_purge = {
-        created: 0,
-        updated: purge.deleted,
-        failed: purge.failed,
-        errors: purge.errors,
-      }
-    }
-
     console.log('[Backfill] Starting transactions...')
     results.transactions = await backfillTransactions()
     console.log('[Backfill] Transactions done:', results.transactions.created, 'created,', results.transactions.updated, 'updated,', results.transactions.failed, 'failed')

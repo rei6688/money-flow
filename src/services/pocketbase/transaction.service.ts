@@ -25,13 +25,18 @@ type PocketBaseTransaction = {
   to_account_id: string; // Target account for transfers
   date: string; // ISO date
   description: string; // Transaction details
-  amount: number; // Raw amount
+  amount: number; // Current amount (compatibility)
+  original_amount: number; // Raw amount before cashback
   final_price: number; // Amount after cashback
   type: 'income' | 'expense' | 'transfer' | 'debt' | 'repayment';
   category_id: string;
   shop_id: string;
   person_id: string;
   cashback_amount: number;
+  status?: string;
+  tag?: string;
+  debt_cycle_tag?: string;
+  statement_cycle_tag?: string;
   is_installment: boolean;
   parent_transaction_id: string;
   metadata: {
@@ -59,6 +64,7 @@ type FlatTransactionRow = {
   created_at: string;
   created_by: string | null;
   amount: number;
+  original_amount: number;
   type: 'income' | 'expense' | 'transfer' | 'debt' | 'repayment';
   account_id: string;
   target_account_id: string | null;
@@ -67,6 +73,8 @@ type FlatTransactionRow = {
   metadata: Json | null;
   shop_id: string | null;
   persisted_cycle_tag?: string | null;
+  debt_cycle_tag?: string | null;
+  statement_cycle_tag?: string | null;
   is_installment?: boolean | null;
   installment_plan_id?: string | null;
   cashback_share_percent?: number | null;
@@ -84,6 +92,7 @@ export type PocketBaseTransactionMutationInput = {
   occurred_at: string;
   note?: string | null;
   amount: number;
+  original_amount?: number | null;
   type: 'income' | 'expense' | 'transfer' | 'debt' | 'repayment';
   account_id: string;
   target_account_id?: string | null;
@@ -94,6 +103,8 @@ export type PocketBaseTransactionMutationInput = {
   is_installment?: boolean;
   linked_transaction_id?: string | null;
   persisted_cycle_tag?: string | null;
+  debt_cycle_tag?: string | null;
+  statement_cycle_tag?: string | null;
   cashback_mode?: CashbackMode | null;
   cashback_share_percent?: number | null;
   cashback_share_fixed?: number | null;
@@ -120,6 +131,7 @@ function buildPocketBaseMutationPayload(input: PocketBaseTransactionMutationInpu
     date: input.occurred_at,
     description: input.note ?? '',
     amount: input.amount,
+    original_amount: input.amount, // For mutations, we assume input.amount is the base
     final_price: input.final_price ?? input.amount,
     type: input.type,
     account_id: input.account_id,
@@ -130,6 +142,9 @@ function buildPocketBaseMutationPayload(input: PocketBaseTransactionMutationInpu
     cashback_amount: 0,
     is_installment: Boolean(input.is_installment),
     parent_transaction_id: input.linked_transaction_id ?? '',
+    persisted_cycle_tag: input.persisted_cycle_tag ?? null,
+    debt_cycle_tag: input.debt_cycle_tag ?? null,
+    statement_cycle_tag: input.statement_cycle_tag ?? null,
     metadata,
   };
 }
@@ -153,11 +168,12 @@ export function mapPocketBaseTransactionRow(
     id: record.id,
     occurred_at: record.date,
     note: record.description || null,
-    status: 'posted', // PB doesn't have status field, default to 'posted'
-    tag: null, // PB doesn't use tag field currently
+    status: (record.status as any) || 'posted',
+    tag: record.tag || null,
     created_at: record.date, // Use transaction date as created_at
     created_by: null, // PB doesn't track creator
     amount: record.amount,
+    original_amount: record.original_amount || record.amount,
     type: record.type,
     account_id: record.account_id || '',
     target_account_id: record.to_account_id || null,
@@ -165,7 +181,9 @@ export function mapPocketBaseTransactionRow(
     person_id: record.person_id || null,
     metadata: record.metadata as Json,
     shop_id: record.shop_id || null,
-    persisted_cycle_tag: persistedCycleTag,
+    persisted_cycle_tag: record.persisted_cycle_tag || persistedCycleTag,
+    debt_cycle_tag: record.debt_cycle_tag || null,
+    statement_cycle_tag: record.statement_cycle_tag || null,
     is_installment: record.is_installment || null,
     installment_plan_id: null, // PB uses parent_transaction_id instead
     cashback_share_percent: cashbackSharePercent,
