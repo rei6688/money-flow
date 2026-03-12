@@ -35,6 +35,11 @@ This document outlines the current status of the People Details UI refactor and 
 - **Header Structure**: The "Cycle Summary" (Progress Bar) and "Balance Breakdown" are now merged into a single cohesive layout.
 - **Reward Progress**: The Cashback Performance section is now forced to be always visible (`LUÔN show`) in the header for better visibility of credit card goals.
 
+### 7. Connection Timeout Error (PocketBase)
+- **Problem**: Occasional `TypeError: fetch failed` with `ConnectTimeoutError` (UND_ERR_CONNECT_TIMEOUT) when opening account links in a new tab.
+- **Details**: `GET /accounts/[id]` takes up to 27s and sometimes times out (default 10s).
+- **Potential Cause**: Networking issues or excessive cold-start/latency from the PocketBase API (`api-db.reiwarden.io.vn`). Need to check if request batching or optimized fetching can reduce this.
+
 ---
 
 ## 🛠️ Account Re-migration Plan (Next Agent)
