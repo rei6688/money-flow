@@ -25,13 +25,16 @@ type PocketBaseTransaction = {
   to_account_id: string; // Target account for transfers
   date: string; // ISO date
   description: string; // Transaction details
-  amount: number; // Raw amount
+  amount: number; // Current amount (compatibility)
+  original_amount: number; // Raw amount before cashback
   final_price: number; // Amount after cashback
   type: 'income' | 'expense' | 'transfer' | 'debt' | 'repayment';
   category_id: string;
   shop_id: string;
   person_id: string;
   cashback_amount: number;
+  status?: string;
+  tag?: string;
   is_installment: boolean;
   parent_transaction_id: string;
   metadata: {
@@ -59,6 +62,7 @@ type FlatTransactionRow = {
   created_at: string;
   created_by: string | null;
   amount: number;
+  original_amount: number;
   type: 'income' | 'expense' | 'transfer' | 'debt' | 'repayment';
   account_id: string;
   target_account_id: string | null;
@@ -84,6 +88,7 @@ export type PocketBaseTransactionMutationInput = {
   occurred_at: string;
   note?: string | null;
   amount: number;
+  original_amount?: number | null;
   type: 'income' | 'expense' | 'transfer' | 'debt' | 'repayment';
   account_id: string;
   target_account_id?: string | null;
@@ -120,6 +125,7 @@ function buildPocketBaseMutationPayload(input: PocketBaseTransactionMutationInpu
     date: input.occurred_at,
     description: input.note ?? '',
     amount: input.amount,
+    original_amount: input.amount, // For mutations, we assume input.amount is the base
     final_price: input.final_price ?? input.amount,
     type: input.type,
     account_id: input.account_id,
@@ -153,11 +159,12 @@ export function mapPocketBaseTransactionRow(
     id: record.id,
     occurred_at: record.date,
     note: record.description || null,
-    status: 'posted', // PB doesn't have status field, default to 'posted'
-    tag: null, // PB doesn't use tag field currently
+    status: (record.status as any) || 'posted',
+    tag: record.tag || null,
     created_at: record.date, // Use transaction date as created_at
     created_by: null, // PB doesn't track creator
     amount: record.amount,
+    original_amount: record.original_amount || record.amount,
     type: record.type,
     account_id: record.account_id || '',
     target_account_id: record.to_account_id || null,

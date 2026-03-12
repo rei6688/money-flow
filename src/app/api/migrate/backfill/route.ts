@@ -195,9 +195,9 @@ async function buildIdBridgeMaps() {
     supabase.from('shops').select('id,name'),
     supabase.from('people').select('id,name'),
     loadPocketBaseLookupRows(PB_ACCOUNTS_COLLECTION, 'id,name,slug,account_number'),
-    loadPocketBaseLookupRows(PB_CATEGORIES_COLLECTION, 'id,name,type'),
-    loadPocketBaseLookupRows(PB_SHOPS_COLLECTION, 'id,name'),
-    loadPocketBaseLookupRows(PB_PEOPLE_COLLECTION, 'id,name'),
+    loadPocketBaseLookupRows(PB_CATEGORIES_COLLECTION, 'id,name,type,slug'),
+    loadPocketBaseLookupRows(PB_SHOPS_COLLECTION, 'id,name,slug'),
+    loadPocketBaseLookupRows(PB_PEOPLE_COLLECTION, 'id,name,slug'),
   ])
 
   if (supabaseAccountsResult.error) throw new Error(`accounts map fetch failed: ${supabaseAccountsResult.error.message}`)
@@ -254,38 +254,44 @@ async function buildIdBridgeMaps() {
   }
 
   const pbCategoryByNameType = buildNameTypeMap(pbCategories, true)
+  const pbCategoryBySlug = new Map<string, string>()
+  pbCategories.forEach(row => { if (row.slug) pbCategoryBySlug.set(row.slug, row.id) })
   const pbCategoryById = new Set(pbCategories.map((row) => row.id))
+
   for (const category of (supabaseCategoriesResult.data ?? []) as SupabaseRow[]) {
     if (isPocketBaseId(category.id) && pbCategoryById.has(category.id)) {
       categoryMap.set(category.id, category.id)
       continue
     }
-    const key = `${normalizeText(category.name)}::${normalizeText(category.type)}`
-    const match = pickUnique(pbCategoryByNameType.get(key) ?? [])
+    const match = pbCategoryBySlug.get(category.id) || pickUnique(pbCategoryByNameType.get(`${normalizeText(category.name)}::${normalizeText(category.type)}`) ?? [])
     if (match) categoryMap.set(category.id, match)
   }
 
   const pbShopByName = buildNameTypeMap(pbShops)
+  const pbShopBySlug = new Map<string, string>()
+  pbShops.forEach(row => { if (row.slug) pbShopBySlug.set(row.slug, row.id) })
   const pbShopById = new Set(pbShops.map((row) => row.id))
+
   for (const shop of (supabaseShopsResult.data ?? []) as SupabaseRow[]) {
     if (isPocketBaseId(shop.id) && pbShopById.has(shop.id)) {
       shopMap.set(shop.id, shop.id)
       continue
     }
-    const key = normalizeText(shop.name)
-    const match = pickUnique(pbShopByName.get(key) ?? [])
+    const match = pbShopBySlug.get(shop.id) || pickUnique(pbShopByName.get(normalizeText(shop.name)) ?? [])
     if (match) shopMap.set(shop.id, match)
   }
 
   const pbPersonByName = buildNameTypeMap(pbPeople)
+  const pbPersonBySlug = new Map<string, string>()
+  pbPeople.forEach(row => { if (row.slug) pbPersonBySlug.set(row.slug, row.id) })
   const pbPersonById = new Set(pbPeople.map((row) => row.id))
+
   for (const person of (supabasePeopleResult.data ?? []) as SupabaseRow[]) {
     if (isPocketBaseId(person.id) && pbPersonById.has(person.id)) {
       personMap.set(person.id, person.id)
       continue
     }
-    const key = normalizeText(person.name)
-    const match = pickUnique(pbPersonByName.get(key) ?? [])
+    const match = pbPersonBySlug.get(person.id) || pickUnique(pbPersonByName.get(normalizeText(person.name)) ?? [])
     if (match) personMap.set(person.id, match)
   }
 
@@ -522,7 +528,7 @@ async function backfillTransactions(): Promise<BackfillResult> {
     const { data: transactionsRaw, error } = await supabase
       .from('transactions')
       .select(
-        'id, occurred_at, note, type, account_id, target_account_id, category_id, person_id, shop_id, amount, status, tag, persisted_cycle_tag, cashback_share_percent, cashback_share_fixed, cashback_mode, metadata',
+        'id, occurred_at, note, type, account_id, target_account_id, category_id, person_id, shop_id, amount, status, tag, persisted_cycle_tag, cashback_share_percent, cashback_share_fixed, cashback_mode, metadata, parent_transaction_id, is_installment, installment_plan_id, original_amount, final_price',
       )
       .order('occurred_at', { ascending: true })
       .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1)
@@ -566,9 +572,11 @@ async function backfillTransactions(): Promise<BackfillResult> {
           person_id: mappedPersonId,
           shop_id: mappedShopId,
           amount: txn.amount,
-          final_price: txn.amount,
-          cashback_amount: 0,
+          original_amount: txn.original_amount ?? txn.amount,
+          final_price: txn.final_price ?? txn.amount,
+          cashback_amount: (txn.original_amount ?? txn.amount) - (txn.final_price ?? txn.amount),
           is_installment: txn.is_installment ?? false,
+          installment_plan_id: txn.installment_plan_id ? toPocketBaseId(txn.installment_plan_id, 'installments') : null,
           parent_transaction_id: txn.parent_transaction_id ? toPocketBaseId(txn.parent_transaction_id, 'transactions') : '',
           tag: txn.tag ?? null,
           persisted_cycle_tag: txn.persisted_cycle_tag ?? null,

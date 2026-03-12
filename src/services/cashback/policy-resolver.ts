@@ -1,6 +1,8 @@
 import { parseCashbackConfig, calculateBankCashback, CashbackLevel, CashbackCategoryRule, normalizeRate } from '@/lib/cashback'
 import { CashbackPolicyMetadata } from '@/types/cashback.types'
 
+const DEBUG_CASHBACK = process.env.DEBUG_CASHBACK === 'true' || process.env.DEBUG_CASHBACK === '1'
+
 export type CashbackPolicyResult = {
     rate: number
     maxReward?: number
@@ -64,7 +66,21 @@ export function resolveCashbackPolicy(params: {
             if (categoryId && qualifiedTiers.length > 0) {
                 for (const tier of qualifiedTiers) {
                     const policies = Array.isArray(tier.policies) ? tier.policies : (tier.rules || []);
-                    const found = policies.find((p: any) => p.categoryIds?.includes(categoryId) || p.cat_ids?.includes(categoryId));
+                    // Priority 1: ID Match (categoryIds or cat_ids)
+                    let found = policies.find((p: any) => 
+                        (p.categoryIds && p.categoryIds.includes(categoryId)) || 
+                        (p.cat_ids && p.cat_ids.includes(categoryId))
+                    );
+
+                    // Priority 2: Name Match Heuristic
+                    if (!found && categoryName) {
+                        const lowerName = categoryName.toLowerCase();
+                        found = policies.find((p: any) => {
+                            const names = (p.categoryNames || []).map((n: string) => n.toLowerCase());
+                            return names.some((n: string) => lowerName.includes(n) || n.includes(lowerName));
+                        });
+                    }
+
                     if (found) {
                         matchedPolicy = { ...found, tier };
                         break;
@@ -105,12 +121,27 @@ export function resolveCashbackPolicy(params: {
                 };
             } else {
                 finalRate = tieredBaseRate;
+                if (DEBUG_CASHBACK) {
+                    console.log(`[Cashback Debug] Tiered: No qualified tiers, falling back to tiered base rate`);
+                }
             }
         } else if (account.cb_type === 'simple' && Array.isArray(account.cb_rules_json)) {
             const rules = account.cb_rules_json as any[];
             let matchedRule = categoryId ? rules.find((r: any) => r.categoryIds?.includes(categoryId) || r.cat_ids?.includes(categoryId)) : null;
 
             // Fallback: if categoryId didn't match, try categoryName heuristic
+            if (!matchedRule && categoryName) {
+                const lowerName = categoryName.toLowerCase();
+                matchedRule = rules.find((r: any) => {
+                    const names = (r.categoryNames || []).map((n: string) => n.toLowerCase());
+                    return names.some((n: string) => lowerName.includes(n) || n.includes(lowerName));
+                });
+                if (matchedRule && DEBUG_CASHBACK) {
+                    console.log(`[Cashback Debug] Simple: Name-based fallback matched for categoryName '${categoryName}'`);
+                }
+            }
+
+            // Legacy fallback: if categoryId didn't match and no name match, try categoryName heuristic (old logic)
             if (!matchedRule && categoryName && rules.length > 0) {
                 const lowerName = categoryName.toLowerCase();
                 if (lowerName.includes('online') || lowerName.includes('shopping')) {
@@ -118,6 +149,9 @@ export function resolveCashbackPolicy(params: {
                 }
                 if (!matchedRule && rules.length > 0) {
                     matchedRule = rules[0]; // Use first rule as fallback
+                }
+                if (matchedRule && DEBUG_CASHBACK) {
+                    console.log(`[Cashback Debug] Simple: Legacy name-based fallback matched for categoryName '${categoryName}'`);
                 }
             }
 
@@ -214,9 +248,18 @@ export function resolveCashbackPolicy(params: {
     if (categoryId && qualifiedLevels.length > 0) {
         for (const lvl of qualifiedLevels) {
             if (lvl.rules && lvl.rules.length > 0) {
-                const matchingRules = lvl.rules.filter(rule =>
-                    rule.categoryIds.includes(categoryId)
-                )
+                const matchingRules = lvl.rules.filter(rule => {
+                    const hasIdMatch = (rule as any).categoryIds?.includes(categoryId) || (rule as any).cat_ids?.includes(categoryId)
+                    if (hasIdMatch) return true
+                    
+                    // Priority 2: Name Match Fallback
+                    if (categoryName) {
+                        const lowerName = categoryName.toLowerCase()
+                        const names = ((rule as any).categoryNames || []).map((n: string) => n.toLowerCase())
+                        return names.some((n: string) => lowerName.includes(n) || n.includes(lowerName))
+                    }
+                    return false
+                })
 
                 if (matchingRules.length > 0) {
                     // Sort matching rules within THIS level by specificity

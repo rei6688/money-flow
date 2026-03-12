@@ -90,12 +90,23 @@ function parseConfigCandidate(raw: Record<string, unknown> | null, source: strin
         minTotalSpend: Number(lvl.minTotalSpend ?? 0),
         defaultRate: lvl.defaultRate !== undefined && lvl.defaultRate !== null ? Number(lvl.defaultRate) : null,
         rules: Array.isArray(lvl.rules ?? lvl.categoryRules) ? (lvl.rules ?? lvl.categoryRules).map((rule: any) => ({
-          id: String(rule.id || Math.random().toString(36).substr(2, 9)),
-          categoryIds: Array.isArray(rule.categoryIds) ? rule.categoryIds.map(String) : [],
+          id: String(rule.id || Math.random().toString(36).substring(2, 9)),
+          categoryIds: (Array.isArray(rule.categoryIds) ? rule.categoryIds : (Array.isArray(rule.cat_ids) ? rule.cat_ids : [])).map(String),
           rate: Number(rule.rate ?? 0),
           maxReward: rule.maxReward !== undefined && rule.maxReward !== null ? Number(rule.maxReward) : null,
         })) : [],
-      })) : undefined,
+      })) : (Array.isArray(p.rules_json_v2) ? [{
+        id: 'rules_v2_default',
+        name: 'Default Level',
+        minTotalSpend: 0,
+        defaultRate: null,
+        rules: p.rules_json_v2.map((rule: any) => ({
+          id: String(rule.id || Math.random().toString(36).substring(2, 9)),
+          categoryIds: (Array.isArray(rule.categoryIds) ? rule.categoryIds : (Array.isArray(rule.cat_ids) ? rule.cat_ids : [])).map(String),
+          rate: Number(rule.rate ?? 0),
+          maxReward: rule.maxReward !== undefined && rule.maxReward !== null ? Number(rule.maxReward) : null,
+        }))
+      }] : undefined),
     };
   }
 
