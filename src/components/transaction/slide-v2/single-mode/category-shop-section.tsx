@@ -306,6 +306,7 @@ export function CategoryShopSection({
 
   // Auto-select defaults logic
   useEffect(() => {
+    if (isEditingMode) return;
     const currentCategoryId = form.getValues("category_id");
     const isCurrentCategoryCompatible =
       !!currentCategoryId &&

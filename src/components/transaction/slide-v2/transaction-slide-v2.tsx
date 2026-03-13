@@ -306,6 +306,18 @@ export function TransactionSlideV2({
   });
 
   const { isDirty: isSingleDirty } = singleForm.formState;
+  const cashbackPercentWatch = useWatch({
+    control: singleForm.control,
+    name: "cashback_share_percent",
+  });
+  const cashbackFixedWatch = useWatch({
+    control: singleForm.control,
+    name: "cashback_share_fixed",
+  });
+  const isCashbackExpanded = useWatch({
+    control: singleForm.control,
+    name: "ui_is_cashback_expanded",
+  });
 
   // --- Bulk Transaction Form ---
   const bulkForm = useForm<BulkTransactionFormValues>({
@@ -330,6 +342,19 @@ export function TransactionSlideV2({
   const onAddNewShop = () => {
     setIsShopDialogOpen(true);
   };
+
+  useEffect(() => {
+    const hasCashbackInput = Boolean(
+      cashbackPercentWatch || cashbackFixedWatch,
+    );
+    if (
+      isEditingContext &&
+      hasCashbackInput &&
+      !singleForm.getValues("ui_is_cashback_expanded")
+    ) {
+      singleForm.setValue("ui_is_cashback_expanded", true);
+    }
+  }, [cashbackPercentWatch, cashbackFixedWatch, isEditingContext, singleForm]);
 
   const { isDirty: isBulkDirty } = bulkForm.formState;
 
@@ -1035,36 +1060,57 @@ export function TransactionSlideV2({
                           operationMode={operationMode}
                         />
 
-                        <CategoryShopSection
-                          shops={localShops}
-                          categories={localCategories}
-                          onAddNewCategory={() => setIsCategoryDialogOpen(true)}
-                          onAddNewShop={onAddNewShop}
-                          isLoadingCategories={isLoadingCategories}
-                          isLoadingShops={isLoadingShops}
-                          isEditing={isEditingContext}
-                        />
+                        <div className="rounded-2xl border border-slate-200 bg-white shadow-sm p-5 space-y-6">
+                          <CategoryShopSection
+                            shops={localShops}
+                            categories={localCategories}
+                            onAddNewCategory={() =>
+                              setIsCategoryDialogOpen(true)
+                            }
+                            onAddNewShop={onAddNewShop}
+                            isLoadingCategories={isLoadingCategories}
+                            isLoadingShops={isLoadingShops}
+                            isEditing={isEditingContext}
+                          />
 
-                        <AmountSection />
+                          <div className="space-y-4">
+                            <AmountSection />
 
-                        <div className="grid grid-cols-1 gap-4 pt-2">
+                            <div className="flex items-center justify-between border-t border-slate-100/70 pt-4">
+                              <div>
+                                <p className="text-[9px] font-black uppercase tracking-[0.4em] text-slate-400">
+                                  Cashback Reward
+                                </p>
+                                <p className="text-[10px] text-slate-500">
+                                  Toggle to reveal optimizations
+                                </p>
+                              </div>
+                              <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest">
+                                <span>Show</span>
+                                <Switch
+                                  checked={Boolean(isCashbackExpanded)}
+                                  onCheckedChange={(checked) =>
+                                    singleForm.setValue(
+                                      "ui_is_cashback_expanded",
+                                      checked,
+                                    )
+                                  }
+                                />
+                              </div>
+                            </div>
+
+                            <CashbackSection
+                              accounts={accounts}
+                              categories={categories}
+                              hideHeader
+                            />
+                          </div>
+                        </div>
+
+                        <div className="rounded-2xl border border-slate-200 bg-white shadow-sm p-4 space-y-4">
                           <InstallmentSelector />
                           <SplitBillSection people={people} />
                         </div>
-                      </div>
-
-                      {/* C. PAYMENTS & PROMOTIONS */}
-                      <div className="space-y-4 pt-6 border-t border-slate-100">
-                        <div className="flex items-center justify-between px-1">
-                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                            Optimizations & Add-ons
-                          </span>
-                        </div>
-
-                        <CashbackSection
-                          accounts={accounts}
-                          categories={categories}
-                        />
                       </div>
                     </form>
                   </TooltipProvider>

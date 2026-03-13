@@ -35,7 +35,10 @@
 - Manually sanity-check:
   - Add txn with fee: UI, total, note marker formatting.
   - Account selector sub-row: edit account slide stacking + PB admin link.
-  - `/accounts/[id]` Flow: People links open `/people/<pocketbaseId>` (not UUID).
+- `/accounts/[id]` Flow: People links open `/people/<pocketbaseId>` (not UUID).
+
+## Pending awareness
+- `SplitBillSection` (`src/components/transaction/slide-v2/single-mode/split-bill-section.tsx`) still has an outstanding selector/sync issue; the Installment + Split Bill group now sits at the bottom for visibility, but plan to revisit the underlying bug after this UI iteration.
 
 ## Test Notes
 - `npm run lint`: fails (repo-wide lint includes `Archive/` + `.archive/` and many deprecated files).
