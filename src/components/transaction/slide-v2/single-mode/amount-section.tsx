@@ -15,6 +15,7 @@ import { formatShortVietnameseCurrency } from "@/lib/number-to-text";
 import { SingleTransactionFormValues } from "../types";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 
 export function AmountSection() {
   const form = useFormContext<SingleTransactionFormValues>();
@@ -22,6 +23,10 @@ export function AmountSection() {
   const serviceFee = useWatch({ control: form.control, name: "service_fee" });
   const type = useWatch({ control: form.control, name: "type" });
   const isHideFee = type === "income" || type === "repayment";
+  const isCashbackExpanded = useWatch({
+    control: form.control,
+    name: "ui_is_cashback_expanded",
+  });
 
   const [isFeeVisible, setIsFeeVisible] = useState<boolean>(() => {
     const existing = form.getValues("service_fee");
@@ -46,20 +51,21 @@ export function AmountSection() {
   const fee = isFeeVisible ? Number(serviceFee) || 0 : 0;
   const total = principal + fee;
 
-  const totalText = useMemo(() => {
-    return new Intl.NumberFormat("vi-VN").format(total);
-  }, [total]);
+  const totalText = useMemo(
+    () => new Intl.NumberFormat("vi-VN").format(total),
+    [total],
+  );
 
   return (
     <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
       <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="p-5 space-y-6">
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
+          <div>
+            <div className="flex items-center justify-between mb-2">
               <p className="text-[10px] font-black uppercase tracking-[0.4em] text-slate-400">
                 Principal Amount
               </p>
-              <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400">
+              <span className="text-[9px] text-slate-500 font-bold uppercase tracking-widest">
                 {principal > 0
                   ? formatShortVietnameseCurrency(principal)
                   : "Zero amount"}
@@ -74,7 +80,7 @@ export function AmountSection() {
                     <SmartAmountInput
                       value={field.value}
                       onChange={field.onChange}
-                      hideLabel={true}
+                      hideLabel
                       className="text-4xl font-black h-16 bg-slate-50 border border-slate-200 rounded-2xl shadow-inner focus-visible:ring-0 focus-visible:border-indigo-500 transition-all px-3"
                       placeholder="0"
                     />
@@ -107,7 +113,7 @@ export function AmountSection() {
                   </span>
                 )}
               </div>
-              {isFeeVisible ? (
+              {isFeeVisible && (
                 <div className="flex items-center gap-3">
                   <FormField
                     control={form.control}
@@ -121,13 +127,13 @@ export function AmountSection() {
                           <SmartAmountInput
                             value={field.value || undefined}
                             onChange={field.onChange}
-                            hideLabel={true}
+                            hideLabel
                             placeholder="0"
                             className="h-12 font-black bg-white border border-slate-200 rounded-2xl focus-visible:border-indigo-500 focus-visible:ring-0 text-right px-3"
-                            compact={true}
-                            hideCurrencyText={true}
-                            hideCalculator={true}
-                            hideClearButton={true}
+                            compact
+                            hideCurrencyText
+                            hideCalculator
+                            hideClearButton
                           />
                         </FormControl>
                         <FormMessage />
@@ -146,29 +152,31 @@ export function AmountSection() {
                     <X className="h-4 w-4" />
                   </button>
                 </div>
-              ) : (
-                <p className="text-[9px] text-slate-400">
-                  Service fee is optional and only shown on expense/debt flows.
-                </p>
               )}
             </div>
           )}
 
-          <div className="grid gap-4 md:grid-cols-[1fr_auto] items-end">
-            <div className="text-[9px] uppercase tracking-[0.4em] text-slate-400">
-              {/* spacer */}
+          <div className="flex items-center justify-between text-[10px] uppercase tracking-[0.4em] text-slate-400">
+            <div className="flex items-center gap-2">
+              <span>Accept cashback share</span>
+              <Switch
+                checked={Boolean(isCashbackExpanded)}
+                onCheckedChange={(checked) =>
+                  form.setValue("ui_is_cashback_expanded", checked)
+                }
+              />
             </div>
-            <div className="rounded-2xl bg-indigo-600 text-white p-4 flex flex-col items-center justify-center gap-1 min-w-[140px] shadow-lg shadow-indigo-100/70">
-              <span className="text-[8px] uppercase tracking-[0.5em] text-indigo-100/80">
-                Total
-              </span>
-              <span className="text-2xl font-black tabular-nums">
+            <div className="text-right">
+              <div className="text-xs font-bold text-indigo-600 uppercase">
+                TOTAL
+              </div>
+              <div className="text-2xl font-black text-slate-900 tabular-nums">
                 {totalText}
-              </span>
+              </div>
               {fee > 0 && (
-                <span className="text-[9px] text-indigo-100 uppercase tracking-[0.4em]">
+                <div className="text-[9px] uppercase tracking-[0.4em] text-indigo-500">
                   Fee: {new Intl.NumberFormat("vi-VN").format(fee)}
-                </span>
+                </div>
               )}
             </div>
           </div>
