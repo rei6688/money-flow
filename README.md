@@ -28,6 +28,7 @@ Money Flow 3 is a comprehensive personal finance application focused on transact
 ### 🔄 Latest Phase Handover (Mar 11, 2026)
 - [People + Sheet Config + Cycle UX Handover](./docs/handovers/PHASE_PEOPLE_SHEET_HANDOVER_2026-03-11.md)
 - Contains: progress report, unresolved issues, migration gaps (Supabase vs PocketBase), next-agent priority plan.
+- Branch handover (current work): [fix-people-account-ui-cleanup](./.agent/context/fix-people-account-ui-cleanup.md)
 
 ### 🤖 For AI Agents (MANDATORY)
 1. **[MASTER_CONTEXT_LOAD.md](./.agent/prompts/MASTER_CONTEXT_LOAD.md)**: Run this first to initialize your session with full repo context.
