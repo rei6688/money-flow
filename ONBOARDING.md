@@ -7,6 +7,7 @@
 ## 🎯 Your First 30 Minutes
 
 ### ⚠️ Current Continuation Context (March 11, 2026)
+- Branch handover (current work): [.agent/context/fix-people-account-ui-cleanup.md](./.agent/context/fix-people-account-ui-cleanup.md)
 - Read latest handover first: [docs/handovers/PHASE_PEOPLE_SHEET_HANDOVER_2026-03-11.md](./docs/handovers/PHASE_PEOPLE_SHEET_HANDOVER_2026-03-11.md)
 - Focus area moved from transaction slide to People Details migration gaps:
   - Sheet Config blank in some entry paths

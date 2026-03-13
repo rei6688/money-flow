@@ -1,1576 +1,2340 @@
-"use client"
+"use client";
 
-import React from 'react'
-import Link from 'next/link'
-import { useRouter, useSearchParams } from 'next/navigation'
+import React from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
-    ChevronLeft,
-    ChevronDown,
-    Settings,
-    Edit,
-    Check,
-    X,
-    Calendar,
-    User,
-    Zap,
-    Hash,
-    Calculator,
-    Info,
-    Clock,
-    BarChart3,
-    TrendingUp,
-    PlusCircle,
-    Users2,
-    Loader2,
-    Sparkles,
-    ShieldCheck,
-    Target,
-    ArrowUpRight,
-    ArrowDownRight,
-    RefreshCw
-} from 'lucide-react'
-import { cn, formatMoneyVND } from '@/lib/utils'
-import { Account, Category, Transaction } from '@/types/moneyflow.types'
-import { AccountSpendingStats } from '@/types/cashback.types'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { getAccountTypeLabel } from '@/lib/account-utils'
-import { getCreditCardAvailableBalance } from '@/lib/account-balance'
-import { AccountSlideV2 } from './AccountSlideV2'
-import { formatCycleTag, formatCycleTagWithYear } from '@/lib/cycle-utils'
-import { updateAccountInfo } from '@/actions/account-actions'
-import { format } from 'date-fns'
-import { Input } from '@/components/ui/input'
-import { toast } from 'sonner'
-import { isToday, isTomorrow, differenceInDays, startOfDay } from 'date-fns'
-import { normalizeCashbackConfig } from '@/lib/cashback'
-import { normalizeMonthTag } from '@/lib/month-tag'
+  ChevronDown,
+  Settings,
+  Edit,
+  Check,
+  Copy,
+  Database,
+  X,
+  Calendar,
+  User,
+  Zap,
+  Hash,
+  Calculator,
+  Info,
+  Clock,
+  BarChart3,
+  TrendingUp,
+  PlusCircle,
+  Users2,
+  Loader2,
+  Sparkles,
+  ShieldCheck,
+  Target,
+  ArrowUpRight,
+  ArrowDownRight,
+  RefreshCw,
+} from "lucide-react";
+import { cn, formatMoneyVND } from "@/lib/utils";
+import { Account, Category, Transaction } from "@/types/moneyflow.types";
+import { AccountSpendingStats } from "@/types/cashback.types";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger,
+} from "@/components/ui/hover-card";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { getAccountTypeLabel } from "@/lib/account-utils";
+import { getCreditCardAvailableBalance } from "@/lib/account-balance";
+import { AccountSlideV2 } from "./AccountSlideV2";
+import { formatCycleTag, formatCycleTagWithYear } from "@/lib/cycle-utils";
+import { updateAccountInfo } from "@/actions/account-actions";
+import { format } from "date-fns";
+import { Input } from "@/components/ui/input";
+import { toast } from "sonner";
+import { isToday, isTomorrow, differenceInDays, startOfDay } from "date-fns";
+import { normalizeCashbackConfig } from "@/lib/cashback";
+import { normalizeMonthTag } from "@/lib/month-tag";
 
 interface AccountDetailHeaderV2Props {
-    account: Account
-    allAccounts: Account[]
-    categories: Category[]
-    cashbackStats: AccountSpendingStats | null
-    isCashbackLoading?: boolean
-    initialTransactions: Transaction[]
+  account: Account;
+  allAccounts: Account[];
+  categories: Category[];
+  cashbackStats: AccountSpendingStats | null;
+  isCashbackLoading?: boolean;
+  initialTransactions: Transaction[];
 
-    selectedYear: string | null
-    availableYears: string[]
-    onYearChange: (year: string | null) => void
-    selectedCycle?: string // For dynamic cashback badge display
-    summary?: {
-        yearDebtTotal: number
-        debtTotal: number
-        expensesTotal: number
-        cashbackTotal: number
-        yearExpensesTotal?: number
-        yearPureIncomeTotal?: number
-        yearPureExpenseTotal?: number
-        yearLentTotal?: number
-        yearRepaidTotal?: number
-        pendingCount?: number
-        targetYear?: number
-        cardYearlyCashbackTotal?: number
-        cardYearlyCashbackGivenTotal?: number
-        netProfitYearly?: number
-    }
-    isLoadingPending?: boolean
+  selectedYear: string | null;
+  availableYears: string[];
+  onYearChange: (year: string | null) => void;
+  selectedCycle?: string; // For dynamic cashback badge display
+  summary?: {
+    yearDebtTotal: number;
+    debtTotal: number;
+    expensesTotal: number;
+    cashbackTotal: number;
+    yearExpensesTotal?: number;
+    yearPureIncomeTotal?: number;
+    yearPureExpenseTotal?: number;
+    yearLentTotal?: number;
+    yearRepaidTotal?: number;
+    pendingCount?: number;
+    targetYear?: number;
+    cardYearlyCashbackTotal?: number;
+    cardYearlyCashbackGivenTotal?: number;
+    netProfitYearly?: number;
+  };
+  isLoadingPending?: boolean;
 }
 
-const numberFormatter = new Intl.NumberFormat('en-US', {
-    maximumFractionDigits: 0,
-})
+const numberFormatter = new Intl.NumberFormat("en-US", {
+  maximumFractionDigits: 0,
+});
 
 const formatVNShort = (amount: number) => {
-    const absAmount = Math.abs(amount)
-    if (absAmount >= 1_000_000_000) return `${(amount / 1_000_000_000).toFixed(1)} B`
-    if (absAmount >= 1_000_000) return `${(amount / 1_000_000).toFixed(1)} M`
-    if (absAmount >= 1_000) return `${(amount / 1_000).toFixed(0)} k`
-    return amount.toString()
-}
+  const absAmount = Math.abs(amount);
+  if (absAmount >= 1_000_000_000)
+    return `${(amount / 1_000_000_000).toFixed(1)} B`;
+  if (absAmount >= 1_000_000) return `${(amount / 1_000_000).toFixed(1)} M`;
+  if (absAmount >= 1_000) return `${(amount / 1_000).toFixed(0)} k`;
+  return amount.toString();
+};
 
 function resolveTransactionCycleTag(
-    transaction: Transaction & {
-        persisted_cycle_tag?: string | null
-        derived_cycle_tag?: string | null
-        occurred_at?: string | null
-        date?: string | null
-        created_at?: string | null
-        tag?: string | null
-    },
-    account: Account
+  transaction: Transaction & {
+    persisted_cycle_tag?: string | null;
+    derived_cycle_tag?: string | null;
+    occurred_at?: string | null;
+    date?: string | null;
+    created_at?: string | null;
+    tag?: string | null;
+  },
+  account: Account,
 ): string {
-    const persisted = normalizeMonthTag(transaction.persisted_cycle_tag || '')
-    if (persisted) return persisted
+  const persisted = normalizeMonthTag(transaction.persisted_cycle_tag || "");
+  if (persisted) return persisted;
 
-    const derived = normalizeMonthTag(transaction.derived_cycle_tag || '')
-    if (derived) return derived
+  const derived = normalizeMonthTag(transaction.derived_cycle_tag || "");
+  if (derived) return derived;
 
-    const statementDay = Number(account.statement_day || 0)
-    if (account.type === 'credit_card' && statementDay > 0) {
-        const rawDate = transaction.occurred_at || transaction.date || transaction.created_at
-        if (rawDate) {
-            const parsed = new Date(rawDate)
-            if (!Number.isNaN(parsed.getTime())) {
-                let year = parsed.getFullYear()
-                let month = parsed.getMonth() + 1
-                if (parsed.getDate() > statementDay) {
-                    month += 1
-                    if (month > 12) {
-                        month = 1
-                        year += 1
-                    }
-                }
-                return `${year}-${String(month).padStart(2, '0')}`
-            }
+  const statementDay = Number(account.statement_day || 0);
+  if (account.type === "credit_card" && statementDay > 0) {
+    const rawDate =
+      transaction.occurred_at || transaction.date || transaction.created_at;
+    if (rawDate) {
+      const parsed = new Date(rawDate);
+      if (!Number.isNaN(parsed.getTime())) {
+        let year = parsed.getFullYear();
+        let month = parsed.getMonth() + 1;
+        if (parsed.getDate() > statementDay) {
+          month += 1;
+          if (month > 12) {
+            month = 1;
+            year += 1;
+          }
         }
+        return `${year}-${String(month).padStart(2, "0")}`;
+      }
     }
+  }
 
-    return normalizeMonthTag(transaction.tag || '') || ''
+  return normalizeMonthTag(transaction.tag || "") || "";
 }
 
 export function AccountDetailHeaderV2({
-    account,
-    allAccounts,
-    categories,
-    cashbackStats,
-    isCashbackLoading,
-    initialTransactions,
+  account,
+  allAccounts,
+  categories,
+  cashbackStats,
+  isCashbackLoading,
+  initialTransactions,
 
-    selectedYear,
-    availableYears,
-    onYearChange,
-    selectedCycle,
-    summary,
-    isLoadingPending
+  selectedYear,
+  availableYears,
+  onYearChange,
+  selectedCycle,
+  summary,
+  isLoadingPending,
 }: AccountDetailHeaderV2Props) {
-    const [isPending, startTransition] = React.useTransition()
-    const router = useRouter()
-    const searchParams = useSearchParams()
-    const [isSlideOpen, setIsSlideOpen] = React.useState(false)
-    const [dynamicCashbackStats, setDynamicCashbackStats] = React.useState<AccountSpendingStats | null>(cashbackStats)
-    // Use passed loading prop or fall back to false
-    const effectiveIsCashbackLoading = isCashbackLoading ?? false
-    const [isSyncing, setIsSyncing] = React.useState(false)
+  const [isPending, startTransition] = React.useTransition();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const [isSlideOpen, setIsSlideOpen] = React.useState(false);
+  const [dynamicCashbackStats, setDynamicCashbackStats] =
+    React.useState<AccountSpendingStats | null>(cashbackStats);
+  // Use passed loading prop or fall back to false
+  const effectiveIsCashbackLoading = isCashbackLoading ?? false;
+  const [isSyncing, setIsSyncing] = React.useState(false);
+  const [isAccountIdCopied, setIsAccountIdCopied] = React.useState(false);
 
-    // Sync selected year with URL
-    React.useEffect(() => {
-        const urlYear = searchParams.get('year')
-        if (urlYear && urlYear !== selectedYear) {
-            onYearChange(urlYear)
-        }
-    }, [searchParams, selectedYear, onYearChange])
+  // Sync selected year with URL
+  React.useEffect(() => {
+    const urlYear = searchParams.get("year");
+    if (urlYear && urlYear !== selectedYear) {
+      onYearChange(urlYear);
+    }
+  }, [searchParams, selectedYear, onYearChange]);
 
-    const handleYearChange = (year: string | null) => {
-        startTransition(() => {
-            onYearChange(year)
-            const params = new URLSearchParams(searchParams.toString())
-            if (year) params.set('year', year)
-            else params.delete('year')
-            router.push(`?${params.toString()}`, { scroll: false })
-            router.refresh()
-        })
+  const handleYearChange = (year: string | null) => {
+    startTransition(() => {
+      onYearChange(year);
+      const params = new URLSearchParams(searchParams.toString());
+      if (year) params.set("year", year);
+      else params.delete("year");
+      router.push(`?${params.toString()}`, { scroll: false });
+      router.refresh();
+    });
+  };
+
+  const isCreditCard = account.type === "credit_card";
+  const currentYear = new Date().getFullYear().toString();
+  const isHistoricalYear = !!selectedYear && selectedYear !== currentYear;
+
+  const availableBalance = isCreditCard
+    ? getCreditCardAvailableBalance(account)
+    : (account.current_balance ?? 0);
+  const outstandingBalance = isCreditCard
+    ? Math.abs(account.current_balance ?? 0)
+    : 0;
+
+  // Family Balance Calculation
+  const isParent = account.relationships?.is_parent;
+  const parentId = account.parent_account_id;
+  const accountFamilyId = isParent ? account.id : parentId;
+  const familyChildren = accountFamilyId
+    ? allAccounts.filter(
+        (a) => a.parent_account_id === accountFamilyId && a.id !== account.id,
+      )
+    : [];
+  const childrenBalancesSum = familyChildren.reduce(
+    (sum, child) => sum + (child.current_balance || 0),
+    0,
+  );
+  const mainAccountBalance = isParent
+    ? account.current_balance || 0
+    : allAccounts.find((a) => a.id === parentId)?.current_balance || 0;
+  const familyDebtAbs = Math.abs(mainAccountBalance + childrenBalancesSum);
+  const soloDebtAbs = Math.abs(account.current_balance || 0);
+
+  // Cleanup 'tab' param if present (fix for persistent url)
+  React.useEffect(() => {
+    if (searchParams.has("tab")) {
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete("tab");
+      router.replace(`?${params.toString()}`, { scroll: false });
+    }
+  }, [searchParams, router]);
+
+  // Sync dynamic stats when props update (e.g. after router.refresh())
+  React.useEffect(() => {
+    setDynamicCashbackStats(cashbackStats);
+  }, [cashbackStats]);
+
+  const handleCopyAccountId = React.useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(account.id);
+      setIsAccountIdCopied(true);
+      toast.success("Copied account ID");
+      setTimeout(() => setIsAccountIdCopied(false), 1500);
+    } catch (error) {
+      console.error("Failed to copy account ID:", error);
+      toast.error("Failed to copy account ID");
+    }
+  }, [account.id]);
+
+  const selectedCycleMetrics = React.useMemo(() => {
+    if (
+      !selectedCycle ||
+      selectedCycle === "all" ||
+      !Array.isArray(initialTransactions)
+    ) {
+      return null;
     }
 
-    const isCreditCard = account.type === 'credit_card'
-    const currentYear = new Date().getFullYear().toString()
-    const isHistoricalYear = !!selectedYear && selectedYear !== currentYear
+    const categoryMap = new Map(categories.map((c) => [c.id, c]));
 
-    const availableBalance = isCreditCard ? getCreditCardAvailableBalance(account) : account.current_balance ?? 0
-    const outstandingBalance = isCreditCard ? Math.abs(account.current_balance ?? 0) : 0
+    const cycleTransactions = initialTransactions.filter((tx) => {
+      if (!tx || tx.status === "void") return false;
+      const txCycle = resolveTransactionCycleTag(
+        tx as Transaction & {
+          persisted_cycle_tag?: string | null;
+          derived_cycle_tag?: string | null;
+          occurred_at?: string | null;
+          date?: string | null;
+          created_at?: string | null;
+          tag?: string | null;
+        },
+        account,
+      );
+      return txCycle === selectedCycle;
+    });
 
-    // Family Balance Calculation
-    const isParent = account.relationships?.is_parent
-    const parentId = account.parent_account_id
-    const accountFamilyId = isParent ? account.id : parentId
-    const familyChildren = accountFamilyId ? allAccounts.filter(a => a.parent_account_id === accountFamilyId && a.id !== account.id) : []
-    const childrenBalancesSum = familyChildren.reduce((sum, child) => sum + (child.current_balance || 0), 0)
-    const mainAccountBalance = isParent ? (account.current_balance || 0) : (allAccounts.find(a => a.id === parentId)?.current_balance || 0)
-    const familyDebtAbs = Math.abs(mainAccountBalance + childrenBalancesSum)
-    const soloDebtAbs = Math.abs(account.current_balance || 0)
+    const cycleSpendRows = cycleTransactions.filter((tx: any) =>
+      ["expense", "debt", "service"].includes(tx.type),
+    );
 
-    // Cleanup 'tab' param if present (fix for persistent url)
-    React.useEffect(() => {
-        if (searchParams.has('tab')) {
-            const params = new URLSearchParams(searchParams.toString());
-            params.delete('tab');
-            router.replace(`?${params.toString()}`, { scroll: false });
+    // Calculate earned (est) from cashback_entries
+    const est = cycleSpendRows.reduce((sum: number, tx: any) => {
+      const entries = Array.isArray(tx.cashback_entries)
+        ? tx.cashback_entries
+        : [];
+      const entryAmount = entries.reduce((s: number, e: any) => {
+        // Sum all virtual or real entries
+        if (e.mode === "virtual" || e.mode === "real") {
+          return s + Math.abs(Number(e.amount || 0));
         }
-    }, [searchParams, router]);
+        return s;
+      }, 0);
+      return sum + entryAmount;
+    }, 0);
 
-    // Sync dynamic stats when props update (e.g. after router.refresh())
-    React.useEffect(() => {
-        setDynamicCashbackStats(cashbackStats)
-    }, [cashbackStats])
+    // Calculate shared from share fields
+    const shared = cycleSpendRows.reduce((sum: number, tx: any) => {
+      const sharedFixed = Number(tx.cashback_share_fixed || 0);
+      const rawSharePercent = Number(tx.cashback_share_percent || 0);
+      const sharePercent =
+        rawSharePercent > 1 ? rawSharePercent / 100 : rawSharePercent;
+      const txAmount = Math.abs(Number(tx.amount || 0));
+      const computedShared = txAmount * sharePercent + sharedFixed;
+      const sharedAmount = Number(tx.cashback_share_amount ?? computedShared);
+      return sum + (isNaN(sharedAmount) ? 0 : sharedAmount);
+    }, 0);
 
-    const selectedCycleMetrics = React.useMemo(() => {
-        if (!selectedCycle || selectedCycle === 'all' || !Array.isArray(initialTransactions)) {
-            return null
-        }
+    const actual = cycleTransactions.reduce((sum: number, tx: any) => {
+      if (tx.type !== "income") return sum;
+      const category = tx.category_id ? categoryMap.get(tx.category_id) : null;
+      const categoryName = category?.name?.toLowerCase() || "";
+      if (
+        categoryName.includes("cashback") ||
+        categoryName.includes("hoàn tiền")
+      ) {
+        return sum + Math.abs(Number(tx.amount || 0));
+      }
+      return sum;
+    }, 0);
 
-        const categoryMap = new Map(categories.map(c => [c.id, c]))
+    return {
+      est,
+      shared,
+      profit: est - shared,
+      actual,
+    };
+  }, [selectedCycle, initialTransactions, categories]);
 
-        const cycleTransactions = initialTransactions.filter((tx) => {
-            if (!tx || tx.status === 'void') return false
-            const txCycle = resolveTransactionCycleTag(
-                tx as Transaction & {
-                    persisted_cycle_tag?: string | null
-                    derived_cycle_tag?: string | null
-                    occurred_at?: string | null
-                    date?: string | null
-                    created_at?: string | null
-                    tag?: string | null
-                },
-                account
-            )
-            return txCycle === selectedCycle
-        })
-
-        const cycleSpendRows = cycleTransactions.filter((tx: any) => ['expense', 'debt', 'service'].includes(tx.type))
-
-        // Calculate earned (est) from cashback_entries
-        const est = cycleSpendRows.reduce((sum: number, tx: any) => {
-            const entries = Array.isArray(tx.cashback_entries) ? tx.cashback_entries : []
-            const entryAmount = entries.reduce((s: number, e: any) => {
-                // Sum all virtual or real entries
-                if (e.mode === 'virtual' || e.mode === 'real') {
-                    return s + Math.abs(Number(e.amount || 0))
-                }
-                return s
-            }, 0)
-            return sum + entryAmount
-        }, 0)
-
-        // Calculate shared from share fields
-        const shared = cycleSpendRows.reduce((sum: number, tx: any) => {
-            const sharedFixed = Number(tx.cashback_share_fixed || 0)
-            const rawSharePercent = Number(tx.cashback_share_percent || 0)
-            const sharePercent = rawSharePercent > 1 ? rawSharePercent / 100 : rawSharePercent
-            const txAmount = Math.abs(Number(tx.amount || 0))
-            const computedShared = (txAmount * sharePercent) + sharedFixed
-            const sharedAmount = Number(tx.cashback_share_amount ?? computedShared)
-            return sum + (isNaN(sharedAmount) ? 0 : sharedAmount)
-        }, 0)
-
-        const actual = cycleTransactions.reduce((sum: number, tx: any) => {
-            if (tx.type !== 'income') return sum
-            const category = tx.category_id ? categoryMap.get(tx.category_id) : null
-            const categoryName = category?.name?.toLowerCase() || ''
-            if (categoryName.includes('cashback') || categoryName.includes('hoàn tiền')) {
-                return sum + Math.abs(Number(tx.amount || 0))
-            }
-            return sum
-        }, 0)
-
-        return {
-            est,
-            shared,
-            profit: est - shared,
-            actual,
-        }
-    }, [selectedCycle, initialTransactions, categories])
-
-    const rewardsCount = React.useMemo(() => {
-        try {
-            const program = normalizeCashbackConfig(account.cashback_config, account);
-            const counts = (program.levels || []).reduce((acc: number, lvl: any) => acc + (lvl.rules?.length || 0), 0);
-            if (counts > 0) return counts;
-            if (program.defaultRate > 0) return 1;
-            return 0;
-        } catch (e) { return 0; }
-    }, [account.cashback_config]);
-
-    const [isEditPopoverOpen, setIsEditPopoverOpen] = React.useState(false)
-    const [editValues, setEditValues] = React.useState({
-        account_number: account.account_number || '',
-        receiver_name: account.receiver_name || ''
-    })
-
-    const handleSaveInfo = async () => {
-        try {
-            const hasChanges =
-                editValues.account_number !== (account.account_number || '') ||
-                editValues.receiver_name !== (account.receiver_name || '')
-
-            if (!hasChanges) {
-                setIsEditPopoverOpen(false)
-                return
-            }
-
-            const result = await updateAccountInfo(account.id, {
-                account_number: editValues.account_number || undefined,
-                receiver_name: editValues.receiver_name || undefined
-            })
-
-            if (result.success) {
-                toast.success('Account info updated')
-                setIsEditPopoverOpen(false)
-            } else {
-                toast.error('Failed to update')
-            }
-        } catch (error) {
-            toast.error('Something went wrong')
-        }
+  const rewardsCount = React.useMemo(() => {
+    try {
+      const program = normalizeCashbackConfig(account.cashback_config, account);
+      const counts = (program.levels || []).reduce(
+        (acc: number, lvl: any) => acc + (lvl.rules?.length || 0),
+        0,
+      );
+      if (counts > 0) return counts;
+      if (program.defaultRate > 0) return 1;
+      return 0;
+    } catch (e) {
+      return 0;
     }
+  }, [account.cashback_config]);
 
-    // Helper Component for Sections
-    // Helper Component for Sections
-    const HeaderSection = React.forwardRef<HTMLDivElement, { label: string, children: React.ReactNode, className?: string, borderColor?: string, badge?: React.ReactNode, hint?: string, hideHintInHeader?: boolean } & React.HTMLAttributes<HTMLDivElement>>(
-        ({ label, children, className, borderColor = "border-slate-200", badge, hint, hideHintInHeader, ...props }, ref) => (
-            <div ref={ref} className={cn("relative border rounded-xl px-4 py-1.5 flex flex-col group/header", borderColor, className)} {...props}>
-                <div className="absolute -top-2 left-3 flex items-center gap-2 z-10">
-                    <span className="bg-white px-1.5 text-[9px] font-bold text-slate-400 uppercase tracking-widest">
-                        {label}
-                    </span>
-                    {hint && !hideHintInHeader && (
-                        <span className="text-[7px] text-slate-300 font-black uppercase tracking-widest opacity-0 group-hover/header:opacity-100 transition-all transform translate-x-2 group-hover/header:translate-x-0 duration-300">
-                            • {hint}
-                        </span>
-                    )}
-                    {badge}
-                </div>
-                {children}
-            </div>
-        )
-    )
-    HeaderSection.displayName = "HeaderSection"
+  const [isEditPopoverOpen, setIsEditPopoverOpen] = React.useState(false);
+  const [editValues, setEditValues] = React.useState({
+    account_number: account.account_number || "",
+    receiver_name: account.receiver_name || "",
+  });
 
-    const dueDateBadge = React.useMemo(() => {
-        const now = startOfDay(new Date());
-        let label = "";
-        let dateLabel = "";
-        let isUrgent = false;
+  const handleSaveInfo = async () => {
+    try {
+      const hasChanges =
+        editValues.account_number !== (account.account_number || "") ||
+        editValues.receiver_name !== (account.receiver_name || "");
 
-        if (account.stats?.due_date) {
-            const d = startOfDay(new Date(account.stats.due_date));
-            dateLabel = format(d, 'MMM d').toUpperCase();
-            if (isToday(d)) {
-                label = "Today Due";
-                isUrgent = true;
-            } else if (isTomorrow(d)) {
-                label = "Tomorrow";
-                isUrgent = true;
-            } else {
-                const daysLeft = differenceInDays(d, now);
-                if (daysLeft < 0) {
-                    label = `${Math.abs(daysLeft)} Overdue`;
-                    isUrgent = true;
-                } else {
-                    label = `${daysLeft} Days`.toUpperCase();
-                }
-            }
+      if (!hasChanges) {
+        setIsEditPopoverOpen(false);
+        return;
+      }
+
+      const result = await updateAccountInfo(account.id, {
+        account_number: editValues.account_number || undefined,
+        receiver_name: editValues.receiver_name || undefined,
+      });
+
+      if (result.success) {
+        toast.success("Account info updated");
+        setIsEditPopoverOpen(false);
+      } else {
+        toast.error("Failed to update");
+      }
+    } catch (error) {
+      toast.error("Something went wrong");
+    }
+  };
+
+  // Helper Component for Sections
+  // Helper Component for Sections
+  const HeaderSection = React.forwardRef<
+    HTMLDivElement,
+    {
+      label: string;
+      children: React.ReactNode;
+      className?: string;
+      borderColor?: string;
+      badge?: React.ReactNode;
+      hint?: string;
+      hideHintInHeader?: boolean;
+    } & React.HTMLAttributes<HTMLDivElement>
+  >(
+    (
+      {
+        label,
+        children,
+        className,
+        borderColor = "border-slate-200",
+        badge,
+        hint,
+        hideHintInHeader,
+        ...props
+      },
+      ref,
+    ) => (
+      <div
+        ref={ref}
+        className={cn(
+          "relative border rounded-xl px-4 py-1.5 flex flex-col group/header",
+          borderColor,
+          className,
+        )}
+        {...props}
+      >
+        <div className="absolute -top-2 left-3 flex items-center gap-2 z-10">
+          <span className="bg-white px-1.5 text-[9px] font-bold text-slate-400 uppercase tracking-widest">
+            {label}
+          </span>
+          {hint && !hideHintInHeader && (
+            <span className="text-[7px] text-slate-300 font-black uppercase tracking-widest opacity-0 group-hover/header:opacity-100 transition-all transform translate-x-2 group-hover/header:translate-x-0 duration-300">
+              • {hint}
+            </span>
+          )}
+          {badge}
+        </div>
+        {children}
+      </div>
+    ),
+  );
+  HeaderSection.displayName = "HeaderSection";
+
+  const dueDateBadge = React.useMemo(() => {
+    const now = startOfDay(new Date());
+    let label = "";
+    let dateLabel = "";
+    let isUrgent = false;
+
+    if (account.stats?.due_date) {
+      const d = startOfDay(new Date(account.stats.due_date));
+      dateLabel = format(d, "MMM d").toUpperCase();
+      if (isToday(d)) {
+        label = "Today Due";
+        isUrgent = true;
+      } else if (isTomorrow(d)) {
+        label = "Tomorrow";
+        isUrgent = true;
+      } else {
+        const daysLeft = differenceInDays(d, now);
+        if (daysLeft < 0) {
+          label = `${Math.abs(daysLeft)} Overdue`;
+          isUrgent = true;
         } else {
-            const config = normalizeCashbackConfig(account.cashback_config, account);
-            const rawDueDay = account.due_date || account.credit_card_info?.payment_due_day || config?.dueDate;
-
-            if (rawDueDay) {
-                const d = new Date();
-                d.setDate(rawDueDay);
-                if (d < now) d.setMonth(d.getMonth() + 1);
-                dateLabel = format(d, 'MMM d').toUpperCase();
-                const daysLeft = differenceInDays(startOfDay(d), now);
-
-                if (daysLeft === 0) {
-                    label = "Today Due";
-                    isUrgent = true;
-                } else if (daysLeft === 1) {
-                    label = "Tomorrow";
-                    isUrgent = true;
-                } else {
-                    label = `${daysLeft} Days`.toUpperCase();
-                }
-            }
+          label = `${daysLeft} Days`.toUpperCase();
         }
+      }
+    } else {
+      const config = normalizeCashbackConfig(account.cashback_config, account);
+      const rawDueDay =
+        account.due_date ||
+        account.credit_card_info?.payment_due_day ||
+        config?.dueDate;
 
-        if (!label) return <div className="flex items-center justify-center h-full"><span className="text-[10px] font-black text-slate-400 uppercase tracking-tighter opacity-50">No Due Date</span></div>;
+      if (rawDueDay) {
+        const d = new Date();
+        d.setDate(rawDueDay);
+        if (d < now) d.setMonth(d.getMonth() + 1);
+        dateLabel = format(d, "MMM d").toUpperCase();
+        const daysLeft = differenceInDays(startOfDay(d), now);
 
-        return (
-            <div className="flex flex-col items-center justify-center h-full gap-1">
-                <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest leading-none">Due Term</span>
-                <div className={cn(
-                    "flex items-center gap-1.5 px-2 py-1 rounded-full border text-[9px] font-black tracking-tight shadow-sm whitespace-nowrap",
-                    isUrgent
-                        ? "bg-rose-50 border-rose-200 text-rose-600 animate-pulse shadow-[0_0_10px_rgba(225,29,72,0.1)]"
-                        : "bg-emerald-50 border-emerald-200 text-emerald-700"
-                )}>
-                    <Clock className="h-3 w-3 opacity-70" />
-                    <span>{label}</span>
-                    <span className="opacity-30">|</span>
-                    <Calendar className="h-3 w-3 opacity-70" />
-                    <span>{dateLabel}</span>
-                </div>
-            </div>
-        );
-    }, [account, startOfDay])
+        if (daysLeft === 0) {
+          label = "Today Due";
+          isUrgent = true;
+        } else if (daysLeft === 1) {
+          label = "Tomorrow";
+          isUrgent = true;
+        } else {
+          label = `${daysLeft} Days`.toUpperCase();
+        }
+      }
+    }
+
+    if (!label)
+      return (
+        <div className="flex items-center justify-center h-full">
+          <span className="text-[10px] font-black text-slate-400 uppercase tracking-tighter opacity-50">
+            No Due Date
+          </span>
+        </div>
+      );
 
     return (
-        <div className="bg-white border-b border-slate-200 px-6 py-1.5 flex flex-col gap-2 md:flex-row md:items-stretch sticky top-0 z-60 shadow-sm">
-            <AccountSlideV2
-                open={isSlideOpen}
-                onOpenChange={setIsSlideOpen}
-                account={account}
-                allAccounts={allAccounts}
-                categories={categories}
-                existingAccountNumbers={Array.from(new Set(allAccounts.map(a => a.account_number).filter(Boolean))) as string[]}
-                existingReceiverNames={Array.from(new Set(allAccounts.map(a => a.receiver_name).filter(Boolean))) as string[]}
-            />
-
-            {/* Section 1: Account Identity */}
-            <HeaderSection label="Account" className="min-w-0 sm:min-w-[300px] gap-1 !h-[120px] justify-center pt-2">
-                <div className="flex items-center gap-3">
-                    <Link
-                        href="/accounts"
-                        className="flex items-center justify-center h-8 w-8 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition-colors shrink-0"
-                    >
-                        <ChevronLeft className="h-4 w-4" />
-                    </Link>
-
-                    <div className="relative shrink-0 flex items-center h-12">
-                        {account.image_url ? (
-                            <img src={account.image_url} alt="" className="h-full w-auto max-w-[80px] object-contain transition-all" />
-                        ) : (
-                            <div className="w-12 h-12 overflow-hidden flex items-center justify-center border border-slate-100 bg-white rounded-lg">
-                                <div className="text-xl font-bold text-slate-400 capitalize">{account.name.charAt(0)}</div>
-                            </div>
-                        )}
-                    </div>
-
-                    <div className="flex flex-col min-w-0">
-                        <div className="flex items-center gap-1.5">
-                            <h1 className="text-xs font-black text-slate-900 leading-none truncate" title={account.name}>
-                                {account.name}
-                            </h1>
-                            <Popover open={isEditPopoverOpen} onOpenChange={setIsEditPopoverOpen}>
-                                <PopoverTrigger asChild>
-                                    <button className="text-slate-300 hover:text-indigo-500 transition-colors">
-                                        <Edit className="h-3.5 w-3.5" />
-                                    </button>
-                                </PopoverTrigger>
-                                <PopoverContent
-                                    className="w-[280px] z-[90] shadow-2xl border-indigo-100"
-                                    align="start"
-                                    onOpenAutoFocus={(e) => e.preventDefault()}
-                                >
-                                    <div className="space-y-3 p-1">
-                                        <h4 className="text-[10px] font-black uppercase text-slate-400">Edit Info</h4>
-                                        <div className="space-y-1">
-                                            <span className="text-[10px] text-slate-400 font-bold uppercase">Account Number</span>
-                                            <Input
-                                                value={editValues.account_number}
-                                                onChange={(e) => setEditValues(prev => ({ ...prev, account_number: e.target.value }))}
-                                                placeholder="Account Number"
-                                                className="h-8 text-xs"
-                                            />
-                                        </div>
-                                        <div className="space-y-1">
-                                            <span className="text-[10px] text-slate-400 font-bold uppercase">Receiver Name</span>
-                                            <Input
-                                                value={editValues.receiver_name}
-                                                onChange={(e) => setEditValues(prev => ({ ...prev, receiver_name: e.target.value }))}
-                                                placeholder="Receiver Name"
-                                                className="h-8 text-xs"
-                                            />
-                                        </div>
-                                        <button onClick={handleSaveInfo} className="w-full h-8 bg-indigo-600 text-white text-xs font-bold rounded mt-2">
-                                            Save Changes
-                                        </button>
-                                    </div>
-                                </PopoverContent>
-                            </Popover>
-                        </div>
-
-                        <div className="flex flex-col mt-1.5 gap-1.5">
-                            <div className="flex flex-col gap-1">
-                                <span className="text-[11px] font-black text-slate-500 tracking-wide flex items-center gap-1.5">
-                                    <Hash className="h-3 w-3 text-slate-400 shrink-0" />
-                                    {account.account_number || '•••• •••• ••••'}
-                                </span>
-                                {account.secured_by_account_id && (
-                                    <div className="flex items-center gap-1.5 px-2 py-0.5 bg-amber-50 border border-amber-100 rounded-full w-fit">
-                                        <Zap className="h-2.5 w-2.5 text-amber-500 fill-amber-500" />
-                                        <span className="text-[9px] font-black text-amber-700 uppercase tracking-tighter">Collateral Linked</span>
-                                    </div>
-                                )}
-                            </div>
-                            {account.receiver_name && (
-                                <div className="flex items-center gap-1 pl-0.5 pt-1.5 border-t border-slate-100 min-w-0">
-                                    <User className="h-2.5 w-2.5 text-slate-300 shrink-0" />
-                                    <span className="text-[7.5px] font-black text-slate-400 uppercase tracking-widest leading-none truncate whitespace-nowrap block">
-                                        {account.receiver_name}
-                                    </span>
-                                </div>
-                            )}
-                        </div>
-                    </div>
-                </div>
-
-                {rewardsCount > 0 && (
-                    <div className="flex items-center gap-1.5 pl-0.5 mt-1 w-fit">
-                        <HoverCard openDelay={0} closeDelay={150}>
-                            <HoverCardTrigger asChild>
-                                <div className="flex items-center gap-1.5 px-2 py-1 bg-amber-50 border border-amber-100 rounded-md text-amber-700 cursor-help active:scale-95 transition-transform hover:bg-amber-100 hover:border-amber-200 shadow-sm group/badge">
-                                    <Zap className="h-3 w-3 fill-amber-400 text-amber-500 group-hover/badge:animate-pulse" />
-                                    {(() => {
-                                        try {
-                                            const program = normalizeCashbackConfig(account.cashback_config, account);
-                                            const rules: any[] = [];
-                                            (program.levels || []).forEach((lvl: any) => {
-                                                (lvl.rules || []).forEach((r: any) => {
-                                                    rules.push({ ...r, levelName: lvl.name });
-                                                });
-                                            });
-
-                                            // Collect all unique Category IDs
-                                            const catIds = new Set<string>();
-                                            rules.forEach(r => {
-                                                if (Array.isArray(r.categoryIds)) r.categoryIds.forEach((id: string) => catIds.add(id));
-                                                if (r.categoryId) catIds.add(r.categoryId);
-                                            });
-
-                                            const allCatIds = Array.from(catIds);
-
-                                            // Fallback if no categories but default rate exists
-                                            if (allCatIds.length === 0 && program.defaultRate > 0) {
-                                                return <span className="text-[10px] font-black uppercase tracking-tight">Flat {(program.defaultRate * 100).toFixed(1)}%</span>;
-                                            }
-
-                                            const allCats = allCatIds.map(id => categories.find(c => c.id === id || c.name === id)).filter(Boolean) as Category[];
-                                            const uniqueCatsMap = new Map<string, Category>();
-                                            allCats.forEach(c => uniqueCatsMap.set(c.id, c));
-                                            const displayCats = Array.from(uniqueCatsMap.values()).slice(0, 2);
-                                            const remaining = uniqueCatsMap.size - displayCats.length;
-
-                                            return (
-                                                <div className="flex items-center gap-2">
-                                                    {Array.from(uniqueCatsMap.values()).slice(0, 2).map((cat, idx) => (
-                                                        <React.Fragment key={`${cat.id} -${idx} `}>
-                                                            <div className="flex items-center gap-1.5">
-                                                                <span className="text-[10px] font-black uppercase tracking-tight truncate max-w-[200px]">{cat.name}</span>
-                                                                {cat.mcc_codes && cat.mcc_codes.length > 0 && (
-                                                                    <div className="flex items-center gap-1 border-l border-slate-200 pl-1.5 ml-1">
-                                                                        {Array.from(new Set(cat.mcc_codes)).map(mcc => (
-                                                                            <code key={mcc} className="text-[9px] font-mono font-black text-slate-500 bg-white border border-slate-200 px-1 rounded-sm shadow-sm">
-                                                                                {mcc}
-                                                                            </code>
-                                                                        ))}
-                                                                    </div>
-                                                                )}
-                                                            </div>
-                                                            {idx === 0 && uniqueCatsMap.size > 1 && <span className="text-slate-200">|</span>}
-                                                        </React.Fragment>
-                                                    ))}
-                                                    {remaining > 0 && (
-                                                        <span className="text-[10px] font-bold text-amber-600/80 border-l border-amber-200 pl-1.5 ml-0.5">+{remaining} more</span>
-                                                    )}
-                                                </div>
-                                            )
-                                        } catch (e) {
-                                            return <span className="text-[10px] font-black uppercase tracking-tight">Rewards Active</span>
-                                        }
-                                    })()}
-                                </div>
-                            </HoverCardTrigger>
-                            <HoverCardContent className="w-[340px] p-0 overflow-hidden border-none shadow-2xl" align="start">
-                                <div className="bg-white">
-                                    <div className="bg-gradient-to-r from-amber-500 to-orange-500 px-4 py-3 flex justify-between items-center text-white">
-                                        <div className="flex items-center gap-2">
-                                            <Zap className="h-4 w-4 fill-white/20" />
-                                            <span className="text-xs font-black uppercase tracking-widest">Active Rewards</span>
-                                        </div>
-                                        {/* Calculate count again for header */}
-                                        {(() => {
-                                            const program = normalizeCashbackConfig(account.cashback_config, account);
-                                            const rules = (program.levels || []).flatMap((l: any) => l.rules || []);
-                                            return <span className="bg-white/20 backdrop-blur-md px-2 py-0.5 rounded-full text-[9px] font-bold text-white uppercase">{rules.length} Rules</span>
-                                        })()}
-                                    </div>
-
-                                    <div className="bg-white max-h-[300px] overflow-y-auto">
-                                        {(() => {
-                                            try {
-                                                const config = normalizeCashbackConfig(account.cashback_config, account);
-                                                const levels = config.levels || [];
-                                                const rules: any[] = levels.flatMap((lvl: any) => lvl.rules || []);
-
-                                                if (rules.length === 0 && config.defaultRate > 0) {
-                                                    return (
-                                                        <div className="p-4 flex items-center gap-3">
-                                                            <div className="h-10 w-10 rounded-full bg-emerald-100 flex items-center justify-center">
-                                                                <span className="text-lg">🌍</span>
-                                                            </div>
-                                                            <div>
-                                                                <div className="text-sm font-bold text-slate-800">Flat Rate</div>
-                                                                <div className="text-xs text-slate-500">All Purchases</div>
-                                                            </div>
-                                                            <div className="ml-auto text-xl font-black text-emerald-600">
-                                                                {(config.defaultRate * 100).toFixed(1)}%
-                                                            </div>
-                                                        </div>
-                                                    )
-                                                }
-
-                                                return (
-                                                    <div className="divide-y divide-slate-100">
-                                                        {rules.map((rule, idx) => {
-                                                            const catIds: string[] = [];
-                                                            if (Array.isArray(rule.categoryIds)) rule.categoryIds.forEach((id: string) => catIds.push(id));
-                                                            if (rule.categoryId) catIds.push(rule.categoryId);
-                                                            // Dedupe
-                                                            const uniqueCatIds = Array.from(new Set(catIds));
-
-                                                            const desc = rule.description || (uniqueCatIds.length > 0 ? 'Specific Categories' : 'Bonus Rule');
-
-                                                            return (
-                                                                <div key={idx} className="p-3 hover:bg-slate-50 transition-colors">
-                                                                    <div className="flex justify-between items-start mb-2">
-                                                                        <span className="text-[11px] font-black uppercase text-slate-700 tracking-wide">{desc}</span>
-                                                                        <span className="text-sm font-black text-emerald-600">{(rule.rate * 100).toFixed(1)}%</span>
-                                                                    </div>
-
-                                                                    {uniqueCatIds.length > 0 && (
-                                                                        <div className="space-y-2">
-                                                                            {uniqueCatIds.map(cid => {
-                                                                                const cat = categories.find(c => c.id === cid || c.name === cid);
-                                                                                if (!cat) return null;
-                                                                                return (
-                                                                                    <div key={cid} className="flex items-center justify-between bg-slate-50 border border-slate-100 rounded px-2 py-1.5">
-                                                                                        <div className="flex items-center gap-2">
-                                                                                            <span className="text-base">{cat.icon || '🏷️'}</span>
-                                                                                            <span className="text-[10px] font-bold text-slate-600 uppercase">{cat.name}</span>
-                                                                                        </div>
-                                                                                        {cat.mcc_codes && cat.mcc_codes.length > 0 && (
-                                                                                            <div className="flex gap-1">
-                                                                                                {Array.from(new Set(cat.mcc_codes)).map(mcc => (
-                                                                                                    <code key={mcc} className="text-[9px] font-mono font-bold bg-white border border-slate-200 px-1 rounded text-slate-500">
-                                                                                                        {mcc}
-                                                                                                    </code>
-                                                                                                ))}
-                                                                                            </div>
-                                                                                        )}
-                                                                                    </div>
-                                                                                )
-                                                                            })}
-                                                                        </div>
-                                                                    )}
-                                                                    {rule.maxReward && (
-                                                                        <div className="mt-2 flex items-center gap-1 text-[9px] text-amber-600 font-medium italic">
-                                                                            <Info className="h-3 w-3" />
-                                                                            Cap: {formatVNShort(rule.maxReward)}
-                                                                        </div>
-                                                                    )}
-                                                                </div>
-                                                            )
-                                                        })}
-                                                    </div>
-                                                );
-                                            } catch (e) {
-                                                return <p className="p-4 text-xs text-slate-400 italic text-center">Config data unavailable.</p>;
-                                            }
-                                        })()}
-                                    </div>
-                                    <div className="bg-slate-50 p-2 text-center border-t border-slate-100">
-                                        <p className="text-[9px] font-bold text-slate-400 uppercase italic">
-                                            Detailed MCC matching required
-                                        </p>
-                                    </div>
-                                </div>
-                            </HoverCardContent>
-                        </HoverCard>
-                    </div>
-                )}
-            </HeaderSection>
-
-            {
-                isCreditCard ? (
-                    <TooltipProvider>
-                        <Tooltip>
-                            <TooltipTrigger asChild>
-                                <HeaderSection
-                                    label="Credit Health"
-                                    borderColor="border-indigo-100"
-                                    className="flex-[5] min-w-[420px] bg-indigo-50/10 cursor-help !h-[120px]"
-                                >
-                                    <div className="flex flex-col h-full">
-                                        {/* Row 1: Metrics (H-61px to ensure Bar Top is at 73px) */}
-                                        <div className="grid grid-cols-4 gap-2 w-full h-[61px] items-start pt-1">
-                                            <div className="flex flex-col group">
-                                                <div className="flex items-center gap-1.5 mb-1">
-                                                    <BarChart3 className="h-3 w-3 text-slate-400 group-hover:text-emerald-500 transition-colors" />
-                                                    <span className="text-[10px] font-bold text-slate-400 tracking-tight uppercase">Available</span>
-                                                </div>
-                                                <div className={cn(
-                                                    "text-base font-black tracking-tight leading-none tabular-nums",
-                                                    availableBalance >= 0 ? "text-emerald-600" : "text-rose-600"
-                                                )}>
-                                                    {formatMoneyVND(Math.ceil(availableBalance))}
-                                                </div>
-                                            </div>
-
-                                            <div className="flex flex-col group">
-                                                <div className="flex items-center gap-1.5 mb-1">
-                                                    <ShieldCheck className="h-3 w-3 text-slate-400 group-hover:text-indigo-500 transition-colors" />
-                                                    <span className="text-[10px] font-bold text-slate-400 tracking-tight uppercase">Limit</span>
-                                                </div>
-                                                <div className="text-base font-black tracking-tight leading-none tabular-nums text-slate-900">
-                                                    {formatMoneyVND(Math.ceil(account.credit_limit || 0))}
-                                                </div>
-                                            </div>
-
-                                            <div className="px-1 flex justify-center">
-                                                {dueDateBadge}
-                                            </div>
-
-                                            <div className="flex flex-col group items-end">
-                                                <div className="flex items-center gap-1.5 mb-1">
-                                                    <TrendingUp className="h-3 w-3 text-slate-400 group-hover:text-indigo-500 transition-colors" />
-                                                    <span className="text-[10px] font-bold text-slate-400 tracking-tight uppercase">Health Score</span>
-                                                </div>
-                                                <div className="text-[9px] font-black text-indigo-700 leading-none tabular-nums tracking-tight bg-indigo-50 px-2 py-1 rounded border border-indigo-100/50">
-                                                    STABLE
-                                                </div>
-                                            </div>
-                                        </div>
-
-                                        {/* Row 2: Progress Bar (Smaller H) */}
-                                        <div className="w-full h-[32px] flex items-end relative pb-1">
-                                            {(() => {
-                                                const limit = account.credit_limit || 0
-                                                const usagePercent = limit > 0 ? Math.min((outstandingBalance / limit) * 100, 100) : 0
-                                                const isDanger = usagePercent > 90
-
-                                                return (
-                                                    <div className="relative h-1.5 w-full bg-slate-100 rounded-full overflow-visible border border-slate-200/60 shadow-[inset_0_1px_2px_rgba(0,0,0,0.05)]">
-                                                        <div
-                                                            className={cn("h-full transition-all duration-700 rounded-full shadow-sm", isDanger ? "bg-rose-500" : "bg-indigo-600")}
-                                                            style={{ width: `${usagePercent}% ` }}
-                                                        />
-                                                    </div>
-                                                );
-                                            })()}
-                                        </div>
-
-                                        {/* Row 3: Metrics & Badges (Footer) */}
-                                        <div className="flex items-center gap-2 pb-1 px-0.5 mt-auto h-[28px]">
-                                            {(() => {
-                                                const waiverTarget = account.annual_fee_waiver_target
-                                                const spent = summary?.yearExpensesTotal || 0
-                                                const needsWaiver = waiverTarget ? Math.max(0, waiverTarget - spent) : 0
-
-                                                if (!waiverTarget) return null;
-
-                                                return (
-                                                    <div className={cn(
-                                                        "px-3 py-1 rounded-lg border shadow-sm flex items-center gap-3 h-7 w-full",
-                                                        needsWaiver > 0 ? "bg-amber-50 border-amber-200" : "bg-emerald-50 border-emerald-200"
-                                                    )}>
-                                                        <div className="flex items-center gap-2 shrink-0">
-                                                            {needsWaiver > 0 ? <TrendingUp className="h-3 w-3 text-amber-500 animate-pulse" /> : <ShieldCheck className="h-3 w-3 text-emerald-500" />}
-                                                            <span className={cn("text-[9px] font-black uppercase tracking-[0.1em]", needsWaiver > 0 ? "text-amber-600" : "text-emerald-700")}>
-                                                                Waiver Needs
-                                                            </span>
-                                                        </div>
-
-                                                        <div className="flex items-center gap-2 ml-auto">
-                                                            <div className="flex flex-col items-end leading-none">
-                                                                <span className="text-[7px] font-bold text-slate-400 uppercase tracking-tighter mb-0.5">Still Need</span>
-                                                                <span className={cn("text-[11px] font-black tabular-nums whitespace-nowrap", needsWaiver > 0 ? "text-amber-700" : "text-emerald-700")}>
-                                                                    {needsWaiver > 0 ? formatMoneyVND(Math.ceil(needsWaiver)) : "READY"}
-                                                                </span>
-                                                            </div>
-                                                            <span className="text-slate-200 mx-1 font-light">/</span>
-                                                            <div className="flex flex-col items-end leading-none">
-                                                                <span className="text-[7px] font-bold text-slate-400 uppercase tracking-tighter mb-0.5">Target</span>
-                                                                <span className="text-[11px] font-black text-slate-600 tabular-nums whitespace-nowrap">
-                                                                    {formatMoneyVND(waiverTarget)}
-                                                                </span>
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                )
-                                            })()}
-                                        </div>
-                                    </div>
-                                </HeaderSection>
-                            </TooltipTrigger>
-                            <TooltipContent side="bottom" className="w-[340px] p-0 overflow-hidden border-none shadow-2xl">
-                                <div className="bg-white">
-                                    <div className="bg-indigo-950 px-4 py-1.5 flex justify-between items-center">
-                                        <div className="flex flex-col">
-                                            <h3 className="font-black text-[9px] uppercase tracking-[0.2em] text-indigo-400/80 leading-tight">Analytics</h3>
-                                            <div className="flex items-baseline gap-2">
-                                                <h3 className="font-black text-[11px] uppercase tracking-[0.15em] text-indigo-200">Credit Health Report</h3>
-                                                {!!account.annual_fee && (
-                                                    <span className="text-[9px] font-black text-indigo-400 opacity-60 px-1.5 py-0.5 rounded bg-indigo-900/40 border border-indigo-700/50">
-                                                        Fee: {formatMoneyVND(account.annual_fee)}
-                                                    </span>
-                                                )}
-                                            </div>
-                                        </div>
-                                        <div className="flex items-center gap-3">
-                                            {availableYears.length > 0 ? (
-                                                <div className="relative">
-                                                    <select
-                                                        value={selectedYear || ''}
-                                                        onChange={(e) => handleYearChange(e.target.value)}
-                                                        className="appearance-none bg-indigo-900/50 hover:bg-indigo-800 text-[10px] font-black text-indigo-200 pl-2 pr-6 py-1 rounded transition-colors border border-indigo-700/50 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer min-w-[60px] text-center"
-                                                    >
-                                                        {availableYears.map(year => (
-                                                            <option key={year} value={year} className="bg-indigo-950 text-white">
-                                                                {year}
-                                                            </option>
-                                                        ))}
-                                                    </select>
-                                                    <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 h-2.5 w-2.5 text-indigo-400 pointer-events-none" />
-                                                </div>
-                                            ) : null}
-                                            {isPending ? (
-                                                <Loader2 className="h-3 w-3 text-indigo-400 animate-spin" />
-                                            ) : (
-                                                <Zap className="h-3 w-3 text-amber-400 fill-amber-400 shadow-sm" />
-                                            )}
-                                        </div>
-                                    </div>
-
-                                    <div className="p-4 space-y-4">
-                                        {/* Simplified Spending Overview */}
-                                        <div className="space-y-3">
-                                            <div className="bg-indigo-50/50 rounded-lg p-3 border border-indigo-100/50 space-y-3">
-                                                <div className="flex justify-between items-center">
-                                                    <div className="flex flex-col">
-                                                        <span className="text-[9px] font-black text-indigo-400 uppercase tracking-widest">Year Analytics</span>
-                                                        <span className="text-[11px] font-black text-indigo-900 uppercase tracking-tighter">
-                                                            {selectedYear || currentYear} Spending Status
-                                                        </span>
-                                                    </div>
-                                                    <div className="h-8 w-8 rounded-full bg-white border border-indigo-100 flex items-center justify-center shadow-sm">
-                                                        <BarChart3 className="h-4 w-4 text-indigo-500" />
-                                                    </div>
-                                                </div>
-
-                                                <div className="pt-2 border-t border-indigo-100/50">
-                                                    <div className="flex justify-between items-baseline mb-0.5">
-                                                        <span className="text-[11px] font-bold text-slate-500 uppercase tracking-tight">Total Expenses</span>
-                                                        <span className={cn("text-lg font-black text-indigo-600 tabular-nums", isPending && "opacity-20 animate-pulse")}>
-                                                            {formatMoneyVND(summary?.yearExpensesTotal || 0)}
-                                                        </span>
-                                                    </div>
-                                                    <div className="flex justify-end">
-                                                        <span className="text-[10px] font-black text-slate-400 italic">
-                                                            {formatVNShort(summary?.yearExpensesTotal || 0)}
-                                                        </span>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
-
-                                        {/* Table Structure for Waiver */}
-                                        {!!account.annual_fee_waiver_target && (
-                                            <div className="bg-slate-50 rounded-lg p-3 border border-slate-100 space-y-2">
-                                                <h4 className="font-black text-[10px] uppercase text-slate-400 tracking-widest flex items-center gap-2">
-                                                    <Calculator className="h-3 w-3" /> Waiver Progress
-                                                </h4>
-                                                <div className="grid grid-cols-2 text-[11px] py-0.5">
-                                                    <span className="text-slate-500">Target Spending</span>
-                                                    <span className="text-right font-bold">{formatMoneyVND(account.annual_fee_waiver_target)}</span>
-                                                </div>
-                                                <div className="grid grid-cols-2 text-[11px] py-0.5">
-                                                    <span className="text-slate-500">{isHistoricalYear ? 'Year Spending' : 'YTD Spending'}</span>
-                                                    <span className="text-right font-bold text-indigo-600">{formatMoneyVND(summary?.yearExpensesTotal || 0)}</span>
-                                                </div>
-                                                {summary?.yearExpensesTotal! < account.annual_fee_waiver_target ? (
-                                                    <div className="grid grid-cols-2 text-[11px] pt-1.5 border-t border-amber-100 font-black text-amber-600">
-                                                        <span>REMAINING NEED</span>
-                                                        <span className="text-right">{formatMoneyVND(account.annual_fee_waiver_target - (summary?.yearExpensesTotal || 0))}</span>
-                                                    </div>
-                                                ) : (
-                                                    <div className="pt-1.5 border-t border-emerald-100 space-y-1">
-                                                        <div className="flex justify-between items-center text-[10px] font-black text-emerald-600 uppercase tracking-widest">
-                                                            <span>✨ Waiver Qualified</span>
-                                                            <span>100% Met</span>
-                                                        </div>
-                                                        <div className="flex justify-between text-[9px] text-emerald-500/80 italic font-medium">
-                                                            <span>Excess spending:</span>
-                                                            <span>+{formatMoneyVND((summary?.yearExpensesTotal || 0) - account.annual_fee_waiver_target)}</span>
-                                                        </div>
-                                                    </div>
-                                                )}
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
-                            </TooltipContent>
-                        </Tooltip>
-                    </TooltipProvider >
-                ) : (
-                    <>
-                        <TooltipProvider>
-                            <Tooltip>
-                                <TooltipTrigger asChild>
-                                    <HeaderSection
-                                        label="Cash Flow"
-                                        borderColor="border-sky-100"
-                                        className="flex-1 min-w-[280px] bg-sky-50/10 cursor-help !h-[105px]"
-                                    >
-                                        <div className="flex flex-col h-full justify-between py-1">
-                                            <div className="flex justify-between items-center px-1">
-                                                <div className="flex flex-col">
-                                                    <span className="text-[10px] font-black text-sky-600 uppercase tracking-widest">Net Income</span>
-                                                    <span className={cn("text-lg font-black tabular-nums transition-all",
-                                                        (summary?.yearPureIncomeTotal || 0) - (summary?.yearPureExpenseTotal || 0) >= 0 ? "text-emerald-600" : "text-rose-600"
-                                                    )}>
-                                                        {formatMoneyVND((summary?.yearPureIncomeTotal || 0) - (summary?.yearPureExpenseTotal || 0))}
-                                                    </span>
-                                                </div>
-                                                <div className="h-8 w-8 rounded-full bg-white border border-sky-100 flex items-center justify-center shadow-sm">
-                                                    <TrendingUp className="h-4 w-4 text-sky-500" />
-                                                </div>
-                                            </div>
-
-                                            <div className="grid grid-cols-2 gap-2 mt-2 px-1">
-                                                <div className="flex flex-col">
-                                                    <span className="text-[8px] font-bold text-slate-400 uppercase">Incoming</span>
-                                                    <span className="text-[11px] font-black text-emerald-600">+{formatVNShort(summary?.yearPureIncomeTotal || 0)}</span>
-                                                </div>
-                                                <div className="flex flex-col text-right">
-                                                    <span className="text-[8px] font-bold text-slate-400 uppercase">Outgoing</span>
-                                                    <span className="text-[11px] font-black text-rose-500">-{formatVNShort(summary?.yearPureExpenseTotal || 0)}</span>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </HeaderSection>
-                                </TooltipTrigger>
-                                <TooltipContent side="bottom" className="w-[300px] p-0 border-none shadow-2xl overflow-hidden rounded-2xl" sideOffset={10}>
-                                    <div className="bg-indigo-950/95 backdrop-blur-xl border border-indigo-400/20 overflow-hidden rounded-2xl">
-                                        <div className="bg-gradient-to-r from-indigo-900 to-indigo-800 p-4 border-b border-indigo-400/20">
-                                            <div className="flex items-center gap-2 mb-1">
-                                                <TrendingUp className="h-3 w-3 text-indigo-300" />
-                                                <h3 className="font-black text-[11px] uppercase tracking-[0.15em] text-indigo-200">Cash Flow Report {selectedYear || currentYear}</h3>
-                                            </div>
-                                        </div>
-                                        <div className="p-4 space-y-3">
-                                            <div className="space-y-2">
-                                                <div className="flex justify-between text-xs py-1 border-b border-white/5">
-                                                    <span className="text-white/60">Actual Income</span>
-                                                    <span className="text-emerald-400 font-bold">{formatMoneyVND(summary?.yearPureIncomeTotal || 0)}</span>
-                                                </div>
-                                                <div className="flex justify-between text-xs py-1 border-b border-white/5">
-                                                    <span className="text-white/60">Pure Expenses</span>
-                                                    <span className="text-rose-400 font-bold">-{formatMoneyVND(summary?.yearPureExpenseTotal || 0)}</span>
-                                                </div>
-                                                <div className="flex justify-between text-xs pt-2 font-black">
-                                                    <span className="text-indigo-200 uppercase tracking-widest text-[10px]">Net Result</span>
-                                                    <span className={cn(
-                                                        (summary?.yearPureIncomeTotal || 0) - (summary?.yearPureExpenseTotal || 0) >= 0 ? "text-emerald-400" : "text-rose-400"
-                                                    )}>
-                                                        {formatMoneyVND((summary?.yearPureIncomeTotal || 0) - (summary?.yearPureExpenseTotal || 0))}
-                                                    </span>
-                                                </div>
-                                            </div>
-                                            <div className="bg-white/5 rounded-lg p-2 text-[10px] text-white/40 italic">
-                                                Excludes transfers and debt-related flows.
-                                            </div>
-                                        </div>
-                                    </div>
-                                </TooltipContent>
-                            </Tooltip>
-                        </TooltipProvider>
-
-                        <TooltipProvider>
-                            <Tooltip>
-                                <TooltipTrigger asChild>
-                                    <HeaderSection
-                                        label="Debt Manage"
-                                        borderColor="border-amber-100"
-                                        className="flex-1 min-w-[280px] bg-amber-50/10 cursor-help !h-[105px]"
-                                    >
-                                        <div className="flex flex-col h-full justify-between py-1">
-                                            <div className="flex justify-between items-center px-1">
-                                                <div className="flex flex-col">
-                                                    <span className="text-[10px] font-black text-amber-600 uppercase tracking-widest">
-                                                        {(summary?.yearLentTotal || 0) >= (summary?.yearRepaidTotal || 0) ? "Active Credits" : "Net Recovery"}
-                                                    </span>
-                                                    <span className={cn(
-                                                        "text-lg font-black tabular-nums transition-all",
-                                                        (summary?.yearLentTotal || 0) >= (summary?.yearRepaidTotal || 0) ? "text-amber-900" : "text-emerald-600"
-                                                    )}>
-                                                        {formatMoneyVND(Math.abs((summary?.yearLentTotal || 0) - (summary?.yearRepaidTotal || 0)))}
-                                                    </span>
-                                                </div>
-                                                <div className="h-8 w-8 rounded-full bg-white border border-amber-100 flex items-center justify-center shadow-sm">
-                                                    <Users2 className="h-4 w-4 text-amber-500" />
-                                                </div>
-                                            </div>
-
-                                            <div className="mt-2 px-1">
-                                                <div className="flex justify-between text-[10px] font-bold text-slate-500 mb-1">
-                                                    <span>Repayment Progress</span>
-                                                    <span>{summary?.yearLentTotal ? Math.round(((summary?.yearRepaidTotal || 0) / summary.yearLentTotal) * 100) : 0}%</span>
-                                                </div>
-                                                <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden border border-slate-200/50">
-                                                    <div
-                                                        className="h-full bg-amber-500 transition-all duration-1000 ease-out"
-                                                        style={{ width: `${Math.min(100, (summary?.yearLentTotal ? ((summary?.yearRepaidTotal || 0) / summary.yearLentTotal) * 100 : 0))}% ` }}
-                                                    />
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </HeaderSection>
-                                </TooltipTrigger>
-                                <TooltipContent side="bottom" className="w-[300px] p-0 border-none shadow-2xl overflow-hidden rounded-2xl" sideOffset={10}>
-                                    <div className="bg-slate-900/95 backdrop-blur-xl border border-white/10 overflow-hidden rounded-2xl">
-                                        <div className="bg-amber-900/30 p-4 border-b border-white/5">
-                                            <div className="flex items-center gap-2 mb-1">
-                                                <Users2 className="h-3 w-3 text-amber-400" />
-                                                <h3 className="font-black text-[11px] uppercase tracking-[0.15em] text-amber-200">Personal Ledger {selectedYear || currentYear}</h3>
-                                            </div>
-                                        </div>
-                                        <div className="p-4 space-y-4">
-                                            <div className="grid grid-cols-2 gap-4">
-                                                <div className="space-y-1">
-                                                    <span className="text-[9px] font-black text-slate-500 uppercase">Lent Out</span>
-                                                    <p className="text-sm font-black text-white">{formatMoneyVND(summary?.yearLentTotal || 0)}</p>
-                                                </div>
-                                                <div className="space-y-1 text-right">
-                                                    <span className="text-[9px] font-black text-slate-500 uppercase">Recovered</span>
-                                                    <p className="text-sm font-black text-emerald-400">{formatMoneyVND(summary?.yearRepaidTotal || 0)}</p>
-                                                </div>
-                                            </div>
-                                            <div className="pt-2 border-t border-white/5">
-                                                <div className="flex justify-between items-center text-[10px] font-bold text-slate-400 mb-2 uppercase">
-                                                    <span>Progress to Settlement</span>
-                                                    <span className="text-white">{summary?.yearLentTotal ? Math.round(((summary?.yearRepaidTotal || 0) / summary.yearLentTotal) * 100) : 0}%</span>
-                                                </div>
-                                                <div className="h-2 w-full bg-white/5 rounded-full overflow-hidden">
-                                                    <div
-                                                        className="h-full bg-gradient-to-r from-amber-600 to-amber-400"
-                                                        style={{ width: `${Math.min(100, (summary?.yearLentTotal ? ((summary?.yearRepaidTotal || 0) / summary.yearLentTotal) * 100 : 0))}% ` }}
-                                                    />
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </TooltipContent>
-                            </Tooltip>
-                        </TooltipProvider>
-
-                        <HeaderSection label="Account Balance" className="flex-1 min-w-[200px] bg-slate-50/10 !h-[105px]">
-                            <div className="flex flex-col h-full justify-between py-1">
-                                <div className="flex justify-between items-center px-1">
-                                    <div className="flex flex-col group">
-                                        <div className="flex items-center gap-1.5 mb-1.5">
-                                            <BarChart3 className="h-3 w-3 text-slate-400 group-hover:text-emerald-500 transition-colors" />
-                                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tight">Available</span>
-                                        </div>
-                                        <div className={cn(
-                                            "text-xl font-black tracking-tight leading-none tabular-nums",
-                                            availableBalance >= 0 ? "text-emerald-600" : "text-rose-600"
-                                        )}>
-                                            {formatMoneyVND(Math.ceil(availableBalance))}
-                                        </div>
-                                    </div>
-                                    <div className="h-8 w-8 rounded-full bg-white border border-slate-100 flex items-center justify-center shadow-sm">
-                                        <Calculator className="h-4 w-4 text-slate-400" />
-                                    </div>
-                                </div>
-
-                                <div className="mt-2 px-1 text-[10px] font-bold text-slate-400 uppercase">
-                                    Real-time Ledger
-                                </div>
-                            </div>
-                        </HeaderSection>
-                    </>
-                )
-            }
-
-            {/* Section 3: Cashback Performance - Prompt when cycle is not selected */}
-            {isCreditCard && (!selectedCycle || selectedCycle === 'all') && (
-                <div className="flex flex-1 min-w-0 lg:flex-[5]">
-                    <HeaderSection
-                        label="Cashback Performance"
-                        borderColor="border-emerald-100"
-                        className="w-full bg-emerald-50/10"
-                        hideHintInHeader
-                    >
-                        <div className="flex h-full min-h-[92px] w-full items-center justify-center p-2.5">
-                            <div className="flex items-center gap-3 rounded-lg border border-emerald-200 bg-white/70 px-4 py-2.5">
-                                <svg className="h-8 w-8 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                                </svg>
-                                <div className="flex flex-col">
-                                    <span className="text-xs font-black uppercase tracking-wide text-emerald-700">Select a cycle to view cashback details</span>
-                                    <span className="text-[11px] font-medium text-slate-500">Open Cycle tab, choose month/year, then click Apply</span>
-                                </div>
-                            </div>
-                        </div>
-                    </HeaderSection>
-                </div>
-            )}
-
-            {/* Section 3: Cashback Performance - Loading state when cycle selected */}
-            {isCreditCard && selectedCycle && selectedCycle !== 'all' && !dynamicCashbackStats && effectiveIsCashbackLoading && (
-                <div className="flex flex-1 min-w-0 lg:flex-[5]">
-                    <HeaderSection
-                        label="Cashback Performance"
-                        borderColor="border-emerald-100"
-                        className="w-full bg-emerald-50/10"
-                        hideHintInHeader
-                    >
-                        <div className="flex h-full min-h-[92px] w-full items-center justify-center p-2.5">
-                            <div className="flex items-center gap-3 rounded-lg border border-emerald-200 bg-white/70 px-4 py-2.5">
-                                <Loader2 className="h-5 w-5 animate-spin text-emerald-600" />
-                                <span className="text-xs font-semibold text-slate-700">Fetching cycle data...</span>
-                            </div>
-                        </div>
-                    </HeaderSection>
-                </div>
-            )}
-
-            {/* Section 3: Cashback Performance - Detailed view when cycle selected */}
-            {isCreditCard && dynamicCashbackStats && selectedCycle && selectedCycle !== 'all' && (
-                <div className="flex flex-1 min-w-0 lg:flex-[5]">
-                    <HeaderSection
-                        label="Cashback Performance"
-                        borderColor="border-emerald-100"
-                        className="w-full bg-emerald-50/10"
-                        hideHintInHeader
-                    >
-                                    {/* Loading overlay during async fetch */}
-                                    {effectiveIsCashbackLoading && (
-                                        <div className="absolute inset-0 bg-white/40 backdrop-blur-sm rounded-md flex items-center justify-center z-10 flex-col gap-2 pointer-events-auto">
-                                            <Loader2 className="h-6 w-6 animate-spin text-emerald-600" />
-                                            <span className="text-xs font-semibold text-slate-700">Fetching cycle data...</span>
-                                        </div>
-                                    )}
-                                    <div className="flex flex-col w-full h-full p-2.5 gap-2">
-                                        {/* Main Layout: Circular Progress (Left) + 2x2 Metrics Grid (Right) */}
-                                        <div className="flex items-start gap-3 w-full">
-                                            {/* Circular Progress Bar */}
-                                            <div className="flex-shrink-0">
-                                                {(() => {
-                                                    const stats = dynamicCashbackStats;
-                                                    if (!stats) return null;
-
-                                                    const isQualified = stats.is_min_spend_met;
-                                                    const minSpend = stats.minSpend || 0;
-                                                    const spent = stats.currentSpend || 0;
-                                                    const cap = stats.maxCashback || 0;
-                                                    const earned = stats.earnedSoFar || selectedCycleMetrics?.est || 0;
-
-                                                    const activeMax = stats.activeRules?.reduce((acc, r) => acc + (r.max || 0), 0) || 0;
-                                                    const effectiveCap = cap > 0 ? cap : activeMax;
-
-                                                    let progress = 0;
-                                                    let strokeColor = "#10b981";
-                                                    if (!isQualified && minSpend > 0) {
-                                                        progress = Math.min((spent / minSpend) * 100, 100);
-                                                        strokeColor = progress >= 90 ? "#10b981" : "#4f46e5";
-                                                    } else {
-                                                        progress = effectiveCap > 0 ? Math.min(100, (earned / effectiveCap) * 100) : 0;
-                                                        strokeColor = "#10b981";
-                                                    }
-
-                                                    const radius = 32;
-                                                    const circumference = 2 * Math.PI * radius;
-                                                    const strokeDashoffset = circumference - (progress / 100) * circumference;
-
-                                                    return (
-                                                        <div className="relative inline-flex items-center justify-center">
-                                                            <svg width="76" height="76" viewBox="0 0 76 76" className="transform -rotate-90">
-                                                                <circle cx="38" cy="38" r={radius} fill="none" stroke="#e2e8f0" strokeWidth="5" />
-                                                                <circle cx="38" cy="38" r={radius} fill="none" stroke={strokeColor} strokeWidth="5" strokeDasharray={circumference} strokeDashoffset={strokeDashoffset} strokeLinecap="round" className="transition-all duration-700" />
-                                                            </svg>
-                                                            <div className="absolute flex flex-col items-center justify-center">
-                                                                <span className="text-base font-black text-slate-900">{Math.round(progress)}%</span>
-                                                                <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight">{!isQualified && minSpend > 0 ? "Spend" : "Earned"}</span>
-                                                            </div>
-                                                        </div>
-                                                    );
-                                                })()}
-                                            </div>
-                                            {/* Metrics Grid - 2x2 */}
-                                            <div className="flex-1 grid grid-cols-2 gap-2">
-                                                {(() => {
-                                                    // Use API response as primary source (accurate calculation with transaction amount × rate)
-                                                    const cycleEstCashback = dynamicCashbackStats?.earnedSoFar || 0;
-                                                    const cycleShared = dynamicCashbackStats?.sharedAmount || 0;
-                                                    const cycleProfit = dynamicCashbackStats?.netProfit || 0;
-                                                    const cycleCurrentSpend = dynamicCashbackStats?.currentSpend || 0;
-                                                    const cycleActualClaimed = dynamicCashbackStats?.actualClaimed ?? selectedCycleMetrics?.actual ?? 0;
-
-                                                    // Build detailed formula from activeRules for Est tooltip
-                                                    const ruleDetails = (dynamicCashbackStats?.activeRules || []).map((rule: any) => {
-                                                        const spent = rule.spent || 0;
-                                                        const earned = rule.earned || 0;
-                                                        const rate = rule.rate || 0;
-                                                        const formattedSpent = new Intl.NumberFormat('vi-VN').format(Math.round(spent));
-                                                        const formattedEarned = new Intl.NumberFormat('vi-VN').format(Math.round(earned));
-                                                        return `${rule.name}: ${formattedSpent} × ${rate}% = ${formattedEarned}`;
-                                                    });
-
-                                                    return (
-                                                        <>
-                                                            {/* Profit */}
-                                                            <Tooltip>
-                                                                <TooltipTrigger asChild>
-                                                                    <div className="flex items-center gap-1.5 min-w-0 cursor-help rounded-sm px-1 py-0.5 hover:bg-slate-50">
-                                                                        <TrendingUp className="h-3.5 w-3.5 flex-shrink-0 text-emerald-600" />
-                                                                        <span className={cn(
-                                                                            "text-xs font-black leading-none tabular-nums tracking-tight truncate",
-                                                                            cycleProfit > 0 ? "text-emerald-600" : cycleProfit < 0 ? "text-rose-600" : "text-slate-900"
-                                                                        )}>
-                                                                            Profit: {formatMoneyVND(Math.ceil(cycleProfit))}
-                                                                        </span>
-                                                                    </div>
-                                                                </TooltipTrigger>
-                                                                <TooltipContent side="top" className="max-w-xs bg-slate-900 text-white text-[11px] p-2 space-y-1">
-                                                                    <p className="font-semibold">Lợi nhuận = Thu - Chia sẻ</p>
-                                                                    <p className="text-slate-300">{formatMoneyVND(Math.ceil(cycleEstCashback))} - {formatMoneyVND(Math.ceil(cycleShared))} = {formatMoneyVND(Math.ceil(cycleProfit))}</p>
-                                                                </TooltipContent>
-                                                            </Tooltip>
-
-                                                            {/* Actual Claimed */}
-                                                            <Tooltip>
-                                                                <TooltipTrigger asChild>
-                                                                    <div className="flex items-center gap-1.5 min-w-0 cursor-help rounded-sm px-1 py-0.5 hover:bg-slate-50">
-                                                                        <BarChart3 className="h-3.5 w-3.5 flex-shrink-0 text-indigo-600" />
-                                                                        <span className={cn(
-                                                                            "text-xs font-black leading-none tabular-nums tracking-tight truncate",
-                                                                            cycleActualClaimed > 0 ? "text-indigo-600" : cycleActualClaimed < 0 ? "text-rose-600" : "text-slate-900"
-                                                                        )}>
-                                                                            Actual: {formatMoneyVND(Math.ceil(cycleActualClaimed))}
-                                                                        </span>
-                                                                    </div>
-                                                                </TooltipTrigger>
-                                                                <TooltipContent side="top" className="max-w-xs bg-slate-900 text-white text-[11px] p-2">
-                                                                    <p className="font-semibold mb-1">Tiền cashback thực nhận</p>
-                                                                    <p className="text-slate-300">Giao dịch income có category "Cashback" trong chu kỳ</p>
-                                                                </TooltipContent>
-                                                            </Tooltip>
-
-                                                            {/* Est. Cashback */}
-                                                            <Tooltip>
-                                                                <TooltipTrigger asChild>
-                                                                    <div className="flex items-center gap-1.5 min-w-0 cursor-help rounded-sm px-1 py-0.5 hover:bg-slate-50">
-                                                                        <PlusCircle className="h-3.5 w-3.5 flex-shrink-0 text-slate-400" />
-                                                                        <span className="text-xs font-black text-emerald-600 leading-none tabular-nums tracking-tight truncate">
-                                                                            Est: {formatMoneyVND(Math.ceil(cycleEstCashback))}
-                                                                        </span>
-                                                                    </div>
-                                                                </TooltipTrigger>
-                                                                <TooltipContent side="top" className="max-w-xs bg-slate-900 text-white text-[11px] p-2 space-y-1 max-h-40 overflow-y-auto">
-                                                                    <p className="font-semibold">Est. Cashback (Calculated)</p>
-                                                                    {ruleDetails.length > 0 ? (
-                                                                        ruleDetails.map((detail: string, idx: number) => (
-                                                                            <p key={idx} className="text-slate-300 text-[10px]">{detail}</p>
-                                                                        ))
-                                                                    ) : (
-                                                                        <p className="text-slate-300">Spend: {formatMoneyVND(Math.round(cycleCurrentSpend))}</p>
-                                                                    )}
-                                                                    <p className="text-slate-400 pt-1 border-t border-slate-700">Total: {formatMoneyVND(Math.ceil(cycleEstCashback))}</p>
-                                                                </TooltipContent>
-                                                            </Tooltip>
-
-                                                            {/* Cashback Shared */}
-                                                            <Tooltip>
-                                                                <TooltipTrigger asChild>
-                                                                    <div className="flex items-center gap-1.5 min-w-0 cursor-help rounded-sm px-1 py-0.5 hover:bg-slate-50">
-                                                                        <Users2 className="h-3.5 w-3.5 flex-shrink-0 text-rose-500" />
-                                                                        <span className="text-xs font-black text-rose-600 leading-none tabular-nums tracking-tight truncate">
-                                                                            Shared: {formatMoneyVND(Math.ceil(cycleShared))}
-                                                                        </span>
-                                                                    </div>
-                                                                </TooltipTrigger>
-                                                                <TooltipContent side="top" className="max-w-xs bg-slate-900 text-white text-[11px] p-2">
-                                                                    <p className="font-semibold mb-1">Cashback chia sẻ với người khác</p>
-                                                                    <p className="text-slate-300">% hoặc số tiền fixed từ chia sẻ</p>
-                                                                </TooltipContent>
-                                                            </Tooltip>
-
-                                                            {/* Health Badge - Merge across bottom 2 columns */}
-                                                            <div className="col-span-2 mt-1.5">
-                                                                <TooltipProvider>
-                                                                    <Tooltip delayDuration={150}>
-                                                                        <TooltipTrigger asChild>
-                                                                            {(() => {
-                                                                                const isQualified = dynamicCashbackStats.is_min_spend_met;
-                                                                                const minSpend = dynamicCashbackStats.minSpend || 0;
-                                                                                const spent = dynamicCashbackStats.currentSpend || 0;
-                                                                                const remaining = Math.ceil((minSpend || 0) - (spent || 0));
-                                                                                const progress = minSpend > 0 ? Math.min((spent / minSpend) * 100, 100) : 100;
-
-                                                                                return !isQualified && minSpend > 0 ? (
-                                                                                    <div className="flex items-center justify-center gap-2 px-3 py-1.5 bg-amber-50 border border-amber-200 rounded-lg w-full cursor-help hover:bg-amber-100 transition-colors">
-                                                                                        <Zap className="h-3.5 w-3.5 text-amber-600 fill-amber-600 flex-shrink-0" />
-                                                                                        <span className="h-2 w-2 bg-amber-500 rounded-full animate-pulse flex-shrink-0"></span>
-                                                                                        <span className="text-[10px] font-black text-amber-700 uppercase tracking-wide">Need Spend More • {Math.round(progress)}%</span>
-                                                                                        <span className="text-[10px] font-bold text-amber-600 ml-1">{formatMoneyVND(remaining)}</span>
-                                                                                    </div>
-                                                                                ) : (
-                                                                                    <div className="flex items-center justify-center gap-2 px-3 py-1.5 bg-emerald-50 border border-emerald-200 rounded-lg w-full cursor-help hover:bg-emerald-100 transition-colors">
-                                                                                        <Zap className="h-3.5 w-3.5 text-emerald-600 fill-emerald-600 flex-shrink-0" />
-                                                                                        <span className="h-2 w-2 bg-emerald-500 rounded-full flex-shrink-0"></span>
-                                                                                        <span className="text-[10px] font-black text-emerald-700 uppercase tracking-wide">Qualified • Earning</span>
-                                                                                    </div>
-                                                                                );
-                                                                            })()}
-                                                                        </TooltipTrigger>
-                                                                        <TooltipContent side="top" className="max-w-xs bg-slate-900 text-white text-[11px] p-2.5">
-                                                                            <p className="font-semibold mb-1">Cashback Health Status</p>
-                                                                            <p className="text-slate-300 text-[10px]">
-                                                                                {dynamicCashbackStats.is_min_spend_met 
-                                                                                    ? "✅ Đã đạt min spend - đang kiếm cashback"
-                                                                                    : `⚠️ Cần chi tiêu thêm ${formatMoneyVND(Math.ceil((dynamicCashbackStats.minSpend || 0) - (dynamicCashbackStats.currentSpend || 0)))} để qualify`
-                                                                                }
-                                                                            </p>
-                                                                        </TooltipContent>
-                                                                    </Tooltip>
-                                                                </TooltipProvider>
-                                                            </div>
-                                                        </>
-                                                    );
-                                                })()}
-                                            </div>
-
-                                            {/* Analytics/Report Button - Compact */}
-                                            <TooltipProvider>
-                                                <Tooltip delayDuration={200}>
-                                                    <TooltipTrigger asChild>
-                                                        <div className="flex-shrink-0 flex items-center">
-                                                            <button className="p-1 hover:bg-emerald-100 rounded-md transition-colors group">
-                                                                <Zap className="h-3.5 w-3.5 text-emerald-600 group-hover:text-emerald-700 fill-emerald-600 group-hover:fill-emerald-700" />
-                                                            </button>
-                                                        </div>
-                                                    </TooltipTrigger>
-                                                    <TooltipContent side="bottom" className="w-[380px] p-0 overflow-hidden border-none shadow-2xl" sideOffset={8}>
-                            <div className="bg-white">
-                                {/* Tooltip Header */}
-                                <div className="bg-emerald-950 px-4 py-1.5 flex justify-between items-center">
-                                    <div className="flex flex-col">
-                                        <h3 className="font-black text-[9px] uppercase tracking-[0.2em] text-emerald-400/80 leading-tight">Analytics</h3>
-                                        <h3 className="font-black text-[11px] uppercase tracking-[0.15em] text-emerald-200">Cashback Performance Report</h3>
-                                    </div>
-                                    <Zap className="h-3 w-3 text-emerald-400 fill-emerald-400 shadow-sm" />
-                                </div>
-
-                                <div className="p-4 space-y-4">
-                                    {/* Performance Breakdown */}
-                                    <div className="space-y-2">
-                                        <div className="grid grid-cols-2 text-[11px] pb-1 border-b border-slate-100 font-black text-slate-400 uppercase tracking-widest">
-                                            <span>Metrics</span>
-                                            <span className="text-right">Value</span>
-                                        </div>
-                                        <div className="grid grid-cols-2 text-xs py-1">
-                                            <span className="text-slate-500 font-medium whitespace-nowrap">Active Cycle Interval</span>
-                                            <span className="text-right font-bold text-slate-900 truncate">
-                                                {dynamicCashbackStats.cycle ? dynamicCashbackStats.cycle.label : 'Current Month'}
-                                            </span>
-                                        </div>
-                                        <div className="grid grid-cols-2 text-xs py-1">
-                                            <span className="text-slate-500 font-medium">Monthly Eligible Spend</span>
-                                            <span className="text-right font-bold text-slate-900">{formatMoneyVND(Math.ceil(dynamicCashbackStats.currentSpend || 0))}</span>
-                                        </div>
-                                        <div className="grid grid-cols-2 text-xs py-1">
-                                            <span className="text-slate-500 font-medium">Cashback Earned</span>
-                                            <span className="text-right font-bold text-emerald-600">+{formatMoneyVND(Math.ceil(dynamicCashbackStats.earnedSoFar || 0))}</span>
-                                        </div>
-                                        <div className="grid grid-cols-2 text-xs py-1">
-                                            <span className="text-slate-500 font-medium">Shared with Others</span>
-                                            <span className="text-right font-bold text-amber-600">
-                                                {(dynamicCashbackStats.sharedAmount || 0) > 0 ? `- ${formatMoneyVND(Math.ceil(dynamicCashbackStats.sharedAmount))} ` : '0'}
-                                            </span>
-                                        </div>
-                                        <div className="grid grid-cols-2 text-xs pt-2 border-t border-slate-200 font-black">
-                                            <span className="text-emerald-900">NET CYCLE PROFIT</span>
-                                            <span className={cn(
-                                                "text-right",
-                                                (dynamicCashbackStats.netProfit || 0) >= 0 ? "text-emerald-600" : "text-rose-600"
-                                            )}>
-                                                {formatMoneyVND(Math.ceil(dynamicCashbackStats.netProfit || 0))}
-                                            </span>
-                                        </div>
-                                    </div>
-
-                                    {/* Row 2: Detailed Rule Breakdown (Scrollable) */}
-                                    {dynamicCashbackStats.activeRules && dynamicCashbackStats.activeRules.length > 0 && (
-                                        <div className="space-y-3">
-                                            <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100 pb-1">
-                                                Detailed Rule Breakdown
-                                            </div>
-                                            <div className="space-y-3 max-h-[160px] overflow-y-auto pr-1 custom-scrollbar">
-                                                {dynamicCashbackStats.activeRules.map((rule, idx) => {
-                                                    const ruleProgress = rule.max ? Math.min(100, (rule.earned / rule.max) * 100) : (rule.spent > 0 ? 100 : 0);
-                                                    const displayRate = rule.rate > 0 && rule.rate < 1 ? (rule.rate * 100).toFixed(0) : Math.round(rule.rate);
-
-                                                    return (
-                                                        <div key={`${rule.ruleId} -${idx} `} className="space-y-1.5 p-2 bg-slate-50/50 rounded-lg border border-slate-100/50">
-                                                            <div className="flex justify-between items-end">
-                                                                <div className="flex flex-col gap-0.5">
-                                                                    <div className="flex items-center gap-1.5">
-                                                                        <span className="text-[10px] font-black text-slate-700 uppercase tracking-tight">{rule.name}</span>
-                                                                        <span className="text-[9px] font-black text-emerald-600 bg-emerald-100 px-1 rounded shadow-sm">
-                                                                            {displayRate}%
-                                                                        </span>
-                                                                    </div>
-                                                                    <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest italic leading-none opacity-60">
-                                                                        {ruleProgress >= 100 ? 'Benefit Cap Reached' : `${formatVNShort(rule.spent)} Spent toward target`}
-                                                                    </span>
-                                                                </div>
-                                                                <div className="text-[10px] font-black text-slate-900 tabular-nums">
-                                                                    {formatMoneyVND(Math.ceil(rule.earned))}
-                                                                    {rule.max && <span className="text-slate-300 font-bold ml-1">/ {formatVNShort(rule.max)}</span>}
-                                                                </div>
-                                                            </div>
-                                                            <div className="h-1.5 w-full bg-slate-200/50 rounded-full overflow-hidden border border-slate-200/30">
-                                                                <div className={cn(
-                                                                    "h-full transition-all duration-700 shadow-sm",
-                                                                    ruleProgress >= 100 ? "bg-emerald-600" : "bg-indigo-500"
-                                                                )} style={{ width: `${ruleProgress}% ` }} />
-                                                            </div>
-                                                        </div>
-                                                    );
-                                                })}
-                                            </div>
-                                        </div>
-                                    )}
-
-                                    {/* Entire Year Performance Report */}
-                                    <div className="mt-4 pt-4 border-t border-slate-200 bg-slate-50/80 -mx-4 px-4 pb-4">
-                                        <div className="flex items-center justify-between mb-3">
-                                            <div className="text-[10px] font-black text-slate-500 uppercase tracking-[0.15em] flex items-center gap-2">
-                                                <Calendar className="h-3 w-3" /> Entire Year Performance {selectedYear || currentYear}
-                                            </div>
-                                            <span className="px-2 py-0.5 bg-indigo-100 text-indigo-700 text-[8px] font-black rounded uppercase">Calculated</span>
-                                        </div>
-
-                                        <div className="grid grid-cols-2 gap-4">
-                                            <div className="space-y-4">
-                                                <div className="flex flex-col gap-0.5">
-                                                    <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">Profit</span>
-                                                    <span className={cn(
-                                                        "text-sm font-black tabular-nums tracking-tight",
-                                                        (summary?.netProfitYearly || 0) >= 0 ? "text-emerald-600" : "text-rose-600"
-                                                    )}>
-                                                        {formatMoneyVND(Math.ceil(summary?.netProfitYearly || 0))}
-                                                    </span>
-                                                </div>
-                                                <div className="flex flex-col gap-0.5">
-                                                    <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">Actual Claimed</span>
-                                                    <span className="text-sm font-black text-indigo-600 tabular-nums tracking-tight">
-                                                        {formatMoneyVND(Math.ceil(summary?.cashbackTotal || 0))}
-                                                    </span>
-                                                </div>
-                                            </div>
-                                            <div className="space-y-4 text-right">
-                                                <div className="flex flex-col gap-0.5">
-                                                    <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">Est. Cashback</span>
-                                                    <span className="text-sm font-black text-emerald-600 tabular-nums tracking-tight">
-                                                        {formatMoneyVND(Math.ceil(summary?.cardYearlyCashbackTotal || 0))}
-                                                    </span>
-                                                </div>
-                                                <div className="flex flex-col gap-0.5">
-                                                    <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">Cashback Shared</span>
-                                                    <span className="text-sm font-black text-amber-600 tabular-nums tracking-tight">
-                                                        {formatMoneyVND(Math.ceil(summary?.cardYearlyCashbackGivenTotal || 0))}
-                                                    </span>
-                                                </div>
-                                            </div>
-                                        </div>
-
-                                        <div className="mt-4 p-3 bg-white rounded-lg border border-slate-200 shadow-sm">
-                                            <div className="flex justify-between items-center">
-                                                <div className="flex flex-col">
-                                                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Total Net Benefit</span>
-                                                    <span className="text-xs font-medium text-slate-500 italic">Whole year impact</span>
-                                                </div>
-                                                <div className={cn(
-                                                    "text-lg font-black tabular-nums tracking-tighter",
-                                                    (summary?.netProfitYearly || 0) >= 0 ? "text-emerald-600" : "text-rose-600"
-                                                )}>
-                                                    {formatMoneyVND(Math.ceil(summary?.netProfitYearly || 0))}
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div className="bg-slate-50 px-4 py-2 border-t border-slate-100 flex justify-between items-center text-[10px]">
-                                    <span className="font-bold text-slate-400 uppercase tracking-tighter">Powered by Cashback v3 Engine</span>
-                                    <span className="text-slate-300 italic">Live stats</span>
-                                </div>
-                            </div>
-                        </TooltipContent>
-                    </Tooltip>
-                </TooltipProvider>
-                        </div>
-                    </div>
-                </HeaderSection>
-            </div>
-            )}
-
-            {/* Tools Area */}
-            <div className="flex flex-col justify-center gap-2 min-w-0 md:min-w-[120px] border-l border-slate-100 pl-6 ml-2">
-                <button
-                    onClick={() => {
-                        setIsSyncing(true);
-                        router.refresh();
-                        setTimeout(() => {
-                            setIsSyncing(false);
-                            toast.success("Database synced successfully");
-                        }, 800);
-                    }}
-                    disabled={isSyncing}
-                    className="flex items-center justify-center gap-1.5 w-full py-1 bg-white border border-slate-200 text-slate-500 rounded hover:bg-emerald-50 hover:text-emerald-600 hover:border-emerald-200 transition-all text-[8px] font-black uppercase tracking-widest disabled:opacity-50 disabled:cursor-wait"
-                >
-                    {isSyncing ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <RefreshCw className="w-2.5 h-2.5" />}
-                    {isSyncing ? "Syncing..." : "Sync DB"}
-                </button>
-
-                <button
-                    onClick={() => setIsSlideOpen(true)}
-                    className="flex items-center justify-center gap-1.5 w-full py-1 bg-white border border-slate-200 text-slate-500 rounded hover:bg-slate-50 hover:text-indigo-600 hover:border-indigo-200 transition-all text-[8px] font-black uppercase tracking-widest"
-                >
-                    <Settings className="w-2.5 h-2.5" />
-                    Config
-                </button>
-
-                {summary && (
-                    <button
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            const event = new CustomEvent('open-pending-items-modal', { detail: { accountId: account.id } });
-                            window.dispatchEvent(event);
-                        }}
-                        disabled={isLoadingPending}
-                        className={cn(
-                            "mt-1 flex items-center justify-between gap-1 px-1.5 py-1 rounded transition-all duration-200 w-full group border relative overflow-hidden active:scale-[0.98]",
-                            (summary.pendingCount || 0) > 0 ? "bg-rose-50 border-rose-100 hover:bg-rose-100 hover:border-rose-200" : "bg-emerald-50 border-emerald-100 hover:bg-emerald-100/80 hover:border-emerald-200",
-                            isLoadingPending && "opacity-70 cursor-wait"
-                        )}
-                    >
-                        {isLoadingPending && (
-                            <div className="absolute inset-0 flex items-center justify-center bg-white/50 backdrop-blur-[1px] z-10">
-                                <Loader2 className="h-3 w-3 animate-spin text-slate-500" />
-                            </div>
-                        )}
-                        <div className="flex items-center gap-1.5 min-w-0">
-                            {(summary.pendingCount || 0) > 0 ? (
-                                <span className="flex h-1.5 w-1.5 relative shrink-0">
-                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
-                                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-rose-600"></span>
-                                </span>
-                            ) : (
-                                <Check className="h-2.5 w-2.5 text-emerald-600 shrink-0" />
-                            )}
-                            <span className={cn("text-[8px] font-black uppercase tracking-tighter truncate", (summary.pendingCount || 0) > 0 ? "text-rose-600" : "text-emerald-600")}>
-                                {(summary.pendingCount || 0) > 0 ? `${summary.pendingCount} Items` : "No Pending"}
-                            </span>
-                        </div>
-                        {(summary.pendingCount || 0) > 0 && (
-                            <span className="text-[7px] font-bold text-rose-400 uppercase tracking-widest px-0.5 bg-white rounded border border-rose-100 group-hover:border-rose-200 shrink-0">Wait</span>
-                        )}
-                    </button>
-                )}
-            </div>
+      <div className="flex flex-col items-center justify-center h-full gap-1">
+        <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest leading-none">
+          Due Term
+        </span>
+        <div
+          className={cn(
+            "flex items-center gap-1.5 px-2 py-1 rounded-full border text-[9px] font-black tracking-tight shadow-sm whitespace-nowrap",
+            isUrgent
+              ? "bg-rose-50 border-rose-200 text-rose-600 animate-pulse shadow-[0_0_10px_rgba(225,29,72,0.1)]"
+              : "bg-emerald-50 border-emerald-200 text-emerald-700",
+          )}
+        >
+          <Clock className="h-3 w-3 opacity-70" />
+          <span>{label}</span>
+          <span className="opacity-30">|</span>
+          <Calendar className="h-3 w-3 opacity-70" />
+          <span>{dateLabel}</span>
         </div>
+      </div>
     );
+  }, [account, startOfDay]);
+
+  return (
+    <div className="bg-white border-b border-slate-200 px-6 py-1.5 flex flex-col gap-2 md:flex-row md:items-stretch sticky top-0 z-60 shadow-sm">
+      <AccountSlideV2
+        open={isSlideOpen}
+        onOpenChange={setIsSlideOpen}
+        account={account}
+        allAccounts={allAccounts}
+        categories={categories}
+        existingAccountNumbers={
+          Array.from(
+            new Set(allAccounts.map((a) => a.account_number).filter(Boolean)),
+          ) as string[]
+        }
+        existingReceiverNames={
+          Array.from(
+            new Set(allAccounts.map((a) => a.receiver_name).filter(Boolean)),
+          ) as string[]
+        }
+      />
+
+      {/* Section 1: Account Identity */}
+      <HeaderSection
+        label="Account"
+        className="min-w-0 sm:min-w-[300px] gap-1 !h-[120px] justify-center pt-2"
+      >
+        <div className="flex items-center gap-3">
+          <div className="relative shrink-0 flex items-center h-12">
+            {account.image_url ? (
+              <img
+                src={account.image_url}
+                alt=""
+                className="h-full w-auto max-w-[80px] object-contain transition-all"
+              />
+            ) : (
+              <div className="w-12 h-12 overflow-hidden flex items-center justify-center border border-slate-100 bg-white rounded-lg">
+                <div className="text-xl font-bold text-slate-400 capitalize">
+                  {account.name.charAt(0)}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="flex flex-col min-w-0">
+            <div className="flex items-center gap-1.5">
+              <h1
+                className="text-xs font-black text-slate-900 leading-none truncate"
+                title={account.name}
+              >
+                {account.name}
+              </h1>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleCopyAccountId();
+                      }}
+                      className={cn(
+                        "text-slate-300 hover:text-emerald-600 transition-colors",
+                        isAccountIdCopied && "text-emerald-500",
+                      )}
+                      aria-label="Copy account ID"
+                    >
+                      {isAccountIdCopied ? (
+                        <Check className="h-3.5 w-3.5" />
+                      ) : (
+                        <Copy className="h-3.5 w-3.5" />
+                      )}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>Copy account ID</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={(e) => e.stopPropagation()}
+                      className="text-slate-300 hover:text-slate-600 transition-colors"
+                      aria-label="Account ID"
+                    >
+                      <Hash className="h-3.5 w-3.5" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>{account.id}</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+              <Popover
+                open={isEditPopoverOpen}
+                onOpenChange={setIsEditPopoverOpen}
+              >
+                <PopoverTrigger asChild>
+                  <button className="text-slate-300 hover:text-indigo-500 transition-colors">
+                    <Edit className="h-3.5 w-3.5" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent
+                  className="w-[280px] z-[90] shadow-2xl border-indigo-100"
+                  align="start"
+                  onOpenAutoFocus={(e) => e.preventDefault()}
+                >
+                  <div className="space-y-3 p-1">
+                    <h4 className="text-[10px] font-black uppercase text-slate-400">
+                      Edit Info
+                    </h4>
+                    <div className="space-y-1">
+                      <span className="text-[10px] text-slate-400 font-bold uppercase">
+                        Account Number
+                      </span>
+                      <Input
+                        value={editValues.account_number}
+                        onChange={(e) =>
+                          setEditValues((prev) => ({
+                            ...prev,
+                            account_number: e.target.value,
+                          }))
+                        }
+                        placeholder="Account Number"
+                        className="h-8 text-xs"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <span className="text-[10px] text-slate-400 font-bold uppercase">
+                        Receiver Name
+                      </span>
+                      <Input
+                        value={editValues.receiver_name}
+                        onChange={(e) =>
+                          setEditValues((prev) => ({
+                            ...prev,
+                            receiver_name: e.target.value,
+                          }))
+                        }
+                        placeholder="Receiver Name"
+                        className="h-8 text-xs"
+                      />
+                    </div>
+                    <button
+                      onClick={handleSaveInfo}
+                      className="w-full h-8 bg-indigo-600 text-white text-xs font-bold rounded mt-2"
+                    >
+                      Save Changes
+                    </button>
+                  </div>
+                </PopoverContent>
+              </Popover>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const url = `https://api-db.reiwarden.io.vn/_/#/collections?collection=pvl_acc_001&filter=${account.id}&sort=-%40rowid`;
+                        window.open(url, "_blank", "noopener,noreferrer");
+                      }}
+                      className="text-slate-300 hover:text-slate-700 transition-colors"
+                      aria-label="Open in DB"
+                    >
+                      <Database className="h-3.5 w-3.5" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>Open DB (new tab)</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </div>
+
+            <div className="flex flex-col mt-1.5 gap-1.5">
+              <div className="flex flex-col gap-1">
+                <span className="text-[11px] font-black text-slate-500 tracking-wide flex items-center gap-1.5">
+                  <Hash className="h-3 w-3 text-slate-400 shrink-0" />
+                  {account.account_number || "•••• •••• ••••"}
+                </span>
+                {account.secured_by_account_id && (
+                  <div className="flex items-center gap-1.5 px-2 py-0.5 bg-amber-50 border border-amber-100 rounded-full w-fit">
+                    <Zap className="h-2.5 w-2.5 text-amber-500 fill-amber-500" />
+                    <span className="text-[9px] font-black text-amber-700 uppercase tracking-tighter">
+                      Collateral Linked
+                    </span>
+                  </div>
+                )}
+              </div>
+              {account.receiver_name && (
+                <div className="flex items-center gap-1 pl-0.5 pt-1.5 border-t border-slate-100 min-w-0">
+                  <User className="h-2.5 w-2.5 text-slate-300 shrink-0" />
+                  <span className="text-[7.5px] font-black text-slate-400 uppercase tracking-widest leading-none truncate whitespace-nowrap block">
+                    {account.receiver_name}
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {rewardsCount > 0 && (
+          <div className="flex items-center gap-1.5 pl-0.5 mt-1 w-fit">
+            <HoverCard openDelay={0} closeDelay={150}>
+              <HoverCardTrigger asChild>
+                <div className="flex items-center gap-1.5 px-2 py-1 bg-amber-50 border border-amber-100 rounded-md text-amber-700 cursor-help active:scale-95 transition-transform hover:bg-amber-100 hover:border-amber-200 shadow-sm group/badge">
+                  <Zap className="h-3 w-3 fill-amber-400 text-amber-500 group-hover/badge:animate-pulse" />
+                  {(() => {
+                    try {
+                      const program = normalizeCashbackConfig(
+                        account.cashback_config,
+                        account,
+                      );
+                      const rules: any[] = [];
+                      (program.levels || []).forEach((lvl: any) => {
+                        (lvl.rules || []).forEach((r: any) => {
+                          rules.push({ ...r, levelName: lvl.name });
+                        });
+                      });
+
+                      // Collect all unique Category IDs
+                      const catIds = new Set<string>();
+                      rules.forEach((r) => {
+                        if (Array.isArray(r.categoryIds))
+                          r.categoryIds.forEach((id: string) => catIds.add(id));
+                        if (r.categoryId) catIds.add(r.categoryId);
+                      });
+
+                      const allCatIds = Array.from(catIds);
+
+                      // Fallback if no categories but default rate exists
+                      if (allCatIds.length === 0 && program.defaultRate > 0) {
+                        return (
+                          <span className="text-[10px] font-black uppercase tracking-tight">
+                            Flat {(program.defaultRate * 100).toFixed(1)}%
+                          </span>
+                        );
+                      }
+
+                      const allCats = allCatIds
+                        .map((id) =>
+                          categories.find((c) => c.id === id || c.name === id),
+                        )
+                        .filter(Boolean) as Category[];
+                      const uniqueCatsMap = new Map<string, Category>();
+                      allCats.forEach((c) => uniqueCatsMap.set(c.id, c));
+                      const displayCats = Array.from(
+                        uniqueCatsMap.values(),
+                      ).slice(0, 2);
+                      const remaining = uniqueCatsMap.size - displayCats.length;
+
+                      return (
+                        <div className="flex items-center gap-2">
+                          {Array.from(uniqueCatsMap.values())
+                            .slice(0, 2)
+                            .map((cat, idx) => (
+                              <React.Fragment key={`${cat.id} -${idx} `}>
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-[10px] font-black uppercase tracking-tight truncate max-w-[200px]">
+                                    {cat.name}
+                                  </span>
+                                  {cat.mcc_codes &&
+                                    cat.mcc_codes.length > 0 && (
+                                      <div className="flex items-center gap-1 border-l border-slate-200 pl-1.5 ml-1">
+                                        {Array.from(new Set(cat.mcc_codes)).map(
+                                          (mcc) => (
+                                            <code
+                                              key={mcc}
+                                              className="text-[9px] font-mono font-black text-slate-500 bg-white border border-slate-200 px-1 rounded-sm shadow-sm"
+                                            >
+                                              {mcc}
+                                            </code>
+                                          ),
+                                        )}
+                                      </div>
+                                    )}
+                                </div>
+                                {idx === 0 && uniqueCatsMap.size > 1 && (
+                                  <span className="text-slate-200">|</span>
+                                )}
+                              </React.Fragment>
+                            ))}
+                          {remaining > 0 && (
+                            <span className="text-[10px] font-bold text-amber-600/80 border-l border-amber-200 pl-1.5 ml-0.5">
+                              +{remaining} more
+                            </span>
+                          )}
+                        </div>
+                      );
+                    } catch (e) {
+                      return (
+                        <span className="text-[10px] font-black uppercase tracking-tight">
+                          Rewards Active
+                        </span>
+                      );
+                    }
+                  })()}
+                </div>
+              </HoverCardTrigger>
+              <HoverCardContent
+                className="w-[340px] p-0 overflow-hidden border-none shadow-2xl"
+                align="start"
+              >
+                <div className="bg-white">
+                  <div className="bg-gradient-to-r from-amber-500 to-orange-500 px-4 py-3 flex justify-between items-center text-white">
+                    <div className="flex items-center gap-2">
+                      <Zap className="h-4 w-4 fill-white/20" />
+                      <span className="text-xs font-black uppercase tracking-widest">
+                        Active Rewards
+                      </span>
+                    </div>
+                    {/* Calculate count again for header */}
+                    {(() => {
+                      const program = normalizeCashbackConfig(
+                        account.cashback_config,
+                        account,
+                      );
+                      const rules = (program.levels || []).flatMap(
+                        (l: any) => l.rules || [],
+                      );
+                      return (
+                        <span className="bg-white/20 backdrop-blur-md px-2 py-0.5 rounded-full text-[9px] font-bold text-white uppercase">
+                          {rules.length} Rules
+                        </span>
+                      );
+                    })()}
+                  </div>
+
+                  <div className="bg-white max-h-[300px] overflow-y-auto">
+                    {(() => {
+                      try {
+                        const config = normalizeCashbackConfig(
+                          account.cashback_config,
+                          account,
+                        );
+                        const levels = config.levels || [];
+                        const rules: any[] = levels.flatMap(
+                          (lvl: any) => lvl.rules || [],
+                        );
+
+                        if (rules.length === 0 && config.defaultRate > 0) {
+                          return (
+                            <div className="p-4 flex items-center gap-3">
+                              <div className="h-10 w-10 rounded-full bg-emerald-100 flex items-center justify-center">
+                                <span className="text-lg">🌍</span>
+                              </div>
+                              <div>
+                                <div className="text-sm font-bold text-slate-800">
+                                  Flat Rate
+                                </div>
+                                <div className="text-xs text-slate-500">
+                                  All Purchases
+                                </div>
+                              </div>
+                              <div className="ml-auto text-xl font-black text-emerald-600">
+                                {(config.defaultRate * 100).toFixed(1)}%
+                              </div>
+                            </div>
+                          );
+                        }
+
+                        return (
+                          <div className="divide-y divide-slate-100">
+                            {rules.map((rule, idx) => {
+                              const catIds: string[] = [];
+                              if (Array.isArray(rule.categoryIds))
+                                rule.categoryIds.forEach((id: string) =>
+                                  catIds.push(id),
+                                );
+                              if (rule.categoryId) catIds.push(rule.categoryId);
+                              // Dedupe
+                              const uniqueCatIds = Array.from(new Set(catIds));
+
+                              const desc =
+                                rule.description ||
+                                (uniqueCatIds.length > 0
+                                  ? "Specific Categories"
+                                  : "Bonus Rule");
+
+                              return (
+                                <div
+                                  key={idx}
+                                  className="p-3 hover:bg-slate-50 transition-colors"
+                                >
+                                  <div className="flex justify-between items-start mb-2">
+                                    <span className="text-[11px] font-black uppercase text-slate-700 tracking-wide">
+                                      {desc}
+                                    </span>
+                                    <span className="text-sm font-black text-emerald-600">
+                                      {(rule.rate * 100).toFixed(1)}%
+                                    </span>
+                                  </div>
+
+                                  {uniqueCatIds.length > 0 && (
+                                    <div className="space-y-2">
+                                      {uniqueCatIds.map((cid) => {
+                                        const cat = categories.find(
+                                          (c) => c.id === cid || c.name === cid,
+                                        );
+                                        if (!cat) return null;
+                                        return (
+                                          <div
+                                            key={cid}
+                                            className="flex items-center justify-between bg-slate-50 border border-slate-100 rounded px-2 py-1.5"
+                                          >
+                                            <div className="flex items-center gap-2">
+                                              <span className="text-base">
+                                                {cat.icon || "🏷️"}
+                                              </span>
+                                              <span className="text-[10px] font-bold text-slate-600 uppercase">
+                                                {cat.name}
+                                              </span>
+                                            </div>
+                                            {cat.mcc_codes &&
+                                              cat.mcc_codes.length > 0 && (
+                                                <div className="flex gap-1">
+                                                  {Array.from(
+                                                    new Set(cat.mcc_codes),
+                                                  ).map((mcc) => (
+                                                    <code
+                                                      key={mcc}
+                                                      className="text-[9px] font-mono font-bold bg-white border border-slate-200 px-1 rounded text-slate-500"
+                                                    >
+                                                      {mcc}
+                                                    </code>
+                                                  ))}
+                                                </div>
+                                              )}
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                  {rule.maxReward && (
+                                    <div className="mt-2 flex items-center gap-1 text-[9px] text-amber-600 font-medium italic">
+                                      <Info className="h-3 w-3" />
+                                      Cap: {formatVNShort(rule.maxReward)}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        );
+                      } catch (e) {
+                        return (
+                          <p className="p-4 text-xs text-slate-400 italic text-center">
+                            Config data unavailable.
+                          </p>
+                        );
+                      }
+                    })()}
+                  </div>
+                  <div className="bg-slate-50 p-2 text-center border-t border-slate-100">
+                    <p className="text-[9px] font-bold text-slate-400 uppercase italic">
+                      Detailed MCC matching required
+                    </p>
+                  </div>
+                </div>
+              </HoverCardContent>
+            </HoverCard>
+          </div>
+        )}
+      </HeaderSection>
+
+      {isCreditCard ? (
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <HeaderSection
+                label="Credit Health"
+                borderColor="border-indigo-100"
+                className="flex-[5] min-w-[420px] bg-indigo-50/10 cursor-help !h-[120px]"
+              >
+                <div className="flex flex-col h-full">
+                  {/* Row 1: Metrics (H-61px to ensure Bar Top is at 73px) */}
+                  <div className="grid grid-cols-4 gap-2 w-full h-[61px] items-start pt-1">
+                    <div className="flex flex-col group">
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <BarChart3 className="h-3 w-3 text-slate-400 group-hover:text-emerald-500 transition-colors" />
+                        <span className="text-[10px] font-bold text-slate-400 tracking-tight uppercase">
+                          Available
+                        </span>
+                      </div>
+                      <div
+                        className={cn(
+                          "text-base font-black tracking-tight leading-none tabular-nums",
+                          availableBalance >= 0
+                            ? "text-emerald-600"
+                            : "text-rose-600",
+                        )}
+                      >
+                        {formatMoneyVND(Math.ceil(availableBalance))}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col group">
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <ShieldCheck className="h-3 w-3 text-slate-400 group-hover:text-indigo-500 transition-colors" />
+                        <span className="text-[10px] font-bold text-slate-400 tracking-tight uppercase">
+                          Limit
+                        </span>
+                      </div>
+                      <div className="text-base font-black tracking-tight leading-none tabular-nums text-slate-900">
+                        {formatMoneyVND(Math.ceil(account.credit_limit || 0))}
+                      </div>
+                    </div>
+
+                    <div className="px-1 flex justify-center">
+                      {dueDateBadge}
+                    </div>
+
+                    <div className="flex flex-col group items-end">
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <TrendingUp className="h-3 w-3 text-slate-400 group-hover:text-indigo-500 transition-colors" />
+                        <span className="text-[10px] font-bold text-slate-400 tracking-tight uppercase">
+                          Health Score
+                        </span>
+                      </div>
+                      <div className="text-[9px] font-black text-indigo-700 leading-none tabular-nums tracking-tight bg-indigo-50 px-2 py-1 rounded border border-indigo-100/50">
+                        STABLE
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Row 2: Progress Bar (Smaller H) */}
+                  <div className="w-full h-[32px] flex items-end relative pb-1">
+                    {(() => {
+                      const limit = account.credit_limit || 0;
+                      const usagePercent =
+                        limit > 0
+                          ? Math.min((outstandingBalance / limit) * 100, 100)
+                          : 0;
+                      const isDanger = usagePercent > 90;
+
+                      return (
+                        <div className="relative h-1.5 w-full bg-slate-100 rounded-full overflow-visible border border-slate-200/60 shadow-[inset_0_1px_2px_rgba(0,0,0,0.05)]">
+                          <div
+                            className={cn(
+                              "h-full transition-all duration-700 rounded-full shadow-sm",
+                              isDanger ? "bg-rose-500" : "bg-indigo-600",
+                            )}
+                            style={{ width: `${usagePercent}% ` }}
+                          />
+                        </div>
+                      );
+                    })()}
+                  </div>
+
+                  {/* Row 3: Metrics & Badges (Footer) */}
+                  <div className="flex items-center gap-2 pb-1 px-0.5 mt-auto h-[28px]">
+                    {(() => {
+                      const waiverTarget = account.annual_fee_waiver_target;
+                      const spent = summary?.yearExpensesTotal || 0;
+                      const needsWaiver = waiverTarget
+                        ? Math.max(0, waiverTarget - spent)
+                        : 0;
+
+                      if (!waiverTarget) return null;
+
+                      return (
+                        <div
+                          className={cn(
+                            "px-3 py-1 rounded-lg border shadow-sm flex items-center gap-3 h-7 w-full",
+                            needsWaiver > 0
+                              ? "bg-amber-50 border-amber-200"
+                              : "bg-emerald-50 border-emerald-200",
+                          )}
+                        >
+                          <div className="flex items-center gap-2 shrink-0">
+                            {needsWaiver > 0 ? (
+                              <TrendingUp className="h-3 w-3 text-amber-500 animate-pulse" />
+                            ) : (
+                              <ShieldCheck className="h-3 w-3 text-emerald-500" />
+                            )}
+                            <span
+                              className={cn(
+                                "text-[9px] font-black uppercase tracking-[0.1em]",
+                                needsWaiver > 0
+                                  ? "text-amber-600"
+                                  : "text-emerald-700",
+                              )}
+                            >
+                              Waiver Needs
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-2 ml-auto">
+                            <div className="flex flex-col items-end leading-none">
+                              <span className="text-[7px] font-bold text-slate-400 uppercase tracking-tighter mb-0.5">
+                                Still Need
+                              </span>
+                              <span
+                                className={cn(
+                                  "text-[11px] font-black tabular-nums whitespace-nowrap",
+                                  needsWaiver > 0
+                                    ? "text-amber-700"
+                                    : "text-emerald-700",
+                                )}
+                              >
+                                {needsWaiver > 0
+                                  ? formatMoneyVND(Math.ceil(needsWaiver))
+                                  : "READY"}
+                              </span>
+                            </div>
+                            <span className="text-slate-200 mx-1 font-light">
+                              /
+                            </span>
+                            <div className="flex flex-col items-end leading-none">
+                              <span className="text-[7px] font-bold text-slate-400 uppercase tracking-tighter mb-0.5">
+                                Target
+                              </span>
+                              <span className="text-[11px] font-black text-slate-600 tabular-nums whitespace-nowrap">
+                                {formatMoneyVND(waiverTarget)}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </div>
+              </HeaderSection>
+            </TooltipTrigger>
+            <TooltipContent
+              side="bottom"
+              className="w-[340px] p-0 overflow-hidden border-none shadow-2xl"
+            >
+              <div className="bg-white">
+                <div className="bg-indigo-950 px-4 py-1.5 flex justify-between items-center">
+                  <div className="flex flex-col">
+                    <h3 className="font-black text-[9px] uppercase tracking-[0.2em] text-indigo-400/80 leading-tight">
+                      Analytics
+                    </h3>
+                    <div className="flex items-baseline gap-2">
+                      <h3 className="font-black text-[11px] uppercase tracking-[0.15em] text-indigo-200">
+                        Credit Health Report
+                      </h3>
+                      {!!account.annual_fee && (
+                        <span className="text-[9px] font-black text-indigo-400 opacity-60 px-1.5 py-0.5 rounded bg-indigo-900/40 border border-indigo-700/50">
+                          Fee: {formatMoneyVND(account.annual_fee)}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {availableYears.length > 0 ? (
+                      <div className="relative">
+                        <select
+                          value={selectedYear || ""}
+                          onChange={(e) => handleYearChange(e.target.value)}
+                          className="appearance-none bg-indigo-900/50 hover:bg-indigo-800 text-[10px] font-black text-indigo-200 pl-2 pr-6 py-1 rounded transition-colors border border-indigo-700/50 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer min-w-[60px] text-center"
+                        >
+                          {availableYears.map((year) => (
+                            <option
+                              key={year}
+                              value={year}
+                              className="bg-indigo-950 text-white"
+                            >
+                              {year}
+                            </option>
+                          ))}
+                        </select>
+                        <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 h-2.5 w-2.5 text-indigo-400 pointer-events-none" />
+                      </div>
+                    ) : null}
+                    {isPending ? (
+                      <Loader2 className="h-3 w-3 text-indigo-400 animate-spin" />
+                    ) : (
+                      <Zap className="h-3 w-3 text-amber-400 fill-amber-400 shadow-sm" />
+                    )}
+                  </div>
+                </div>
+
+                <div className="p-4 space-y-4">
+                  {/* Simplified Spending Overview */}
+                  <div className="space-y-3">
+                    <div className="bg-indigo-50/50 rounded-lg p-3 border border-indigo-100/50 space-y-3">
+                      <div className="flex justify-between items-center">
+                        <div className="flex flex-col">
+                          <span className="text-[9px] font-black text-indigo-400 uppercase tracking-widest">
+                            Year Analytics
+                          </span>
+                          <span className="text-[11px] font-black text-indigo-900 uppercase tracking-tighter">
+                            {selectedYear || currentYear} Spending Status
+                          </span>
+                        </div>
+                        <div className="h-8 w-8 rounded-full bg-white border border-indigo-100 flex items-center justify-center shadow-sm">
+                          <BarChart3 className="h-4 w-4 text-indigo-500" />
+                        </div>
+                      </div>
+
+                      <div className="pt-2 border-t border-indigo-100/50">
+                        <div className="flex justify-between items-baseline mb-0.5">
+                          <span className="text-[11px] font-bold text-slate-500 uppercase tracking-tight">
+                            Total Expenses
+                          </span>
+                          <span
+                            className={cn(
+                              "text-lg font-black text-indigo-600 tabular-nums",
+                              isPending && "opacity-20 animate-pulse",
+                            )}
+                          >
+                            {formatMoneyVND(summary?.yearExpensesTotal || 0)}
+                          </span>
+                        </div>
+                        <div className="flex justify-end">
+                          <span className="text-[10px] font-black text-slate-400 italic">
+                            {formatVNShort(summary?.yearExpensesTotal || 0)}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Table Structure for Waiver */}
+                  {!!account.annual_fee_waiver_target && (
+                    <div className="bg-slate-50 rounded-lg p-3 border border-slate-100 space-y-2">
+                      <h4 className="font-black text-[10px] uppercase text-slate-400 tracking-widest flex items-center gap-2">
+                        <Calculator className="h-3 w-3" /> Waiver Progress
+                      </h4>
+                      <div className="grid grid-cols-2 text-[11px] py-0.5">
+                        <span className="text-slate-500">Target Spending</span>
+                        <span className="text-right font-bold">
+                          {formatMoneyVND(account.annual_fee_waiver_target)}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 text-[11px] py-0.5">
+                        <span className="text-slate-500">
+                          {isHistoricalYear ? "Year Spending" : "YTD Spending"}
+                        </span>
+                        <span className="text-right font-bold text-indigo-600">
+                          {formatMoneyVND(summary?.yearExpensesTotal || 0)}
+                        </span>
+                      </div>
+                      {summary?.yearExpensesTotal! <
+                      account.annual_fee_waiver_target ? (
+                        <div className="grid grid-cols-2 text-[11px] pt-1.5 border-t border-amber-100 font-black text-amber-600">
+                          <span>REMAINING NEED</span>
+                          <span className="text-right">
+                            {formatMoneyVND(
+                              account.annual_fee_waiver_target -
+                                (summary?.yearExpensesTotal || 0),
+                            )}
+                          </span>
+                        </div>
+                      ) : (
+                        <div className="pt-1.5 border-t border-emerald-100 space-y-1">
+                          <div className="flex justify-between items-center text-[10px] font-black text-emerald-600 uppercase tracking-widest">
+                            <span>✨ Waiver Qualified</span>
+                            <span>100% Met</span>
+                          </div>
+                          <div className="flex justify-between text-[9px] text-emerald-500/80 italic font-medium">
+                            <span>Excess spending:</span>
+                            <span>
+                              +
+                              {formatMoneyVND(
+                                (summary?.yearExpensesTotal || 0) -
+                                  account.annual_fee_waiver_target,
+                              )}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      ) : (
+        <>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <HeaderSection
+                  label="Cash Flow"
+                  borderColor="border-sky-100"
+                  className="flex-1 min-w-[280px] bg-sky-50/10 cursor-help !h-[105px]"
+                >
+                  <div className="flex flex-col h-full justify-between py-1">
+                    <div className="flex justify-between items-center px-1">
+                      <div className="flex flex-col">
+                        <span className="text-[10px] font-black text-sky-600 uppercase tracking-widest">
+                          Net Income
+                        </span>
+                        <span
+                          className={cn(
+                            "text-lg font-black tabular-nums transition-all",
+                            (summary?.yearPureIncomeTotal || 0) -
+                              (summary?.yearPureExpenseTotal || 0) >=
+                              0
+                              ? "text-emerald-600"
+                              : "text-rose-600",
+                          )}
+                        >
+                          {formatMoneyVND(
+                            (summary?.yearPureIncomeTotal || 0) -
+                              (summary?.yearPureExpenseTotal || 0),
+                          )}
+                        </span>
+                      </div>
+                      <div className="h-8 w-8 rounded-full bg-white border border-sky-100 flex items-center justify-center shadow-sm">
+                        <TrendingUp className="h-4 w-4 text-sky-500" />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 mt-2 px-1">
+                      <div className="flex flex-col">
+                        <span className="text-[8px] font-bold text-slate-400 uppercase">
+                          Incoming
+                        </span>
+                        <span className="text-[11px] font-black text-emerald-600">
+                          +{formatVNShort(summary?.yearPureIncomeTotal || 0)}
+                        </span>
+                      </div>
+                      <div className="flex flex-col text-right">
+                        <span className="text-[8px] font-bold text-slate-400 uppercase">
+                          Outgoing
+                        </span>
+                        <span className="text-[11px] font-black text-rose-500">
+                          -{formatVNShort(summary?.yearPureExpenseTotal || 0)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </HeaderSection>
+              </TooltipTrigger>
+              <TooltipContent
+                side="bottom"
+                className="w-[300px] p-0 border-none shadow-2xl overflow-hidden rounded-2xl"
+                sideOffset={10}
+              >
+                <div className="bg-indigo-950/95 backdrop-blur-xl border border-indigo-400/20 overflow-hidden rounded-2xl">
+                  <div className="bg-gradient-to-r from-indigo-900 to-indigo-800 p-4 border-b border-indigo-400/20">
+                    <div className="flex items-center gap-2 mb-1">
+                      <TrendingUp className="h-3 w-3 text-indigo-300" />
+                      <h3 className="font-black text-[11px] uppercase tracking-[0.15em] text-indigo-200">
+                        Cash Flow Report {selectedYear || currentYear}
+                      </h3>
+                    </div>
+                  </div>
+                  <div className="p-4 space-y-3">
+                    <div className="space-y-2">
+                      <div className="flex justify-between text-xs py-1 border-b border-white/5">
+                        <span className="text-white/60">Actual Income</span>
+                        <span className="text-emerald-400 font-bold">
+                          {formatMoneyVND(summary?.yearPureIncomeTotal || 0)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between text-xs py-1 border-b border-white/5">
+                        <span className="text-white/60">Pure Expenses</span>
+                        <span className="text-rose-400 font-bold">
+                          -{formatMoneyVND(summary?.yearPureExpenseTotal || 0)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between text-xs pt-2 font-black">
+                        <span className="text-indigo-200 uppercase tracking-widest text-[10px]">
+                          Net Result
+                        </span>
+                        <span
+                          className={cn(
+                            (summary?.yearPureIncomeTotal || 0) -
+                              (summary?.yearPureExpenseTotal || 0) >=
+                              0
+                              ? "text-emerald-400"
+                              : "text-rose-400",
+                          )}
+                        >
+                          {formatMoneyVND(
+                            (summary?.yearPureIncomeTotal || 0) -
+                              (summary?.yearPureExpenseTotal || 0),
+                          )}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="bg-white/5 rounded-lg p-2 text-[10px] text-white/40 italic">
+                      Excludes transfers and debt-related flows.
+                    </div>
+                  </div>
+                </div>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <HeaderSection
+                  label="Debt Manage"
+                  borderColor="border-amber-100"
+                  className="flex-1 min-w-[280px] bg-amber-50/10 cursor-help !h-[105px]"
+                >
+                  <div className="flex flex-col h-full justify-between py-1">
+                    <div className="flex justify-between items-center px-1">
+                      <div className="flex flex-col">
+                        <span className="text-[10px] font-black text-amber-600 uppercase tracking-widest">
+                          {(summary?.yearLentTotal || 0) >=
+                          (summary?.yearRepaidTotal || 0)
+                            ? "Active Credits"
+                            : "Net Recovery"}
+                        </span>
+                        <span
+                          className={cn(
+                            "text-lg font-black tabular-nums transition-all",
+                            (summary?.yearLentTotal || 0) >=
+                              (summary?.yearRepaidTotal || 0)
+                              ? "text-amber-900"
+                              : "text-emerald-600",
+                          )}
+                        >
+                          {formatMoneyVND(
+                            Math.abs(
+                              (summary?.yearLentTotal || 0) -
+                                (summary?.yearRepaidTotal || 0),
+                            ),
+                          )}
+                        </span>
+                      </div>
+                      <div className="h-8 w-8 rounded-full bg-white border border-amber-100 flex items-center justify-center shadow-sm">
+                        <Users2 className="h-4 w-4 text-amber-500" />
+                      </div>
+                    </div>
+
+                    <div className="mt-2 px-1">
+                      <div className="flex justify-between text-[10px] font-bold text-slate-500 mb-1">
+                        <span>Repayment Progress</span>
+                        <span>
+                          {summary?.yearLentTotal
+                            ? Math.round(
+                                ((summary?.yearRepaidTotal || 0) /
+                                  summary.yearLentTotal) *
+                                  100,
+                              )
+                            : 0}
+                          %
+                        </span>
+                      </div>
+                      <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden border border-slate-200/50">
+                        <div
+                          className="h-full bg-amber-500 transition-all duration-1000 ease-out"
+                          style={{
+                            width: `${Math.min(100, summary?.yearLentTotal ? ((summary?.yearRepaidTotal || 0) / summary.yearLentTotal) * 100 : 0)}% `,
+                          }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </HeaderSection>
+              </TooltipTrigger>
+              <TooltipContent
+                side="bottom"
+                className="w-[300px] p-0 border-none shadow-2xl overflow-hidden rounded-2xl"
+                sideOffset={10}
+              >
+                <div className="bg-slate-900/95 backdrop-blur-xl border border-white/10 overflow-hidden rounded-2xl">
+                  <div className="bg-amber-900/30 p-4 border-b border-white/5">
+                    <div className="flex items-center gap-2 mb-1">
+                      <Users2 className="h-3 w-3 text-amber-400" />
+                      <h3 className="font-black text-[11px] uppercase tracking-[0.15em] text-amber-200">
+                        Personal Ledger {selectedYear || currentYear}
+                      </h3>
+                    </div>
+                  </div>
+                  <div className="p-4 space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-1">
+                        <span className="text-[9px] font-black text-slate-500 uppercase">
+                          Lent Out
+                        </span>
+                        <p className="text-sm font-black text-white">
+                          {formatMoneyVND(summary?.yearLentTotal || 0)}
+                        </p>
+                      </div>
+                      <div className="space-y-1 text-right">
+                        <span className="text-[9px] font-black text-slate-500 uppercase">
+                          Recovered
+                        </span>
+                        <p className="text-sm font-black text-emerald-400">
+                          {formatMoneyVND(summary?.yearRepaidTotal || 0)}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="pt-2 border-t border-white/5">
+                      <div className="flex justify-between items-center text-[10px] font-bold text-slate-400 mb-2 uppercase">
+                        <span>Progress to Settlement</span>
+                        <span className="text-white">
+                          {summary?.yearLentTotal
+                            ? Math.round(
+                                ((summary?.yearRepaidTotal || 0) /
+                                  summary.yearLentTotal) *
+                                  100,
+                              )
+                            : 0}
+                          %
+                        </span>
+                      </div>
+                      <div className="h-2 w-full bg-white/5 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-gradient-to-r from-amber-600 to-amber-400"
+                          style={{
+                            width: `${Math.min(100, summary?.yearLentTotal ? ((summary?.yearRepaidTotal || 0) / summary.yearLentTotal) * 100 : 0)}% `,
+                          }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+
+          <HeaderSection
+            label="Account Balance"
+            className="flex-1 min-w-[200px] bg-slate-50/10 !h-[105px]"
+          >
+            <div className="flex flex-col h-full justify-between py-1">
+              <div className="flex justify-between items-center px-1">
+                <div className="flex flex-col group">
+                  <div className="flex items-center gap-1.5 mb-1.5">
+                    <BarChart3 className="h-3 w-3 text-slate-400 group-hover:text-emerald-500 transition-colors" />
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tight">
+                      Available
+                    </span>
+                  </div>
+                  <div
+                    className={cn(
+                      "text-xl font-black tracking-tight leading-none tabular-nums",
+                      availableBalance >= 0
+                        ? "text-emerald-600"
+                        : "text-rose-600",
+                    )}
+                  >
+                    {formatMoneyVND(Math.ceil(availableBalance))}
+                  </div>
+                </div>
+                <div className="h-8 w-8 rounded-full bg-white border border-slate-100 flex items-center justify-center shadow-sm">
+                  <Calculator className="h-4 w-4 text-slate-400" />
+                </div>
+              </div>
+
+              <div className="mt-2 px-1 text-[10px] font-bold text-slate-400 uppercase">
+                Real-time Ledger
+              </div>
+            </div>
+          </HeaderSection>
+        </>
+      )}
+
+      {/* Section 3: Cashback Performance - Prompt when cycle is not selected */}
+      {isCreditCard && (!selectedCycle || selectedCycle === "all") && (
+        <div className="flex flex-1 min-w-0 lg:flex-[5]">
+          <HeaderSection
+            label="Cashback Performance"
+            borderColor="border-emerald-100"
+            className="w-full bg-emerald-50/10"
+            hideHintInHeader
+          >
+            <div className="flex h-full min-h-[92px] w-full items-center justify-center p-2.5">
+              <div className="flex items-center gap-3 rounded-lg border border-emerald-200 bg-white/70 px-4 py-2.5">
+                <svg
+                  className="h-8 w-8 text-emerald-400"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={1.5}
+                    d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
+                  />
+                </svg>
+                <div className="flex flex-col">
+                  <span className="text-xs font-black uppercase tracking-wide text-emerald-700">
+                    Select a cycle to view cashback details
+                  </span>
+                  <span className="text-[11px] font-medium text-slate-500">
+                    Open Cycle tab, choose month/year, then click Apply
+                  </span>
+                </div>
+              </div>
+            </div>
+          </HeaderSection>
+        </div>
+      )}
+
+      {/* Section 3: Cashback Performance - Loading state when cycle selected */}
+      {isCreditCard &&
+        selectedCycle &&
+        selectedCycle !== "all" &&
+        !dynamicCashbackStats &&
+        effectiveIsCashbackLoading && (
+          <div className="flex flex-1 min-w-0 lg:flex-[5]">
+            <HeaderSection
+              label="Cashback Performance"
+              borderColor="border-emerald-100"
+              className="w-full bg-emerald-50/10"
+              hideHintInHeader
+            >
+              <div className="flex h-full min-h-[92px] w-full items-center justify-center p-2.5">
+                <div className="flex items-center gap-3 rounded-lg border border-emerald-200 bg-white/70 px-4 py-2.5">
+                  <Loader2 className="h-5 w-5 animate-spin text-emerald-600" />
+                  <span className="text-xs font-semibold text-slate-700">
+                    Fetching cycle data...
+                  </span>
+                </div>
+              </div>
+            </HeaderSection>
+          </div>
+        )}
+
+      {/* Section 3: Cashback Performance - Detailed view when cycle selected */}
+      {isCreditCard &&
+        dynamicCashbackStats &&
+        selectedCycle &&
+        selectedCycle !== "all" && (
+          <div className="flex flex-1 min-w-0 lg:flex-[5]">
+            <HeaderSection
+              label="Cashback Performance"
+              borderColor="border-emerald-100"
+              className="w-full bg-emerald-50/10"
+              hideHintInHeader
+            >
+              {/* Loading overlay during async fetch */}
+              {effectiveIsCashbackLoading && (
+                <div className="absolute inset-0 bg-white/40 backdrop-blur-sm rounded-md flex items-center justify-center z-10 flex-col gap-2 pointer-events-auto">
+                  <Loader2 className="h-6 w-6 animate-spin text-emerald-600" />
+                  <span className="text-xs font-semibold text-slate-700">
+                    Fetching cycle data...
+                  </span>
+                </div>
+              )}
+              <div className="flex flex-col w-full h-full p-2.5 gap-2">
+                {/* Main Layout: Circular Progress (Left) + 2x2 Metrics Grid (Right) */}
+                <div className="flex items-start gap-3 w-full">
+                  {/* Circular Progress Bar */}
+                  <div className="flex-shrink-0">
+                    {(() => {
+                      const stats = dynamicCashbackStats;
+                      if (!stats) return null;
+
+                      const isQualified = stats.is_min_spend_met;
+                      const minSpend = stats.minSpend || 0;
+                      const spent = stats.currentSpend || 0;
+                      const cap = stats.maxCashback || 0;
+                      const earned =
+                        stats.earnedSoFar || selectedCycleMetrics?.est || 0;
+
+                      const activeMax =
+                        stats.activeRules?.reduce(
+                          (acc, r) => acc + (r.max || 0),
+                          0,
+                        ) || 0;
+                      const effectiveCap = cap > 0 ? cap : activeMax;
+
+                      let progress = 0;
+                      let strokeColor = "#10b981";
+                      if (!isQualified && minSpend > 0) {
+                        progress = Math.min((spent / minSpend) * 100, 100);
+                        strokeColor = progress >= 90 ? "#10b981" : "#4f46e5";
+                      } else {
+                        progress =
+                          effectiveCap > 0
+                            ? Math.min(100, (earned / effectiveCap) * 100)
+                            : 0;
+                        strokeColor = "#10b981";
+                      }
+
+                      const radius = 32;
+                      const circumference = 2 * Math.PI * radius;
+                      const strokeDashoffset =
+                        circumference - (progress / 100) * circumference;
+
+                      return (
+                        <div className="relative inline-flex items-center justify-center">
+                          <svg
+                            width="76"
+                            height="76"
+                            viewBox="0 0 76 76"
+                            className="transform -rotate-90"
+                          >
+                            <circle
+                              cx="38"
+                              cy="38"
+                              r={radius}
+                              fill="none"
+                              stroke="#e2e8f0"
+                              strokeWidth="5"
+                            />
+                            <circle
+                              cx="38"
+                              cy="38"
+                              r={radius}
+                              fill="none"
+                              stroke={strokeColor}
+                              strokeWidth="5"
+                              strokeDasharray={circumference}
+                              strokeDashoffset={strokeDashoffset}
+                              strokeLinecap="round"
+                              className="transition-all duration-700"
+                            />
+                          </svg>
+                          <div className="absolute flex flex-col items-center justify-center">
+                            <span className="text-base font-black text-slate-900">
+                              {Math.round(progress)}%
+                            </span>
+                            <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight">
+                              {!isQualified && minSpend > 0
+                                ? "Spend"
+                                : "Earned"}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                  {/* Metrics Grid - 2x2 */}
+                  <div className="flex-1 grid grid-cols-2 gap-2">
+                    {(() => {
+                      // Use API response as primary source (accurate calculation with transaction amount × rate)
+                      const cycleEstCashback =
+                        dynamicCashbackStats?.earnedSoFar || 0;
+                      const cycleShared =
+                        dynamicCashbackStats?.sharedAmount || 0;
+                      const cycleProfit = dynamicCashbackStats?.netProfit || 0;
+                      const cycleCurrentSpend =
+                        dynamicCashbackStats?.currentSpend || 0;
+                      const cycleActualClaimed =
+                        dynamicCashbackStats?.actualClaimed ??
+                        selectedCycleMetrics?.actual ??
+                        0;
+
+                      // Build detailed formula from activeRules for Est tooltip
+                      const ruleDetails = (
+                        dynamicCashbackStats?.activeRules || []
+                      ).map((rule: any) => {
+                        const spent = rule.spent || 0;
+                        const earned = rule.earned || 0;
+                        const rate = rule.rate || 0;
+                        const formattedSpent = new Intl.NumberFormat(
+                          "vi-VN",
+                        ).format(Math.round(spent));
+                        const formattedEarned = new Intl.NumberFormat(
+                          "vi-VN",
+                        ).format(Math.round(earned));
+                        return `${rule.name}: ${formattedSpent} × ${rate}% = ${formattedEarned}`;
+                      });
+
+                      return (
+                        <>
+                          {/* Profit */}
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <div className="flex items-center gap-1.5 min-w-0 cursor-help rounded-sm px-1 py-0.5 hover:bg-slate-50">
+                                <TrendingUp className="h-3.5 w-3.5 flex-shrink-0 text-emerald-600" />
+                                <span
+                                  className={cn(
+                                    "text-xs font-black leading-none tabular-nums tracking-tight truncate",
+                                    cycleProfit > 0
+                                      ? "text-emerald-600"
+                                      : cycleProfit < 0
+                                        ? "text-rose-600"
+                                        : "text-slate-900",
+                                  )}
+                                >
+                                  Profit:{" "}
+                                  {formatMoneyVND(Math.ceil(cycleProfit))}
+                                </span>
+                              </div>
+                            </TooltipTrigger>
+                            <TooltipContent
+                              side="top"
+                              className="max-w-xs bg-slate-900 text-white text-[11px] p-2 space-y-1"
+                            >
+                              <p className="font-semibold">
+                                Lợi nhuận = Thu - Chia sẻ
+                              </p>
+                              <p className="text-slate-300">
+                                {formatMoneyVND(Math.ceil(cycleEstCashback))} -{" "}
+                                {formatMoneyVND(Math.ceil(cycleShared))} ={" "}
+                                {formatMoneyVND(Math.ceil(cycleProfit))}
+                              </p>
+                            </TooltipContent>
+                          </Tooltip>
+
+                          {/* Actual Claimed */}
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <div className="flex items-center gap-1.5 min-w-0 cursor-help rounded-sm px-1 py-0.5 hover:bg-slate-50">
+                                <BarChart3 className="h-3.5 w-3.5 flex-shrink-0 text-indigo-600" />
+                                <span
+                                  className={cn(
+                                    "text-xs font-black leading-none tabular-nums tracking-tight truncate",
+                                    cycleActualClaimed > 0
+                                      ? "text-indigo-600"
+                                      : cycleActualClaimed < 0
+                                        ? "text-rose-600"
+                                        : "text-slate-900",
+                                  )}
+                                >
+                                  Actual:{" "}
+                                  {formatMoneyVND(
+                                    Math.ceil(cycleActualClaimed),
+                                  )}
+                                </span>
+                              </div>
+                            </TooltipTrigger>
+                            <TooltipContent
+                              side="top"
+                              className="max-w-xs bg-slate-900 text-white text-[11px] p-2"
+                            >
+                              <p className="font-semibold mb-1">
+                                Tiền cashback thực nhận
+                              </p>
+                              <p className="text-slate-300">
+                                Giao dịch income có category "Cashback" trong
+                                chu kỳ
+                              </p>
+                            </TooltipContent>
+                          </Tooltip>
+
+                          {/* Est. Cashback */}
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <div className="flex items-center gap-1.5 min-w-0 cursor-help rounded-sm px-1 py-0.5 hover:bg-slate-50">
+                                <PlusCircle className="h-3.5 w-3.5 flex-shrink-0 text-slate-400" />
+                                <span className="text-xs font-black text-emerald-600 leading-none tabular-nums tracking-tight truncate">
+                                  Est:{" "}
+                                  {formatMoneyVND(Math.ceil(cycleEstCashback))}
+                                </span>
+                              </div>
+                            </TooltipTrigger>
+                            <TooltipContent
+                              side="top"
+                              className="max-w-xs bg-slate-900 text-white text-[11px] p-2 space-y-1 max-h-40 overflow-y-auto"
+                            >
+                              <p className="font-semibold">
+                                Est. Cashback (Calculated)
+                              </p>
+                              {ruleDetails.length > 0 ? (
+                                ruleDetails.map(
+                                  (detail: string, idx: number) => (
+                                    <p
+                                      key={idx}
+                                      className="text-slate-300 text-[10px]"
+                                    >
+                                      {detail}
+                                    </p>
+                                  ),
+                                )
+                              ) : (
+                                <p className="text-slate-300">
+                                  Spend:{" "}
+                                  {formatMoneyVND(
+                                    Math.round(cycleCurrentSpend),
+                                  )}
+                                </p>
+                              )}
+                              <p className="text-slate-400 pt-1 border-t border-slate-700">
+                                Total:{" "}
+                                {formatMoneyVND(Math.ceil(cycleEstCashback))}
+                              </p>
+                            </TooltipContent>
+                          </Tooltip>
+
+                          {/* Cashback Shared */}
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <div className="flex items-center gap-1.5 min-w-0 cursor-help rounded-sm px-1 py-0.5 hover:bg-slate-50">
+                                <Users2 className="h-3.5 w-3.5 flex-shrink-0 text-rose-500" />
+                                <span className="text-xs font-black text-rose-600 leading-none tabular-nums tracking-tight truncate">
+                                  Shared:{" "}
+                                  {formatMoneyVND(Math.ceil(cycleShared))}
+                                </span>
+                              </div>
+                            </TooltipTrigger>
+                            <TooltipContent
+                              side="top"
+                              className="max-w-xs bg-slate-900 text-white text-[11px] p-2"
+                            >
+                              <p className="font-semibold mb-1">
+                                Cashback chia sẻ với người khác
+                              </p>
+                              <p className="text-slate-300">
+                                % hoặc số tiền fixed từ chia sẻ
+                              </p>
+                            </TooltipContent>
+                          </Tooltip>
+
+                          {/* Health Badge - Merge across bottom 2 columns */}
+                          <div className="col-span-2 mt-1.5">
+                            <TooltipProvider>
+                              <Tooltip delayDuration={150}>
+                                <TooltipTrigger asChild>
+                                  {(() => {
+                                    const isQualified =
+                                      dynamicCashbackStats.is_min_spend_met;
+                                    const minSpend =
+                                      dynamicCashbackStats.minSpend || 0;
+                                    const spent =
+                                      dynamicCashbackStats.currentSpend || 0;
+                                    const remaining = Math.ceil(
+                                      (minSpend || 0) - (spent || 0),
+                                    );
+                                    const progress =
+                                      minSpend > 0
+                                        ? Math.min(
+                                            (spent / minSpend) * 100,
+                                            100,
+                                          )
+                                        : 100;
+
+                                    return !isQualified && minSpend > 0 ? (
+                                      <div className="flex items-center justify-center gap-2 px-3 py-1.5 bg-amber-50 border border-amber-200 rounded-lg w-full cursor-help hover:bg-amber-100 transition-colors">
+                                        <Zap className="h-3.5 w-3.5 text-amber-600 fill-amber-600 flex-shrink-0" />
+                                        <span className="h-2 w-2 bg-amber-500 rounded-full animate-pulse flex-shrink-0"></span>
+                                        <span className="text-[10px] font-black text-amber-700 uppercase tracking-wide">
+                                          Need Spend More •{" "}
+                                          {Math.round(progress)}%
+                                        </span>
+                                        <span className="text-[10px] font-bold text-amber-600 ml-1">
+                                          {formatMoneyVND(remaining)}
+                                        </span>
+                                      </div>
+                                    ) : (
+                                      <div className="flex items-center justify-center gap-2 px-3 py-1.5 bg-emerald-50 border border-emerald-200 rounded-lg w-full cursor-help hover:bg-emerald-100 transition-colors">
+                                        <Zap className="h-3.5 w-3.5 text-emerald-600 fill-emerald-600 flex-shrink-0" />
+                                        <span className="h-2 w-2 bg-emerald-500 rounded-full flex-shrink-0"></span>
+                                        <span className="text-[10px] font-black text-emerald-700 uppercase tracking-wide">
+                                          Qualified • Earning
+                                        </span>
+                                      </div>
+                                    );
+                                  })()}
+                                </TooltipTrigger>
+                                <TooltipContent
+                                  side="top"
+                                  className="max-w-xs bg-slate-900 text-white text-[11px] p-2.5"
+                                >
+                                  <p className="font-semibold mb-1">
+                                    Cashback Health Status
+                                  </p>
+                                  <p className="text-slate-300 text-[10px]">
+                                    {dynamicCashbackStats.is_min_spend_met
+                                      ? "✅ Đã đạt min spend - đang kiếm cashback"
+                                      : `⚠️ Cần chi tiêu thêm ${formatMoneyVND(Math.ceil((dynamicCashbackStats.minSpend || 0) - (dynamicCashbackStats.currentSpend || 0)))} để qualify`}
+                                  </p>
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
+
+                  {/* Analytics/Report Button - Compact */}
+                  <TooltipProvider>
+                    <Tooltip delayDuration={200}>
+                      <TooltipTrigger asChild>
+                        <div className="flex-shrink-0 flex items-center">
+                          <button className="p-1 hover:bg-emerald-100 rounded-md transition-colors group">
+                            <Zap className="h-3.5 w-3.5 text-emerald-600 group-hover:text-emerald-700 fill-emerald-600 group-hover:fill-emerald-700" />
+                          </button>
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent
+                        side="bottom"
+                        className="w-[380px] p-0 overflow-hidden border-none shadow-2xl"
+                        sideOffset={8}
+                      >
+                        <div className="bg-white">
+                          {/* Tooltip Header */}
+                          <div className="bg-emerald-950 px-4 py-1.5 flex justify-between items-center">
+                            <div className="flex flex-col">
+                              <h3 className="font-black text-[9px] uppercase tracking-[0.2em] text-emerald-400/80 leading-tight">
+                                Analytics
+                              </h3>
+                              <h3 className="font-black text-[11px] uppercase tracking-[0.15em] text-emerald-200">
+                                Cashback Performance Report
+                              </h3>
+                            </div>
+                            <Zap className="h-3 w-3 text-emerald-400 fill-emerald-400 shadow-sm" />
+                          </div>
+
+                          <div className="p-4 space-y-4">
+                            {/* Performance Breakdown */}
+                            <div className="space-y-2">
+                              <div className="grid grid-cols-2 text-[11px] pb-1 border-b border-slate-100 font-black text-slate-400 uppercase tracking-widest">
+                                <span>Metrics</span>
+                                <span className="text-right">Value</span>
+                              </div>
+                              <div className="grid grid-cols-2 text-xs py-1">
+                                <span className="text-slate-500 font-medium whitespace-nowrap">
+                                  Active Cycle Interval
+                                </span>
+                                <span className="text-right font-bold text-slate-900 truncate">
+                                  {dynamicCashbackStats.cycle
+                                    ? dynamicCashbackStats.cycle.label
+                                    : "Current Month"}
+                                </span>
+                              </div>
+                              <div className="grid grid-cols-2 text-xs py-1">
+                                <span className="text-slate-500 font-medium">
+                                  Monthly Eligible Spend
+                                </span>
+                                <span className="text-right font-bold text-slate-900">
+                                  {formatMoneyVND(
+                                    Math.ceil(
+                                      dynamicCashbackStats.currentSpend || 0,
+                                    ),
+                                  )}
+                                </span>
+                              </div>
+                              <div className="grid grid-cols-2 text-xs py-1">
+                                <span className="text-slate-500 font-medium">
+                                  Cashback Earned
+                                </span>
+                                <span className="text-right font-bold text-emerald-600">
+                                  +
+                                  {formatMoneyVND(
+                                    Math.ceil(
+                                      dynamicCashbackStats.earnedSoFar || 0,
+                                    ),
+                                  )}
+                                </span>
+                              </div>
+                              <div className="grid grid-cols-2 text-xs py-1">
+                                <span className="text-slate-500 font-medium">
+                                  Shared with Others
+                                </span>
+                                <span className="text-right font-bold text-amber-600">
+                                  {(dynamicCashbackStats.sharedAmount || 0) > 0
+                                    ? `- ${formatMoneyVND(Math.ceil(dynamicCashbackStats.sharedAmount))} `
+                                    : "0"}
+                                </span>
+                              </div>
+                              <div className="grid grid-cols-2 text-xs pt-2 border-t border-slate-200 font-black">
+                                <span className="text-emerald-900">
+                                  NET CYCLE PROFIT
+                                </span>
+                                <span
+                                  className={cn(
+                                    "text-right",
+                                    (dynamicCashbackStats.netProfit || 0) >= 0
+                                      ? "text-emerald-600"
+                                      : "text-rose-600",
+                                  )}
+                                >
+                                  {formatMoneyVND(
+                                    Math.ceil(
+                                      dynamicCashbackStats.netProfit || 0,
+                                    ),
+                                  )}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Row 2: Detailed Rule Breakdown (Scrollable) */}
+                            {dynamicCashbackStats.activeRules &&
+                              dynamicCashbackStats.activeRules.length > 0 && (
+                                <div className="space-y-3">
+                                  <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100 pb-1">
+                                    Detailed Rule Breakdown
+                                  </div>
+                                  <div className="space-y-3 max-h-[160px] overflow-y-auto pr-1 custom-scrollbar">
+                                    {dynamicCashbackStats.activeRules.map(
+                                      (rule, idx) => {
+                                        const ruleProgress = rule.max
+                                          ? Math.min(
+                                              100,
+                                              (rule.earned / rule.max) * 100,
+                                            )
+                                          : rule.spent > 0
+                                            ? 100
+                                            : 0;
+                                        const displayRate =
+                                          rule.rate > 0 && rule.rate < 1
+                                            ? (rule.rate * 100).toFixed(0)
+                                            : Math.round(rule.rate);
+
+                                        return (
+                                          <div
+                                            key={`${rule.ruleId} -${idx} `}
+                                            className="space-y-1.5 p-2 bg-slate-50/50 rounded-lg border border-slate-100/50"
+                                          >
+                                            <div className="flex justify-between items-end">
+                                              <div className="flex flex-col gap-0.5">
+                                                <div className="flex items-center gap-1.5">
+                                                  <span className="text-[10px] font-black text-slate-700 uppercase tracking-tight">
+                                                    {rule.name}
+                                                  </span>
+                                                  <span className="text-[9px] font-black text-emerald-600 bg-emerald-100 px-1 rounded shadow-sm">
+                                                    {displayRate}%
+                                                  </span>
+                                                </div>
+                                                <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest italic leading-none opacity-60">
+                                                  {ruleProgress >= 100
+                                                    ? "Benefit Cap Reached"
+                                                    : `${formatVNShort(rule.spent)} Spent toward target`}
+                                                </span>
+                                              </div>
+                                              <div className="text-[10px] font-black text-slate-900 tabular-nums">
+                                                {formatMoneyVND(
+                                                  Math.ceil(rule.earned),
+                                                )}
+                                                {rule.max && (
+                                                  <span className="text-slate-300 font-bold ml-1">
+                                                    / {formatVNShort(rule.max)}
+                                                  </span>
+                                                )}
+                                              </div>
+                                            </div>
+                                            <div className="h-1.5 w-full bg-slate-200/50 rounded-full overflow-hidden border border-slate-200/30">
+                                              <div
+                                                className={cn(
+                                                  "h-full transition-all duration-700 shadow-sm",
+                                                  ruleProgress >= 100
+                                                    ? "bg-emerald-600"
+                                                    : "bg-indigo-500",
+                                                )}
+                                                style={{
+                                                  width: `${ruleProgress}% `,
+                                                }}
+                                              />
+                                            </div>
+                                          </div>
+                                        );
+                                      },
+                                    )}
+                                  </div>
+                                </div>
+                              )}
+
+                            {/* Entire Year Performance Report */}
+                            <div className="mt-4 pt-4 border-t border-slate-200 bg-slate-50/80 -mx-4 px-4 pb-4">
+                              <div className="flex items-center justify-between mb-3">
+                                <div className="text-[10px] font-black text-slate-500 uppercase tracking-[0.15em] flex items-center gap-2">
+                                  <Calendar className="h-3 w-3" /> Entire Year
+                                  Performance {selectedYear || currentYear}
+                                </div>
+                                <span className="px-2 py-0.5 bg-indigo-100 text-indigo-700 text-[8px] font-black rounded uppercase">
+                                  Calculated
+                                </span>
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-4">
+                                <div className="space-y-4">
+                                  <div className="flex flex-col gap-0.5">
+                                    <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">
+                                      Profit
+                                    </span>
+                                    <span
+                                      className={cn(
+                                        "text-sm font-black tabular-nums tracking-tight",
+                                        (summary?.netProfitYearly || 0) >= 0
+                                          ? "text-emerald-600"
+                                          : "text-rose-600",
+                                      )}
+                                    >
+                                      {formatMoneyVND(
+                                        Math.ceil(
+                                          summary?.netProfitYearly || 0,
+                                        ),
+                                      )}
+                                    </span>
+                                  </div>
+                                  <div className="flex flex-col gap-0.5">
+                                    <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">
+                                      Actual Claimed
+                                    </span>
+                                    <span className="text-sm font-black text-indigo-600 tabular-nums tracking-tight">
+                                      {formatMoneyVND(
+                                        Math.ceil(summary?.cashbackTotal || 0),
+                                      )}
+                                    </span>
+                                  </div>
+                                </div>
+                                <div className="space-y-4 text-right">
+                                  <div className="flex flex-col gap-0.5">
+                                    <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">
+                                      Est. Cashback
+                                    </span>
+                                    <span className="text-sm font-black text-emerald-600 tabular-nums tracking-tight">
+                                      {formatMoneyVND(
+                                        Math.ceil(
+                                          summary?.cardYearlyCashbackTotal || 0,
+                                        ),
+                                      )}
+                                    </span>
+                                  </div>
+                                  <div className="flex flex-col gap-0.5">
+                                    <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">
+                                      Cashback Shared
+                                    </span>
+                                    <span className="text-sm font-black text-amber-600 tabular-nums tracking-tight">
+                                      {formatMoneyVND(
+                                        Math.ceil(
+                                          summary?.cardYearlyCashbackGivenTotal ||
+                                            0,
+                                        ),
+                                      )}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="mt-4 p-3 bg-white rounded-lg border border-slate-200 shadow-sm">
+                                <div className="flex justify-between items-center">
+                                  <div className="flex flex-col">
+                                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
+                                      Total Net Benefit
+                                    </span>
+                                    <span className="text-xs font-medium text-slate-500 italic">
+                                      Whole year impact
+                                    </span>
+                                  </div>
+                                  <div
+                                    className={cn(
+                                      "text-lg font-black tabular-nums tracking-tighter",
+                                      (summary?.netProfitYearly || 0) >= 0
+                                        ? "text-emerald-600"
+                                        : "text-rose-600",
+                                    )}
+                                  >
+                                    {formatMoneyVND(
+                                      Math.ceil(summary?.netProfitYearly || 0),
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="bg-slate-50 px-4 py-2 border-t border-slate-100 flex justify-between items-center text-[10px]">
+                            <span className="font-bold text-slate-400 uppercase tracking-tighter">
+                              Powered by Cashback v3 Engine
+                            </span>
+                            <span className="text-slate-300 italic">
+                              Live stats
+                            </span>
+                          </div>
+                        </div>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </div>
+              </div>
+            </HeaderSection>
+          </div>
+        )}
+
+      {/* Tools Area */}
+      <div className="flex flex-col justify-center gap-2 min-w-0 md:min-w-[120px] border-l border-slate-100 pl-6 ml-2">
+        <button
+          onClick={() => {
+            setIsSyncing(true);
+            router.refresh();
+            setTimeout(() => {
+              setIsSyncing(false);
+              toast.success("Database synced successfully");
+            }, 800);
+          }}
+          disabled={isSyncing}
+          className="flex items-center justify-center gap-1.5 w-full py-1 bg-white border border-slate-200 text-slate-500 rounded hover:bg-emerald-50 hover:text-emerald-600 hover:border-emerald-200 transition-all text-[8px] font-black uppercase tracking-widest disabled:opacity-50 disabled:cursor-wait"
+        >
+          {isSyncing ? (
+            <Loader2 className="w-2.5 h-2.5 animate-spin" />
+          ) : (
+            <RefreshCw className="w-2.5 h-2.5" />
+          )}
+          {isSyncing ? "Syncing..." : "Sync DB"}
+        </button>
+
+        <button
+          onClick={() => setIsSlideOpen(true)}
+          className="flex items-center justify-center gap-1.5 w-full py-1 bg-white border border-slate-200 text-slate-500 rounded hover:bg-slate-50 hover:text-indigo-600 hover:border-indigo-200 transition-all text-[8px] font-black uppercase tracking-widest"
+        >
+          <Settings className="w-2.5 h-2.5" />
+          Config
+        </button>
+
+        {summary && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              const event = new CustomEvent("open-pending-items-modal", {
+                detail: { accountId: account.id },
+              });
+              window.dispatchEvent(event);
+            }}
+            disabled={isLoadingPending}
+            className={cn(
+              "mt-1 flex items-center justify-between gap-1 px-1.5 py-1 rounded transition-all duration-200 w-full group border relative overflow-hidden active:scale-[0.98]",
+              (summary.pendingCount || 0) > 0
+                ? "bg-rose-50 border-rose-100 hover:bg-rose-100 hover:border-rose-200"
+                : "bg-emerald-50 border-emerald-100 hover:bg-emerald-100/80 hover:border-emerald-200",
+              isLoadingPending && "opacity-70 cursor-wait",
+            )}
+          >
+            {isLoadingPending && (
+              <div className="absolute inset-0 flex items-center justify-center bg-white/50 backdrop-blur-[1px] z-10">
+                <Loader2 className="h-3 w-3 animate-spin text-slate-500" />
+              </div>
+            )}
+            <div className="flex items-center gap-1.5 min-w-0">
+              {(summary.pendingCount || 0) > 0 ? (
+                <span className="flex h-1.5 w-1.5 relative shrink-0">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-rose-600"></span>
+                </span>
+              ) : (
+                <Check className="h-2.5 w-2.5 text-emerald-600 shrink-0" />
+              )}
+              <span
+                className={cn(
+                  "text-[8px] font-black uppercase tracking-tighter truncate",
+                  (summary.pendingCount || 0) > 0
+                    ? "text-rose-600"
+                    : "text-emerald-600",
+                )}
+              >
+                {(summary.pendingCount || 0) > 0
+                  ? `${summary.pendingCount} Items`
+                  : "No Pending"}
+              </span>
+            </div>
+            {(summary.pendingCount || 0) > 0 && (
+              <span className="text-[7px] font-bold text-rose-400 uppercase tracking-widest px-0.5 bg-white rounded border border-rose-100 group-hover:border-rose-200 shrink-0">
+                Wait
+              </span>
+            )}
+          </button>
+        )}
+      </div>
+    </div>
+  );
 }

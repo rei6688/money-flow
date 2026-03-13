@@ -1,4 +1,10 @@
+@layer theme, base, components, utilities;
+
 @source "../**/*.{ts,tsx,js,jsx,mdx}";
+
+@layer utilities {
+  @tailwind utilities source(none);
+}
 
 @import "tailwindcss";
 @import "tw-animate-css";
