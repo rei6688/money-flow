@@ -4,7 +4,6 @@ import { Account } from '@/types/moneyflow.types'
 import { parseCashbackConfig, getCashbackCycleRange, parseCycleTag } from '@/lib/cashback'
 import { cn } from '@/lib/utils'
 import { parseISO, format, startOfMonth, endOfMonth } from 'date-fns'
-import { Calendar } from 'lucide-react'
 import { CustomTooltip } from '@/components/ui/custom-tooltip'
 import { useRouter } from 'next/navigation'
 
@@ -58,8 +57,8 @@ export function CycleBadge({ account, cycleTag, txnDate, className, mini = false
     if (!range) return null
 
     const formatRange = (start: Date, end: Date) => {
-        // Format: dd-MM~dd-MM (e.g., 23-01~23-02 or 01-01~31-01)
-        return `${format(start, 'dd-MM')}~${format(end, 'dd-MM')}`
+        // Compact format for table badges: dd.MM~dd.MM
+        return `${format(start, 'dd.MM')}~${format(end, 'dd.MM')}`
     }
 
     const formattedText = formatRange(range.start, range.end)
@@ -82,14 +81,13 @@ export function CycleBadge({ account, cycleTag, txnDate, className, mini = false
                 <span
                     onClick={handleClick}
                     className={cn(
-                        "inline-flex items-center justify-center gap-1 rounded-[4px] bg-amber-100 border border-amber-300 text-amber-800 whitespace-nowrap font-bold",
-                        "px-1 h-6 text-[10px] min-w-[110px]",
+                        "inline-flex items-center justify-center rounded-[4px] bg-amber-100 border border-amber-300 text-amber-800 whitespace-nowrap font-bold",
+                        "px-1.5 h-5 text-[10px]",
                         clickable && "cursor-pointer hover:bg-amber-200 hover:border-amber-400 transition-colors",
                         !clickable && "cursor-help",
                         className
                     )}
                 >
-                    <Calendar className="h-3 w-3" />
                     {formattedText}
                 </span>
             </CustomTooltip>
@@ -101,13 +99,12 @@ export function CycleBadge({ account, cycleTag, txnDate, className, mini = false
             <span
                 onClick={handleClick}
                 className={cn(
-                    "inline-flex items-center justify-center gap-1 rounded-[4px] bg-amber-100 border border-amber-300 text-amber-800 whitespace-nowrap font-bold",
-                    mini ? "px-1 h-4 text-[10px] min-w-[85px]" : "px-1.5 h-6 text-[11px] min-w-[110px]",
+                    "inline-flex items-center justify-center rounded-[4px] bg-amber-100 border border-amber-300 text-amber-800 whitespace-nowrap font-bold",
+                    mini ? "px-1 h-4 text-[10px]" : "px-1.5 h-5 text-[10px]",
                     clickable && "cursor-pointer hover:bg-amber-200 hover:border-amber-400 transition-colors",
                     className
                 )}
             >
-                <Calendar className={cn(mini ? "h-2 w-2" : "h-3 w-3", "mb-[1px]")} />
                 {formattedText}
             </span>
         </CustomTooltip>

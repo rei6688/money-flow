@@ -629,11 +629,15 @@ export const UnifiedTransactionTable = React.forwardRef<
           0,
       );
 
+      const percentMagnitude = Math.abs(percentRaw);
+      const fixedMagnitude = Math.abs(fixedRaw);
+
       const amountAbs = Math.abs(
         Number(txn.original_amount ?? txn.amount ?? 0),
       );
-      const normalizedPercent = percentRaw > 1 ? percentRaw / 100 : percentRaw;
-      const shareComputed = amountAbs * normalizedPercent + fixedRaw;
+      const normalizedPercent =
+        percentMagnitude > 1 ? percentMagnitude / 100 : percentMagnitude;
+      const shareComputed = amountAbs * normalizedPercent + fixedMagnitude;
 
       const shareAmountRaw = Number(
         txn.cashback_share_amount ??
@@ -650,10 +654,12 @@ export const UnifiedTransactionTable = React.forwardRef<
       );
 
       return {
-        percentRaw: Number.isFinite(percentRaw) ? percentRaw : 0,
-        fixedRaw: Number.isFinite(fixedRaw) ? fixedRaw : 0,
-        shareAmount: Number.isFinite(shareAmountRaw) ? shareAmountRaw : 0,
-        bankBack: Number.isFinite(bankBackRaw) ? bankBackRaw : 0,
+        percentRaw: Number.isFinite(percentMagnitude) ? percentMagnitude : 0,
+        fixedRaw: Number.isFinite(fixedMagnitude) ? fixedMagnitude : 0,
+        shareAmount: Number.isFinite(shareAmountRaw)
+          ? Math.abs(shareAmountRaw)
+          : 0,
+        bankBack: Number.isFinite(bankBackRaw) ? Math.abs(bankBackRaw) : 0,
       };
     }, []);
 
@@ -3687,6 +3693,7 @@ export const UnifiedTransactionTable = React.forwardRef<
                                   account={sourceAccount}
                                   cycleTag={cycleTag}
                                   txnDate={txn.occurred_at || txn.created_at}
+                                  compact
                                   entityName={sourceName}
                                 />
                               ) : null;
@@ -3713,7 +3720,7 @@ export const UnifiedTransactionTable = React.forwardRef<
                               personId && debtTag ? (
                                 <div
                                   key={`debt-tag-${txn.id}`}
-                                  className="flex items-center gap-1.5 shrink-0"
+                                  className="flex items-center gap-1 shrink-0"
                                 >
                                   {sheetUrl && (
                                     <CustomTooltip
@@ -3728,10 +3735,9 @@ export const UnifiedTransactionTable = React.forwardRef<
                                             "noopener,noreferrer",
                                           );
                                         }}
-                                        className="inline-flex items-center justify-center gap-1 rounded-[4px] bg-emerald-50 border border-emerald-200 text-emerald-700 px-1.5 h-6 text-[9px] font-black uppercase tracking-tighter cursor-pointer hover:bg-emerald-100 transition-colors shadow-sm"
+                                        className="inline-flex items-center justify-center rounded-[4px] bg-emerald-50 border border-emerald-200 text-emerald-700 px-1.5 h-5 text-[10px] font-black cursor-pointer hover:bg-emerald-100 transition-colors shadow-sm"
                                       >
-                                        <ExternalLink className="h-3 w-3" />
-                                        SHEET
+                                        <FileSpreadsheet className="h-3 w-3" />
                                       </button>
                                     </CustomTooltip>
                                   )}
@@ -3748,9 +3754,8 @@ export const UnifiedTransactionTable = React.forwardRef<
                                           "noopener,noreferrer",
                                         );
                                       }}
-                                      className="inline-flex items-center justify-center gap-1 rounded-[4px] bg-blue-50 border border-blue-200 text-blue-700 px-2 h-6 text-[10px] font-extrabold whitespace-nowrap min-w-[110px] cursor-pointer hover:bg-blue-100 transition-colors shadow-sm"
+                                      className="inline-flex items-center justify-center rounded-[4px] bg-blue-50 border border-blue-200 text-blue-700 px-1.5 h-5 text-[10px] font-extrabold whitespace-nowrap cursor-pointer hover:bg-blue-100 transition-colors shadow-sm"
                                     >
-                                      <ExternalLink className="h-3 w-3" />
                                       {debtTag}
                                     </span>
                                   </CustomTooltip>
