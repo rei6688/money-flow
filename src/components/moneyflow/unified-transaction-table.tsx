@@ -3694,7 +3694,7 @@ export const UnifiedTransactionTable = React.forwardRef<
                                   cycleTag={cycleTag}
                                   txnDate={txn.occurred_at || txn.created_at}
                                   compact
-                                  className="h-full px-2 rounded-r-md rounded-l-none text-[10px] border-amber-300 bg-amber-100"
+                                  className="h-full px-2 rounded-r-md rounded-l-none text-[10px] border-amber-400 bg-amber-200 text-amber-900"
                                   entityName={sourceName}
                                 />
                               ) : null;
@@ -3736,7 +3736,7 @@ export const UnifiedTransactionTable = React.forwardRef<
                                             "noopener,noreferrer",
                                           );
                                         }}
-                                        className="inline-flex h-full w-7 items-center justify-center rounded-none bg-emerald-100 border-y border-l border-emerald-200 text-emerald-700 cursor-pointer hover:bg-emerald-200 transition-colors"
+                                        className="inline-flex h-full w-7 items-center justify-center rounded-none bg-emerald-200 border-y border-l border-emerald-300 text-emerald-900 cursor-pointer hover:bg-emerald-300 transition-colors"
                                       >
                                         <FileSpreadsheet className="h-3 w-3" />
                                       </button>
@@ -3756,7 +3756,7 @@ export const UnifiedTransactionTable = React.forwardRef<
                                         );
                                       }}
                                       className={cn(
-                                        "inline-flex items-center justify-center bg-blue-100 border-y border-r border-blue-200 text-blue-700 px-2 h-full text-[10px] font-extrabold whitespace-nowrap cursor-pointer hover:bg-blue-200 transition-colors",
+                                        "inline-flex items-center justify-center bg-blue-200 border-y border-r border-blue-300 text-blue-900 px-2 h-full text-[10px] font-extrabold whitespace-nowrap cursor-pointer hover:bg-blue-300 transition-colors",
                                         sheetUrl
                                           ? "rounded-r-md rounded-l-none"
                                           : "rounded-r-md rounded-l-none border-l",
@@ -3889,8 +3889,8 @@ export const UnifiedTransactionTable = React.forwardRef<
                                 <div className="flex items-center gap-1.5 w-full min-w-0 h-9">
                                   {borderedTypeIconWide}
 
-                                  <div className="flex-1 min-w-0 h-9 px-1.5 py-0 rounded-md bg-slate-50 border border-slate-200 flex items-stretch gap-2 cursor-pointer hover:bg-slate-100 transition-colors group/pill shadow-sm overflow-hidden">
-                                    <div className="flex-1 min-w-0 flex items-center gap-2">
+                                  <div className="flex-1 min-w-0 h-9 pl-1.5 pr-0 py-0 rounded-md bg-slate-50 border border-slate-200 flex items-stretch gap-0 cursor-pointer hover:bg-slate-100 transition-colors group/pill shadow-sm overflow-hidden">
+                                    <div className="flex-1 min-w-0 flex items-center gap-2 pr-1">
                                       {/* Avatar + Name Area with its own tooltip */}
                                       <CustomTooltip
                                         content={`Open ${displayName} in new tab`}
@@ -4031,13 +4031,13 @@ export const UnifiedTransactionTable = React.forwardRef<
                               badges: React.ReactNode[],
                               roleLabel: "FROM" | "TO",
                             ) => (
-                              <div className="flex-1 min-w-0 h-9 px-1.5 py-0 rounded-md bg-slate-50 border border-slate-200 flex items-stretch gap-2 cursor-pointer hover:bg-slate-100 transition-colors group/pill shadow-sm overflow-hidden">
+                              <div className="flex-1 min-w-0 h-9 pl-1.5 pr-0 py-0 rounded-md bg-slate-50 border border-slate-200 flex items-stretch gap-0 cursor-pointer hover:bg-slate-100 transition-colors group/pill shadow-sm overflow-hidden">
                                 {/* Avatar + Name area */}
                                 <CustomTooltip
                                   content={`Open ${entity.name} in new tab`}
                                 >
                                   <div
-                                    className="flex-1 min-w-0 flex items-center gap-2 h-full"
+                                    className="flex-1 min-w-0 flex items-center gap-2 h-full pr-1"
                                     onClick={(e) => {
                                       if (entity.link) {
                                         e.stopPropagation();
