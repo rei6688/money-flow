@@ -3694,7 +3694,7 @@ export const UnifiedTransactionTable = React.forwardRef<
                                   cycleTag={cycleTag}
                                   txnDate={txn.occurred_at || txn.created_at}
                                   compact
-                                  className="h-7 px-2 rounded-md text-[10px] border-amber-300 bg-amber-100"
+                                  className="h-full px-2 rounded-r-md rounded-l-none text-[10px] border-amber-300 bg-amber-100"
                                   entityName={sourceName}
                                 />
                               ) : null;
@@ -3721,7 +3721,7 @@ export const UnifiedTransactionTable = React.forwardRef<
                               personId && debtTag ? (
                                 <div
                                   key={`debt-tag-${txn.id}`}
-                                  className="flex items-center gap-1 shrink-0"
+                                  className="flex items-stretch gap-0 shrink-0 h-full"
                                 >
                                   {sheetUrl && (
                                     <CustomTooltip
@@ -3736,7 +3736,7 @@ export const UnifiedTransactionTable = React.forwardRef<
                                             "noopener,noreferrer",
                                           );
                                         }}
-                                        className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-emerald-100 border border-emerald-200 text-emerald-700 cursor-pointer hover:bg-emerald-200 transition-colors shadow-sm"
+                                        className="inline-flex h-full w-7 items-center justify-center rounded-none bg-emerald-100 border-y border-l border-emerald-200 text-emerald-700 cursor-pointer hover:bg-emerald-200 transition-colors"
                                       >
                                         <FileSpreadsheet className="h-3 w-3" />
                                       </button>
@@ -3755,7 +3755,12 @@ export const UnifiedTransactionTable = React.forwardRef<
                                           "noopener,noreferrer",
                                         );
                                       }}
-                                      className="inline-flex items-center justify-center rounded-md bg-blue-100 border border-blue-200 text-blue-700 px-2 h-7 text-[10px] font-extrabold whitespace-nowrap cursor-pointer hover:bg-blue-200 transition-colors shadow-sm"
+                                      className={cn(
+                                        "inline-flex items-center justify-center bg-blue-100 border-y border-r border-blue-200 text-blue-700 px-2 h-full text-[10px] font-extrabold whitespace-nowrap cursor-pointer hover:bg-blue-200 transition-colors",
+                                        sheetUrl
+                                          ? "rounded-r-md rounded-l-none"
+                                          : "rounded-r-md rounded-l-none border-l",
+                                      )}
                                     >
                                       {debtTag}
                                     </span>
@@ -3884,7 +3889,7 @@ export const UnifiedTransactionTable = React.forwardRef<
                                 <div className="flex items-center gap-1.5 w-full min-w-0 h-9">
                                   {borderedTypeIconWide}
 
-                                  <div className="flex-1 min-w-0 h-9 px-1.5 py-1 rounded-md bg-slate-50 border border-slate-200 flex items-center gap-2 cursor-pointer hover:bg-slate-100 transition-colors group/pill shadow-sm">
+                                  <div className="flex-1 min-w-0 h-9 px-1.5 py-0 rounded-md bg-slate-50 border border-slate-200 flex items-stretch gap-2 cursor-pointer hover:bg-slate-100 transition-colors group/pill shadow-sm overflow-hidden">
                                     <div className="flex-1 min-w-0 flex items-center gap-2">
                                       {/* Avatar + Name Area with its own tooltip */}
                                       <CustomTooltip
@@ -3954,7 +3959,7 @@ export const UnifiedTransactionTable = React.forwardRef<
 
                                       {/* Badge area */}
                                       {badgeToDisplay && (
-                                        <div className="ml-auto shrink-0 flex justify-end">
+                                        <div className="ml-auto shrink-0 self-stretch flex items-stretch">
                                           {isCycleBadge ? (
                                             <CustomTooltip
                                               content={`Open details for ${displayName} in new tab filtered by cycle ${cycleTag || ""}`}
@@ -4026,7 +4031,7 @@ export const UnifiedTransactionTable = React.forwardRef<
                               badges: React.ReactNode[],
                               roleLabel: "FROM" | "TO",
                             ) => (
-                              <div className="flex-1 min-w-0 h-9 px-1.5 py-1 rounded-md bg-slate-50 border border-slate-200 flex items-center gap-2 cursor-pointer hover:bg-slate-100 transition-colors group/pill shadow-sm">
+                              <div className="flex-1 min-w-0 h-9 px-1.5 py-0 rounded-md bg-slate-50 border border-slate-200 flex items-stretch gap-2 cursor-pointer hover:bg-slate-100 transition-colors group/pill shadow-sm overflow-hidden">
                                 {/* Avatar + Name area */}
                                 <CustomTooltip
                                   content={`Open ${entity.name} in new tab`}
@@ -4095,7 +4100,7 @@ export const UnifiedTransactionTable = React.forwardRef<
 
                                 {/* Badges area */}
                                 {badges.length > 0 && (
-                                  <div className="ml-auto shrink-0 flex items-center justify-end gap-1">
+                                  <div className="ml-auto shrink-0 self-stretch flex items-stretch justify-end gap-0">
                                     {badges.map((badge, idx) => (
                                       <React.Fragment key={idx}>
                                         {badge}

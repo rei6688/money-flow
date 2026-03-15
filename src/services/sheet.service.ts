@@ -13,6 +13,9 @@ type SheetSyncTransaction = {
   tag?: string | null
   shop_name?: string | null
   shop_id?: string | null
+  account_id?: string | null
+  target_account_id?: string | null
+  destination_account_id?: string | null
   amount?: number | null
   original_amount?: number | null
   cashback_share_percent?: number | null
@@ -395,6 +398,22 @@ export async function syncTransactionToSheet(
       }
     }
 
+    // Repayment rows often have no shop; fallback to target bank name for sheet column K.
+    if (!resolvedShopName) {
+      const fallbackAccountId =
+        txn.type === 'repayment'
+          ? (txn.target_account_id ?? txn.destination_account_id ?? txn.account_id ?? null)
+          : (txn.account_id ?? null)
+      if (fallbackAccountId) {
+        try {
+          const accountRecord = await pocketbaseGetById<{ name?: string | null }>('accounts', fallbackAccountId)
+          resolvedShopName = accountRecord?.name ?? ''
+        } catch {
+          resolvedShopName = ''
+        }
+      }
+    }
+
     const payload = {
       ...buildPayload({
         ...txn,
@@ -463,7 +482,7 @@ export async function syncAllTransactions(personId: string) {
     const pbPersonId = toPocketBaseId(personId, 'people')
     const data = await pocketbaseList('transactions', {
       filter: `person_id = "${pbPersonId}" && status != "void"`,
-      expand: 'shop_id,account_id,category_id',
+      expand: 'shop_id,account_id,target_account_id,category_id',
       sort: 'occurred_at'
     })
 
@@ -562,6 +581,8 @@ export async function syncAllTransactions(personId: string) {
         shops: expanded.shop_id ? { name: expanded.shop_id.name } : null,
         account_id: (txn as any).account_id,
         accounts: expanded.account_id ? { name: expanded.account_id.name } : null,
+        target_account_id: (txn as any).target_account_id,
+        target_accounts: expanded.target_account_id ? { name: expanded.target_account_id.name } : null,
         categories: expanded.category_id ? { name: expanded.category_id.name } : null,
       }
     })
@@ -596,7 +617,10 @@ export async function syncAllTransactions(personId: string) {
             shopName = 'Rollover'
           } else {
             const accData = txn.accounts as any
-            shopName = (Array.isArray(accData) ? accData[0]?.name : accData?.name) ?? ''
+            const sourceName = (Array.isArray(accData) ? accData[0]?.name : accData?.name) ?? ''
+            const targetData = (txn as any).target_accounts as any
+            const targetName = (Array.isArray(targetData) ? targetData[0]?.name : targetData?.name) ?? ''
+            shopName = txn.type === 'repayment' ? (targetName || sourceName) : sourceName
           }
         }
 
@@ -714,8 +738,8 @@ export async function syncCycleTransactions(
     const tagFilter = tags.map(t => `tag = "${t}"`).join(' || ')
     const data = await pocketbaseList('transactions', {
       filter: `person_id = "${pbId}" && status != "void" && (${tagFilter})`,
-      expand: 'shop_id,account_id,category_id',
-      fields: 'id,occurred_at,date,note,description,status,tag,debt_cycle_tag,type,amount,original_amount,final_price,cashback_share_percent,cashback_share_percent_input,cashback_share_fixed,cashback_share_amount,metadata,person_id,shop_id,account_id,category_id,expand.shop_id.id,expand.shop_id.name,expand.account_id.id,expand.account_id.name,expand.category_id.id,expand.category_id.name',
+      expand: 'shop_id,account_id,target_account_id,category_id',
+      fields: 'id,occurred_at,date,note,description,status,tag,debt_cycle_tag,type,amount,original_amount,final_price,cashback_share_percent,cashback_share_percent_input,cashback_share_fixed,cashback_share_amount,metadata,person_id,shop_id,account_id,target_account_id,category_id,expand.shop_id.id,expand.shop_id.name,expand.account_id.id,expand.account_id.name,expand.target_account_id.id,expand.target_account_id.name,expand.category_id.id,expand.category_id.name',
       sort: 'occurred_at'
     })
 
@@ -736,12 +760,13 @@ export async function syncCycleTransactions(
         let shopName = expanded.shop_id?.name
 
         if (!shopName) {
-          const categoryName = (txn.categories as any)?.name
+          const categoryName = expanded.category_id?.name
           if (txn.note?.toLowerCase().startsWith('rollover') || categoryName === 'Rollover') {
             shopName = 'Rollover'
           } else {
-            const accData = txn.accounts as any
-            shopName = (Array.isArray(accData) ? accData[0]?.name : accData?.name) ?? ''
+            const sourceName = expanded.account_id?.name ?? ''
+            const targetName = expanded.target_account_id?.name ?? ''
+            shopName = txn.type === 'repayment' ? (targetName || sourceName) : sourceName
           }
         }
 
