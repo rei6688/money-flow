@@ -300,7 +300,8 @@ export function AccountDetailHeaderV2({
         rawSharePercent > 1 ? rawSharePercent / 100 : rawSharePercent;
       const txAmount = Math.abs(Number(tx.amount || 0));
       const computedShared = txAmount * sharePercent + sharedFixed;
-      const sharedAmount = Number(tx.cashback_share_amount ?? computedShared);
+      const rawShareAmount = Number(tx.cashback_share_amount ?? 0);
+      const sharedAmount = rawShareAmount > 0 ? rawShareAmount : computedShared;
       return sum + (isNaN(sharedAmount) ? 0 : sharedAmount);
     }, 0);
 
@@ -339,6 +340,38 @@ export function AccountDetailHeaderV2({
       return 0;
     }
   }, [account.cashback_config]);
+
+  const cycleMetricSnapshot = React.useMemo(() => {
+    const activeRuleEarned = (dynamicCashbackStats?.activeRules || []).reduce(
+      (sum, rule: any) => sum + Number(rule?.earned || 0),
+      0,
+    );
+    const derivedEst = selectedCycleMetrics?.est ?? 0;
+    const derivedShared = selectedCycleMetrics?.shared ?? 0;
+    const derivedProfit = selectedCycleMetrics?.profit ?? derivedEst - derivedShared;
+
+    const snapshotEst = Number(dynamicCashbackStats?.earnedSoFar || 0);
+    const snapshotShared = Number(dynamicCashbackStats?.sharedAmount || 0);
+
+    const rawEst = selectedCycleMetrics ? derivedEst : snapshotEst;
+    const estCashback = rawEst > 0 ? rawEst : activeRuleEarned;
+    const sharedAmount = selectedCycleMetrics ? derivedShared : snapshotShared;
+    const totalProfit = estCashback - sharedAmount;
+
+    return {
+      estCashback,
+      sharedAmount,
+      totalProfit: Number.isFinite(totalProfit)
+        ? totalProfit
+        : Number(dynamicCashbackStats?.netProfit || derivedProfit || 0),
+      actualClaimed: Number(
+        dynamicCashbackStats?.actualClaimed ?? selectedCycleMetrics?.actual ?? 0,
+      ),
+      currentSpend: Number(dynamicCashbackStats?.currentSpend || 0),
+      source: selectedCycleMetrics ? "cycle_transactions" : "snapshot",
+      activeRuleEarned,
+    };
+  }, [dynamicCashbackStats, selectedCycleMetrics]);
 
   const [isEditPopoverOpen, setIsEditPopoverOpen] = React.useState(false);
   const [editValues, setEditValues] = React.useState({
@@ -1720,18 +1753,11 @@ export function AccountDetailHeaderV2({
                   {/* Metrics Grid - 2x2 */}
                   <div className="flex-1 grid grid-cols-2 gap-2">
                     {(() => {
-                      // Use API response as primary source (accurate calculation with transaction amount × rate)
-                      const cycleEstCashback =
-                        dynamicCashbackStats?.earnedSoFar || 0;
-                      const cycleShared =
-                        dynamicCashbackStats?.sharedAmount || 0;
-                      const cycleProfit = dynamicCashbackStats?.netProfit || 0;
-                      const cycleCurrentSpend =
-                        dynamicCashbackStats?.currentSpend || 0;
-                      const cycleActualClaimed =
-                        dynamicCashbackStats?.actualClaimed ??
-                        selectedCycleMetrics?.actual ??
-                        0;
+                      const cycleEstCashback = cycleMetricSnapshot.estCashback;
+                      const cycleShared = cycleMetricSnapshot.sharedAmount;
+                      const cycleProfit = cycleMetricSnapshot.totalProfit;
+                      const cycleCurrentSpend = cycleMetricSnapshot.currentSpend;
+                      const cycleActualClaimed = cycleMetricSnapshot.actualClaimed;
 
                       // Build detailed formula from activeRules for Est tooltip
                       const ruleDetails = (
@@ -1751,7 +1777,7 @@ export function AccountDetailHeaderV2({
 
                       return (
                         <>
-                          {/* Profit */}
+                          {/* My Profit */}
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <div className="flex items-center gap-1.5 min-w-0 cursor-help rounded-sm px-1 py-0.5 hover:bg-slate-50">
@@ -1766,8 +1792,7 @@ export function AccountDetailHeaderV2({
                                         : "text-slate-900",
                                   )}
                                 >
-                                  Profit:{" "}
-                                  {formatMoneyVND(Math.ceil(cycleProfit))}
+                                  My Profit: {formatMoneyVND(Math.ceil(cycleProfit))}
                                 </span>
                               </div>
                             </TooltipTrigger>
@@ -1775,9 +1800,7 @@ export function AccountDetailHeaderV2({
                               side="top"
                               className="max-w-xs bg-slate-900 text-white text-[11px] p-2 space-y-1"
                             >
-                              <p className="font-semibold">
-                                Lợi nhuận = Thu - Chia sẻ
-                              </p>
+                              <p className="font-semibold">My Profit = Earned - Shared</p>
                               <p className="text-slate-300">
                                 {formatMoneyVND(Math.ceil(cycleEstCashback))} -{" "}
                                 {formatMoneyVND(Math.ceil(cycleShared))} ={" "}
@@ -1801,10 +1824,7 @@ export function AccountDetailHeaderV2({
                                         : "text-slate-900",
                                   )}
                                 >
-                                  Actual:{" "}
-                                  {formatMoneyVND(
-                                    Math.ceil(cycleActualClaimed),
-                                  )}
+                                  Actual: {formatMoneyVND(Math.ceil(cycleActualClaimed))}
                                 </span>
                               </div>
                             </TooltipTrigger>
@@ -1812,24 +1832,20 @@ export function AccountDetailHeaderV2({
                               side="top"
                               className="max-w-xs bg-slate-900 text-white text-[11px] p-2"
                             >
-                              <p className="font-semibold mb-1">
-                                Tiền cashback thực nhận
-                              </p>
+                              <p className="font-semibold mb-1">Real cashback received</p>
                               <p className="text-slate-300">
-                                Giao dịch income có category "Cashback" trong
-                                chu kỳ
+                                Income transactions with cashback categories in selected cycle
                               </p>
                             </TooltipContent>
                           </Tooltip>
 
-                          {/* Est. Cashback */}
+                          {/* Earned */}
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <div className="flex items-center gap-1.5 min-w-0 cursor-help rounded-sm px-1 py-0.5 hover:bg-slate-50">
                                 <PlusCircle className="h-3.5 w-3.5 flex-shrink-0 text-slate-400" />
                                 <span className="text-xs font-black text-emerald-600 leading-none tabular-nums tracking-tight truncate">
-                                  Est:{" "}
-                                  {formatMoneyVND(Math.ceil(cycleEstCashback))}
+                                  Earned: {formatMoneyVND(Math.ceil(cycleEstCashback))}
                                 </span>
                               </div>
                             </TooltipTrigger>
@@ -1837,9 +1853,7 @@ export function AccountDetailHeaderV2({
                               side="top"
                               className="max-w-xs bg-slate-900 text-white text-[11px] p-2 space-y-1 max-h-40 overflow-y-auto"
                             >
-                              <p className="font-semibold">
-                                Est. Cashback (Calculated)
-                              </p>
+                              <p className="font-semibold">Earned by cycle rules</p>
                               {ruleDetails.length > 0 ? (
                                 ruleDetails.map(
                                   (detail: string, idx: number) => (
@@ -1853,15 +1867,16 @@ export function AccountDetailHeaderV2({
                                 )
                               ) : (
                                 <p className="text-slate-300">
-                                  Spend:{" "}
-                                  {formatMoneyVND(
-                                    Math.round(cycleCurrentSpend),
-                                  )}
+                                  Spend: {formatMoneyVND(Math.round(cycleCurrentSpend))}
+                                </p>
+                              )}
+                              {cycleMetricSnapshot.activeRuleEarned > 0 && (
+                                <p className="text-emerald-300 text-[10px] pt-1 border-t border-slate-700">
+                                  Rule sum fallback: {formatMoneyVND(Math.ceil(cycleMetricSnapshot.activeRuleEarned))}
                                 </p>
                               )}
                               <p className="text-slate-400 pt-1 border-t border-slate-700">
-                                Total:{" "}
-                                {formatMoneyVND(Math.ceil(cycleEstCashback))}
+                                Total: {formatMoneyVND(Math.ceil(cycleEstCashback))}
                               </p>
                             </TooltipContent>
                           </Tooltip>
@@ -1872,8 +1887,7 @@ export function AccountDetailHeaderV2({
                               <div className="flex items-center gap-1.5 min-w-0 cursor-help rounded-sm px-1 py-0.5 hover:bg-slate-50">
                                 <Users2 className="h-3.5 w-3.5 flex-shrink-0 text-rose-500" />
                                 <span className="text-xs font-black text-rose-600 leading-none tabular-nums tracking-tight truncate">
-                                  Shared:{" "}
-                                  {formatMoneyVND(Math.ceil(cycleShared))}
+                                  Shared: {formatMoneyVND(Math.ceil(cycleShared))}
                                 </span>
                               </div>
                             </TooltipTrigger>
@@ -1881,11 +1895,9 @@ export function AccountDetailHeaderV2({
                               side="top"
                               className="max-w-xs bg-slate-900 text-white text-[11px] p-2"
                             >
-                              <p className="font-semibold mb-1">
-                                Cashback chia sẻ với người khác
-                              </p>
+                              <p className="font-semibold mb-1">Cashback shared with others</p>
                               <p className="text-slate-300">
-                                % hoặc số tiền fixed từ chia sẻ
+                                Source: {cycleMetricSnapshot.source === "cycle_transactions" ? "Cycle transactions" : "Cashback snapshot"}
                               </p>
                             </TooltipContent>
                           </Tooltip>
@@ -2009,9 +2021,7 @@ export function AccountDetailHeaderV2({
                                 </span>
                                 <span className="text-right font-bold text-slate-900">
                                   {formatMoneyVND(
-                                    Math.ceil(
-                                      dynamicCashbackStats.currentSpend || 0,
-                                    ),
+                                    Math.ceil(cycleMetricSnapshot.currentSpend),
                                   )}
                                 </span>
                               </div>
@@ -2022,9 +2032,7 @@ export function AccountDetailHeaderV2({
                                 <span className="text-right font-bold text-emerald-600">
                                   +
                                   {formatMoneyVND(
-                                    Math.ceil(
-                                      dynamicCashbackStats.earnedSoFar || 0,
-                                    ),
+                                    Math.ceil(cycleMetricSnapshot.estCashback),
                                   )}
                                 </span>
                               </div>
@@ -2033,8 +2041,8 @@ export function AccountDetailHeaderV2({
                                   Shared with Others
                                 </span>
                                 <span className="text-right font-bold text-amber-600">
-                                  {(dynamicCashbackStats.sharedAmount || 0) > 0
-                                    ? `- ${formatMoneyVND(Math.ceil(dynamicCashbackStats.sharedAmount))} `
+                                  {(cycleMetricSnapshot.sharedAmount || 0) > 0
+                                    ? `- ${formatMoneyVND(Math.ceil(cycleMetricSnapshot.sharedAmount))} `
                                     : "0"}
                                 </span>
                               </div>
@@ -2045,15 +2053,13 @@ export function AccountDetailHeaderV2({
                                 <span
                                   className={cn(
                                     "text-right",
-                                    (dynamicCashbackStats.netProfit || 0) >= 0
+                                    (cycleMetricSnapshot.totalProfit || 0) >= 0
                                       ? "text-emerald-600"
                                       : "text-rose-600",
                                   )}
                                 >
                                   {formatMoneyVND(
-                                    Math.ceil(
-                                      dynamicCashbackStats.netProfit || 0,
-                                    ),
+                                    Math.ceil(cycleMetricSnapshot.totalProfit),
                                   )}
                                 </span>
                               </div>

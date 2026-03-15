@@ -47,3 +47,7 @@ Bot should become a conversational assistant that answers based on user financia
 - Missing normalized cashback metadata for some historical transactions.
 - Conflicting card policies if source config is inconsistent.
 - User expectation mismatch if advisory confidence is not surfaced.
+
+## Latest Delivery Notes (2026-03-15)
+- Transaction Slide V2 cashback panel updated with visible Total Profit and in-card Earn Breakdown by rule.
+- Added Show all rules toggle for breakdown list to inspect all rule lines without tooltip.
