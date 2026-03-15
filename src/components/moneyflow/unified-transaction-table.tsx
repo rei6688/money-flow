@@ -381,6 +381,7 @@ export const UnifiedTransactionTable = React.forwardRef<
       [],
     );
     const lastSheetHoverToastKeyRef = useRef<string | null>(null);
+    const sheetHoverToastTimerRef = useRef<number | null>(null);
 
     const handleQuickSyncCycle = useCallback(
       async (personId: string, cycleTag: string) => {
@@ -432,32 +433,45 @@ export const UnifiedTransactionTable = React.forwardRef<
       [],
     );
 
+    const cancelQuickSheetSyncToast = useCallback(() => {
+      if (sheetHoverToastTimerRef.current !== null) {
+        window.clearTimeout(sheetHoverToastTimerRef.current);
+        sheetHoverToastTimerRef.current = null;
+      }
+    }, []);
+
     const showQuickSheetSyncToast = useCallback(
       (personId?: string | null, cycleTag?: string | null) => {
         if (!personId || !cycleTag) return;
 
+        cancelQuickSheetSyncToast();
+
         const toastKey = `${personId}:${cycleTag}`;
         if (lastSheetHoverToastKeyRef.current === toastKey) return;
 
-        lastSheetHoverToastKeyRef.current = toastKey;
-        toast("Quick sync this cycle", {
-          description: `Cycle ${cycleTag}`,
-          duration: 4500,
-          action: {
-            label: "Sync",
-            onClick: () => {
-              void handleQuickSyncCycle(personId, cycleTag);
+        sheetHoverToastTimerRef.current = window.setTimeout(() => {
+          lastSheetHoverToastKeyRef.current = toastKey;
+          toast("Quick sync this cycle", {
+            description: `Cycle ${cycleTag}`,
+            duration: 4500,
+            action: {
+              label: "Sync",
+              onClick: () => {
+                void handleQuickSyncCycle(personId, cycleTag);
+              },
             },
-          },
-        });
+          });
 
-        window.setTimeout(() => {
-          if (lastSheetHoverToastKeyRef.current === toastKey) {
-            lastSheetHoverToastKeyRef.current = null;
-          }
-        }, 5000);
+          window.setTimeout(() => {
+            if (lastSheetHoverToastKeyRef.current === toastKey) {
+              lastSheetHoverToastKeyRef.current = null;
+            }
+          }, 5000);
+
+          sheetHoverToastTimerRef.current = null;
+        });
       },
-      [handleQuickSyncCycle],
+      [cancelQuickSheetSyncToast, handleQuickSyncCycle],
     );
 
     const defaultColumns: ColumnConfig[] = [
@@ -3802,6 +3816,7 @@ export const UnifiedTransactionTable = React.forwardRef<
                                             debtTag,
                                           );
                                         }}
+                                        onMouseLeave={cancelQuickSheetSyncToast}
                                         className="inline-flex h-full w-7 items-center justify-center rounded-none bg-emerald-200 border-y border-l border-emerald-300 text-emerald-900 cursor-pointer hover:bg-emerald-300 transition-colors"
                                       >
                                         <FileSpreadsheet className="h-3 w-3" />
