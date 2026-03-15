@@ -3694,6 +3694,7 @@ export const UnifiedTransactionTable = React.forwardRef<
                                   cycleTag={cycleTag}
                                   txnDate={txn.occurred_at || txn.created_at}
                                   compact
+                                  className="h-7 px-2 rounded-md text-[10px] border-amber-300 bg-amber-100"
                                   entityName={sourceName}
                                 />
                               ) : null;
@@ -3735,7 +3736,7 @@ export const UnifiedTransactionTable = React.forwardRef<
                                             "noopener,noreferrer",
                                           );
                                         }}
-                                        className="inline-flex items-center justify-center rounded-[4px] bg-emerald-50 border border-emerald-200 text-emerald-700 px-1.5 h-5 text-[10px] font-black cursor-pointer hover:bg-emerald-100 transition-colors shadow-sm"
+                                        className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-emerald-100 border border-emerald-200 text-emerald-700 cursor-pointer hover:bg-emerald-200 transition-colors shadow-sm"
                                       >
                                         <FileSpreadsheet className="h-3 w-3" />
                                       </button>
@@ -3754,7 +3755,7 @@ export const UnifiedTransactionTable = React.forwardRef<
                                           "noopener,noreferrer",
                                         );
                                       }}
-                                      className="inline-flex items-center justify-center rounded-[4px] bg-blue-50 border border-blue-200 text-blue-700 px-1.5 h-5 text-[10px] font-extrabold whitespace-nowrap cursor-pointer hover:bg-blue-100 transition-colors shadow-sm"
+                                      className="inline-flex items-center justify-center rounded-md bg-blue-100 border border-blue-200 text-blue-700 px-2 h-7 text-[10px] font-extrabold whitespace-nowrap cursor-pointer hover:bg-blue-200 transition-colors shadow-sm"
                                     >
                                       {debtTag}
                                     </span>
@@ -4390,6 +4391,16 @@ export const UnifiedTransactionTable = React.forwardRef<
                                 ? "text-emerald-700"
                                 : "text-slate-500";
 
+                            const isRepayment = txn.type === "repayment";
+                            const visualType =
+                              (txn as any).displayType ?? txn.type;
+                            const finalAmountClass =
+                              visualType === "income" || isRepayment
+                                ? "text-emerald-700"
+                                : visualType === "expense"
+                                  ? "text-red-500"
+                                  : "text-slate-600";
+
                             const hasCashback =
                               percentDisp > 0 ||
                               fixedDisp > 0 ||
@@ -4399,10 +4410,13 @@ export const UnifiedTransactionTable = React.forwardRef<
                               return (
                                 <div className="flex flex-col items-start gap-1 w-full">
                                   <span
-                                    className="ml-auto text-right font-black tabular-nums tracking-tight truncate opacity-70 text-slate-500"
+                                    className={cn(
+                                      "ml-auto text-right font-black tabular-nums tracking-tight truncate",
+                                      finalAmountClass,
+                                    )}
                                     style={{ fontSize: `0.95em` }}
                                   >
-                                    0
+                                    {numberFormatter.format(Math.abs(finalDisp))}
                                   </span>
                                 </div>
                               );
@@ -4443,15 +4457,18 @@ export const UnifiedTransactionTable = React.forwardRef<
                                   }
                                   side="bottom"
                                 >
-                                  <div className="flex w-full items-center justify-end gap-1.5 cursor-help">
+                                  <div className="flex w-full items-center justify-between gap-1.5 cursor-help">
+                                    <span className="inline-flex items-center h-6 px-2 rounded-md border border-emerald-200 bg-emerald-50 text-emerald-700 font-black tabular-nums tracking-tight truncate">
+                                      {numberFormatter.format(netBackAmount)}
+                                    </span>
                                     <span
                                       className={cn(
-                                        "inline-flex items-center h-6 px-2 rounded-md border border-slate-200 bg-white font-black tabular-nums tracking-tight truncate ml-auto",
-                                        netBackClass,
+                                        "ml-auto text-right font-black tabular-nums tracking-tight truncate",
+                                        finalAmountClass,
                                       )}
                                       style={{ fontSize: `0.95em` }}
                                     >
-                                      {numberFormatter.format(netBackAmount)}
+                                      {numberFormatter.format(Math.abs(finalDisp))}
                                     </span>
                                   </div>
                                 </CustomTooltip>
