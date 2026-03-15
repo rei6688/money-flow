@@ -9,6 +9,16 @@ export type ManageCycleSheetResponse = {
   sheetUrl?: string | null
   sheetId?: string | null
   error?: string
+  requestId?: string
+  stage?:
+    | 'validate_payload'
+    | 'test_create'
+    | 'lookup_existing'
+    | 'create_sheet'
+    | 'persist_sheet'
+    | 'sync_transactions'
+    | 'unexpected'
+  debugMessage?: string
   syncedCount?: number
   manualPreserved?: number
   totalRows?: number

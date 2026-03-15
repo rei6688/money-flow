@@ -384,7 +384,7 @@ export const UnifiedTransactionTable = React.forwardRef<
     const defaultColumns: ColumnConfig[] = [
       { key: "date", label: "Date", defaultWidth: 138, minWidth: 124 },
       { key: "shop", label: "Notes Flow", defaultWidth: 420, minWidth: 320 },
-      { key: "account", label: "Flow", defaultWidth: 240, minWidth: 180 },
+      { key: "account", label: "Flow", defaultWidth: 220, minWidth: 170 },
       { key: "amount", label: "BASE", defaultWidth: 120, minWidth: 100 },
       {
         key: "total_back",
@@ -2279,7 +2279,7 @@ export const UnifiedTransactionTable = React.forwardRef<
                             <span>{columnLabel}</span>
                           ) : col.key === "actions" ? (
                             <div className="flex items-center justify-center w-full relative group">
-                              <span className="mr-6">{columnLabel}</span>
+                              <span>{columnLabel}</span>
                               <CustomTooltip
                                 content="Customize Columns"
                                 side="top"
@@ -2471,7 +2471,7 @@ export const UnifiedTransactionTable = React.forwardRef<
                               updatingTxnIds.has(txn.id) ||
                               loadingIds?.has(txn.id);
                             return (
-                              <div className="flex items-center justify-end w-full pr-1">
+                              <div className="flex items-center justify-end w-full">
                                 {isUpdating ? (
                                   <div className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-slate-100/80 animate-pulse">
                                     <Loader2 className="h-3 w-3 animate-spin text-slate-500" />
@@ -3800,6 +3800,9 @@ export const UnifiedTransactionTable = React.forwardRef<
                               let displayIsAccount = true;
                               let badgeToDisplay = sourceCycleBadge;
                               let isCycleBadge = true;
+                              const isRepaymentFlowWithPerson =
+                                txn.type === "repayment" && hasPerson;
+                              let roleLabel: "FROM" | "TO" = "FROM";
 
                               if (entityToShow === "person") {
                                 displayName = personName;
@@ -3808,6 +3811,9 @@ export const UnifiedTransactionTable = React.forwardRef<
                                   ? `/people/${personRouteId}`
                                   : null;
                                 displayIsAccount = false;
+                                roleLabel = isRepaymentFlowWithPerson
+                                  ? "FROM"
+                                  : "TO";
                                 badgeToDisplay = (
                                   <div className="flex items-center gap-1.5">
                                     {peopleDebtTag}
@@ -3821,6 +3827,7 @@ export const UnifiedTransactionTable = React.forwardRef<
                                   ? `/accounts/${destId}`
                                   : null;
                                 displayIsAccount = !hasPerson;
+                                roleLabel = "TO";
                                 // Destination usually no badge unless debt, but for account transfer no badge currently
                                 badgeToDisplay = null;
                                 isCycleBadge = false;
@@ -3839,6 +3846,12 @@ export const UnifiedTransactionTable = React.forwardRef<
                                   displayImage = cat?.image_url || null;
                                   displayLink = null;
                                 }
+                              }
+
+                              if (entityToShow === "source") {
+                                roleLabel = isRepaymentFlowWithPerson
+                                  ? "TO"
+                                  : "FROM";
                               }
 
                               // Universal fallback for Unknown in Single Flow
@@ -3914,9 +3927,21 @@ export const UnifiedTransactionTable = React.forwardRef<
                                             )}
                                           </div>
                                           <div className="min-w-0 overflow-hidden">
-                                            <span className="block text-sm font-bold text-slate-700 truncate group-hover/pill:text-blue-600 transition-colors">
-                                              {displayName}
-                                            </span>
+                                            <div className="flex min-w-0 items-center">
+                                              <span
+                                                className={cn(
+                                                  "inline-flex items-center rounded-md border px-1.5 h-4 text-[9px] font-black tracking-wide mr-1.5 shrink-0",
+                                                  roleLabel === "FROM"
+                                                    ? "border-indigo-200 bg-indigo-50 text-indigo-700"
+                                                    : "border-emerald-200 bg-emerald-50 text-emerald-700",
+                                                )}
+                                              >
+                                                {roleLabel}
+                                              </span>
+                                              <span className="min-w-0 block text-sm font-bold text-slate-700 truncate group-hover/pill:text-blue-600 transition-colors">
+                                                {displayName}
+                                              </span>
+                                            </div>
                                           </div>
                                         </div>
                                       </CustomTooltip>
@@ -3986,11 +4011,14 @@ export const UnifiedTransactionTable = React.forwardRef<
                               ? [targetBadges, sourceBadges]
                               : [sourceBadges, targetBadges];
 
+                            const [leftRole, rightRole]: ["FROM" | "TO", "FROM" | "TO"] =
+                              ["FROM", "TO"];
+
                             // Helper to render entity with badge
                             const renderFlowEntity = (
                               entity: typeof sourceEntity,
                               badges: React.ReactNode[],
-                              isTarget: boolean,
+                              roleLabel: "FROM" | "TO",
                             ) => (
                               <div className="flex-1 min-w-0 h-9 px-1.5 py-1 rounded-md bg-slate-50 border border-slate-200 flex items-center gap-2 cursor-pointer hover:bg-slate-100 transition-colors group/pill shadow-sm">
                                 {/* Avatar + Name area */}
@@ -4040,9 +4068,21 @@ export const UnifiedTransactionTable = React.forwardRef<
                                       )}
                                     </div>
                                     <div className="flex-1 min-w-0 overflow-hidden">
-                                      <span className="block text-sm font-bold text-slate-700 truncate group-hover/pill:text-blue-600 transition-colors">
-                                        {entity.name}
-                                      </span>
+                                      <div className="flex min-w-0 items-center">
+                                        <span
+                                          className={cn(
+                                            "inline-flex items-center rounded-md border px-1.5 h-4 text-[9px] font-black tracking-wide mr-1.5 shrink-0",
+                                            roleLabel === "FROM"
+                                              ? "border-indigo-200 bg-indigo-50 text-indigo-700"
+                                              : "border-emerald-200 bg-emerald-50 text-emerald-700",
+                                          )}
+                                        >
+                                          {roleLabel}
+                                        </span>
+                                        <span className="min-w-0 block text-sm font-bold text-slate-700 truncate group-hover/pill:text-blue-600 transition-colors">
+                                          {entity.name}
+                                        </span>
+                                      </div>
                                     </div>
                                   </div>
                                 </CustomTooltip>
@@ -4066,7 +4106,7 @@ export const UnifiedTransactionTable = React.forwardRef<
                                 {renderFlowEntity(
                                   displayLeft,
                                   leftBadges,
-                                  false,
+                                  leftRole,
                                 )}
                                 <span className="text-slate-300 font-light shrink-0">
                                   |
@@ -4074,7 +4114,7 @@ export const UnifiedTransactionTable = React.forwardRef<
                                 {renderFlowEntity(
                                   displayRight,
                                   rightBadges,
-                                  true,
+                                  rightRole,
                                 )}
                               </div>
                             );
@@ -4265,11 +4305,11 @@ export const UnifiedTransactionTable = React.forwardRef<
                             ) : null;
 
                             return (
-                              <div className="flex flex-col items-end gap-1 w-full">
-                                <div className="flex items-center gap-1.5 justify-end">
+                              <div className="flex flex-col items-start gap-1 w-full">
+                                <div className="flex items-center gap-1.5 justify-start">
                                   {percentDisp > 0 &&
                                     !visibleColumns.total_back && (
-                                      <span className="inline-flex items-center px-1 py-0.5 rounded text-[9px] font-bold bg-green-100 text-green-700 border border-green-200">
+                                      <span className="inline-flex items-center px-2 h-6 rounded-md text-[10px] font-black bg-green-100 text-green-700 border border-green-200">
                                         -
                                         {(() => {
                                           const percentBadgeValue =
@@ -4284,16 +4324,16 @@ export const UnifiedTransactionTable = React.forwardRef<
                                       </span>
                                     )}
                                   {fixedDisp > 0 && (
-                                    <span className="inline-flex items-center px-1 py-0.5 rounded text-[9px] font-bold bg-green-100 text-green-700 border border-green-200">
+                                    <span className="inline-flex items-center px-2 h-6 rounded-md text-[10px] font-black bg-green-100 text-green-700 border border-green-200">
                                       -{numberFormatter.format(fixedDisp)}
                                     </span>
                                   )}
                                   <span
                                     className={cn(
-                                      "font-bold tabular-nums tracking-tight truncate",
+                                      "inline-flex items-center h-6 px-2 rounded-md border border-slate-200 bg-white font-black tabular-nums tracking-tight truncate",
                                       amountClass,
                                     )}
-                                    style={{ fontSize: `0.9em` }}
+                                    style={{ fontSize: `0.95em` }}
                                   >
                                     {numberFormatter.format(Math.abs(amount))}
                                   </span>
@@ -4328,38 +4368,46 @@ export const UnifiedTransactionTable = React.forwardRef<
                                 ? cashbackAmount
                                 : Math.max(0, baseAmount - finalDisp);
 
+                            const netDelta = finalDisp - baseAmount;
+                            const netDeltaClass =
+                              netDelta > 0
+                                ? "text-emerald-700"
+                                : netDelta < 0
+                                  ? "text-rose-600"
+                                  : "text-slate-500";
+
+                            const formatSigned = (value: number) => {
+                              const absValue = numberFormatter.format(
+                                Math.abs(value),
+                              );
+                              if (value > 0) return `+${absValue}`;
+                              if (value < 0) return `-${absValue}`;
+                              return "0";
+                            };
+
                             const hasCashback =
                               percentDisp > 0 ||
                               fixedDisp > 0 ||
                               cashbackAmount > 0;
-                            const isRepayment = txn.type === "repayment";
-                            const visualType =
-                              (txn as any).displayType ?? txn.type;
-                            const amountClass =
-                              visualType === "income" || isRepayment
-                                ? "text-emerald-700"
-                                : visualType === "expense"
-                                  ? "text-red-500"
-                                  : "text-slate-600";
 
                             if (!hasCashback) {
                               return (
                                 <div className="flex flex-col items-end gap-1 w-full">
                                   <span
                                     className={cn(
-                                      "font-bold tabular-nums tracking-tight truncate opacity-80",
-                                      amountClass,
+                                      "inline-flex items-center h-6 px-2 rounded-md border border-slate-200 bg-white font-black tabular-nums tracking-tight truncate opacity-80",
+                                      netDeltaClass,
                                     )}
-                                    style={{ fontSize: `0.9em` }}
+                                    style={{ fontSize: `0.95em` }}
                                   >
-                                    {numberFormatter.format(Math.abs(amount))}
+                                    {formatSigned(netDelta)}
                                   </span>
                                 </div>
                               );
                             }
 
                             return (
-                              <div className="flex flex-col items-end gap-1 w-full">
+                              <div className="flex flex-col items-start gap-1 w-full">
                                 <CustomTooltip
                                   content={
                                     <div className="text-xs space-y-1">
@@ -4381,48 +4429,27 @@ export const UnifiedTransactionTable = React.forwardRef<
                                         </span>
                                       </div>
                                       <div className="flex justify-between gap-4 font-bold border-t border-slate-200 pt-1 mt-1">
-                                        <span>Net Result:</span>
+                                        <span>Net Delta:</span>
                                         <span className="font-bold">
-                                          {numberFormatter.format(finalDisp)}
+                                          {formatSigned(netDelta)}
                                         </span>
                                       </div>
                                       <div className="text-[10px] text-slate-400 italic pt-1">
-                                        Formula: Base - (Rate% × Base)
+                                        Formula: Final Amount - Base Amount
                                       </div>
                                     </div>
                                   }
                                   side="bottom"
                                 >
-                                  <div className="flex items-center gap-1.5 justify-end cursor-help">
-                                    {percentDisp > 0 &&
-                                      !visibleColumns.total_back && (
-                                        <span className="inline-flex items-center px-1 py-0.5 rounded text-[9px] font-bold bg-green-100 text-green-700 border border-green-200">
-                                          -
-                                          {(() => {
-                                            const percentBadgeValue =
-                                              percentDisp > 1
-                                                ? percentDisp
-                                                : percentDisp * 100;
-                                            return percentBadgeValue % 1 === 0
-                                              ? percentBadgeValue.toFixed(0)
-                                              : percentBadgeValue.toFixed(2);
-                                          })()}
-                                          %
-                                        </span>
-                                      )}
-                                    {fixedDisp > 0 && (
-                                      <span className="inline-flex items-center px-1 py-0.5 rounded text-[9px] font-bold bg-green-100 text-green-700 border border-green-200">
-                                        -{numberFormatter.format(fixedDisp)}
-                                      </span>
-                                    )}
+                                  <div className="flex items-center gap-1.5 justify-start cursor-help">
                                     <span
                                       className={cn(
-                                        "font-bold tabular-nums tracking-tight truncate",
-                                        amountClass,
+                                        "inline-flex items-center h-6 px-2 rounded-md border border-slate-200 bg-white font-black tabular-nums tracking-tight truncate",
+                                        netDeltaClass,
                                       )}
-                                      style={{ fontSize: `0.9em` }}
+                                      style={{ fontSize: `0.95em` }}
                                     >
-                                      {numberFormatter.format(finalDisp)}
+                                      {formatSigned(netDelta)}
                                     </span>
                                   </div>
                                 </CustomTooltip>
@@ -4617,10 +4644,7 @@ export const UnifiedTransactionTable = React.forwardRef<
                             const allowOverflow = col.key === "date";
                             const stickyStyle: React.CSSProperties = {
                               width: columnWidths[col.key],
-                              maxWidth:
-                                col.key === "account"
-                                  ? "none"
-                                  : columnWidths[col.key],
+                              maxWidth: columnWidths[col.key],
                               overflow: allowOverflow ? "visible" : "hidden",
                               whiteSpace: allowOverflow ? "nowrap" : "nowrap",
                             };
@@ -4634,10 +4658,11 @@ export const UnifiedTransactionTable = React.forwardRef<
                                   handleCellMouseEnter(txn.id, col.key)
                                 }
                                 className={cn(
-                                  `border-r border-slate-200 ${col.key === "amount" ? "text-right" : ""} ${
+                                  `border-r border-slate-200 ${
                                     col.key === "amount" ? "font-bold" : ""
                                   } ${col.key === "amount" ? amountClass : ""} ${voidedTextClass} truncate`,
                                   col.key === "account" && "pr-1",
+                                  col.key === "actions" && "px-1",
                                   col.key === "date" && "p-1",
                                   col.key === "date" &&
                                     "relative overflow-visible",
