@@ -61,6 +61,11 @@ export function AccountDirectoryV2({
         localStorage.setItem('mf_account_view_mode', viewMode);
     }, [viewMode]);
     const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+    const [pendingSummaryMap, setPendingSummaryMap] = useState<Record<string, {
+        count: number
+        totalAmount: number
+        accountName?: string | null
+    }>>({});
 
     // CRUD state (Account)
     const [isAccountSlideOpen, setIsAccountSlideOpen] = useState(false);
@@ -97,6 +102,43 @@ export function AccountDirectoryV2({
             mounted = false;
         };
     }, []);
+
+    useEffect(() => {
+        let mounted = true
+
+        async function loadPendingSummary() {
+            try {
+                const res = await fetch('/api/batch/pending-summary', {
+                    method: 'GET',
+                    cache: 'no-store',
+                })
+                if (!res.ok) return
+                const rows = await res.json()
+                if (!mounted || !Array.isArray(rows)) return
+
+                const nextMap: Record<string, { count: number; totalAmount: number; accountName?: string | null }> = {}
+                for (const row of rows) {
+                    const accountId = String(row?.accountId || '').trim()
+                    if (!accountId) continue
+                    nextMap[accountId] = {
+                        count: Number(row?.count || 0),
+                        totalAmount: Number(row?.totalAmount || 0),
+                        accountName: row?.accountName || null,
+                    }
+                }
+                setPendingSummaryMap(nextMap)
+            } catch {
+                // keep UI functional even when pending summary endpoint is unavailable
+            }
+        }
+
+        loadPendingSummary()
+        const timer = window.setInterval(loadPendingSummary, 30_000)
+        return () => {
+            mounted = false
+            window.clearInterval(timer)
+        }
+    }, [])
 
     const filteredAccounts = useMemo(() => {
         let result = initialAccounts;
@@ -301,7 +343,11 @@ export function AccountDirectoryV2({
                 othersStats={othersStats}
             />
 
-            <AccountQuickStats accounts={initialAccounts} lastTxnAccountId={lastTxnAccountId || undefined} />
+            <AccountQuickStats
+                accounts={initialAccounts}
+                lastTxnAccountId={lastTxnAccountId || undefined}
+                pendingSummaryMap={pendingSummaryMap}
+            />
 
             <div className="flex-1 overflow-auto px-6 py-4 scrollbar-hide">
                 {viewMode === 'table' ? (
@@ -315,6 +361,7 @@ export function AccountDirectoryV2({
                         allAccounts={initialAccounts}
                         categories={categories}
                         people={people}
+                        pendingSummaryMap={pendingSummaryMap}
                     />
                 ) : (
                     <AccountGridView

@@ -61,6 +61,7 @@ async function main() {
   // Clear dev cache to avoid stale Turbopack chunk references between restarts.
   try {
     await rm('.next/dev', { recursive: true, force: true })
+    await rm('.next-dev/dev', { recursive: true, force: true })
   } catch (err) {
     // Ignore cache cleanup failures and continue starting dev server.
   }

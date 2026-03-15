@@ -8,7 +8,6 @@ import {
   Heart,
   ChevronDown,
   CheckCircle2,
-  Info,
   Sparkles,
   Calendar,
   BarChart3,
@@ -27,6 +26,7 @@ import { cn } from "@/lib/utils";
 import { SmartAmountInput } from "@/components/ui/smart-amount-input";
 import { Account, Category } from "@/types/moneyflow.types";
 import { resolveCashbackPolicy } from "@/services/cashback/policy-resolver";
+import { normalizeCashbackConfig } from "@/lib/cashback";
 import {
   Tooltip,
   TooltipContent,
@@ -77,6 +77,7 @@ export function CashbackSection({
     null,
   );
   const [isLoadingStats, setIsLoadingStats] = useState(false);
+  const [showAllRules, setShowAllRules] = useState(false);
 
   // CONSTANTS & HELPERS
   const formatVN = (val: number) =>
@@ -180,8 +181,10 @@ export function CashbackSection({
       return Math.min(cappedByRule, remains);
     };
 
-    const rawRemains =
-      cycleStats?.remainingBudget ?? activeAccount?.stats?.remains_cap;
+    const isUnlimitedBudget = Boolean(activeAccount?.cb_is_unlimited);
+    const rawRemains = isUnlimitedBudget
+      ? null
+      : (cycleStats?.remainingBudget ?? activeAccount?.stats?.remains_cap);
     const remains =
       rawRemains === null || rawRemains === undefined ? Infinity : rawRemains;
 
@@ -195,6 +198,52 @@ export function CashbackSection({
   const isSharing = ["real_percent", "real_fixed", "voluntary"].includes(
     cashbackMode,
   );
+
+  const cycleSpendInsight = useMemo(() => {
+    if (!activeAccount) return null;
+
+    try {
+      const program = normalizeCashbackConfig(activeAccount.cashback_config, activeAccount);
+      const levels = Array.isArray(program.levels) ? [...program.levels] : [];
+      const cycleSpend = Number(cycleStats?.currentSpend || 0);
+
+      if (levels.length === 0) {
+        return {
+          cycleSpend,
+          matchedLevelName: null as string | null,
+          matchedThreshold: null as number | null,
+          nextThreshold: null as number | null,
+          hasRules: false,
+        };
+      }
+
+      const sortedLevels = levels
+        .map((lvl) => ({
+          name: lvl.name || `Level ≥ ${lvl.minTotalSpend}`,
+          minTotalSpend: Number(lvl.minTotalSpend || 0),
+        }))
+        .sort((a, b) => a.minTotalSpend - b.minTotalSpend);
+
+      const matched = [...sortedLevels].reverse().find((lvl) => cycleSpend >= lvl.minTotalSpend) || null;
+      const next = sortedLevels.find((lvl) => cycleSpend < lvl.minTotalSpend) || null;
+
+      return {
+        cycleSpend,
+        matchedLevelName: matched?.name || null,
+        matchedThreshold: matched?.minTotalSpend ?? null,
+        nextThreshold: next?.minTotalSpend ?? null,
+        hasRules: true,
+      };
+    } catch {
+      return {
+        cycleSpend: Number(cycleStats?.currentSpend || 0),
+        matchedLevelName: null as string | null,
+        matchedThreshold: null as number | null,
+        nextThreshold: null as number | null,
+        hasRules: false,
+      };
+    }
+  }, [activeAccount, cycleStats]);
 
   const totalSharedVal = useMemo(() => {
     if (!isSharing) return 0;
@@ -212,6 +261,22 @@ export function CashbackSection({
       return ((netProfitValue / totalGrossAmount) * 100).toFixed(2);
     return (displayPolicy?.rate ? displayPolicy.rate * 100 : 0).toFixed(2);
   }, [totalGrossAmount, netProfitValue, displayPolicy]);
+
+  const cycleRuleBreakdown = useMemo(() => {
+    const rules = (cycleStats?.activeRules || [])
+      .filter((rule) => Number(rule?.earned || 0) > 0)
+      .map((rule) => ({
+        ruleId: rule.ruleId,
+        name: rule.name || "Rule",
+        spent: Number(rule.spent || 0),
+        earned: Number(rule.earned || 0),
+        rate: Number(rule.rate || 0),
+      }))
+      .sort((a, b) => b.earned - a.earned);
+
+    const cycleEarnTotal = rules.reduce((sum, item) => sum + item.earned, 0);
+    return { rules, cycleEarnTotal };
+  }, [cycleStats]);
 
   const suggestedShareRate = useMemo(() => {
     return displayPolicy?.rate
@@ -558,6 +623,86 @@ export function CashbackSection({
               )}
             </div>
 
+            <div className="mb-3 rounded-lg border border-slate-200 bg-white px-3 py-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[10px] font-black text-slate-500 uppercase tracking-wide">
+                  Total Profit
+                </span>
+                <span
+                  className={cn(
+                    "text-sm font-black tabular-nums",
+                    netProfitValue >= 0 ? "text-emerald-600" : "text-rose-600",
+                  )}
+                >
+                  {netProfitValue >= 0 ? "+" : ""}
+                  {formatVN(netProfitValue)}
+                </span>
+              </div>
+              <div className="mt-1 text-[10px] text-slate-400 font-semibold">
+                My Profit = Earned ({formatVN(previewBankReward)}) - Shared ({formatVN(totalSharedVal)})
+              </div>
+            </div>
+
+            <div className="mb-3 rounded-lg border border-slate-200 bg-white px-3 py-2">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[10px] font-black text-slate-500 uppercase tracking-wide">
+                  Earn Breakdown (Cycle)
+                </span>
+                <span className="text-[10px] font-black text-emerald-600 tabular-nums">
+                  {formatVN(cycleRuleBreakdown.cycleEarnTotal)}
+                </span>
+              </div>
+
+              {cycleRuleBreakdown.rules.length > 0 ? (
+                <div className="space-y-1.5">
+                  {(showAllRules
+                    ? cycleRuleBreakdown.rules
+                    : cycleRuleBreakdown.rules.slice(0, 4)
+                  ).map((rule) => {
+                    const displayRate = rule.rate > 0 && rule.rate <= 1 ? rule.rate * 100 : rule.rate;
+                    return (
+                      <div
+                        key={rule.ruleId}
+                        className="grid grid-cols-[1fr_auto] items-center gap-2 rounded border border-slate-100 bg-slate-50 px-2 py-1"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate text-[10px] font-black text-slate-600">
+                            {rule.name}
+                          </p>
+                          <p className="text-[9px] text-slate-400 font-semibold">
+                            {formatVN(rule.spent)} x {displayRate.toFixed(0)}%
+                          </p>
+                        </div>
+                        <span className="text-[10px] font-black text-emerald-600 tabular-nums">
+                          {formatVN(rule.earned)}
+                        </span>
+                      </div>
+                    );
+                  })}
+                  {cycleRuleBreakdown.rules.length > 4 && (
+                    <div className="flex items-center justify-between pt-0.5">
+                      <p className="text-[9px] text-slate-400 font-bold">
+                        {showAllRules
+                          ? "Showing all rules"
+                          : `+${cycleRuleBreakdown.rules.length - 4} more rules`}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setShowAllRules((prev) => !prev)}
+                        className="text-[9px] font-black uppercase tracking-wide text-indigo-600 hover:text-indigo-700"
+                      >
+                        {showAllRules ? "Show less" : "Show all rules"}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="text-[10px] text-slate-400 font-semibold">
+                  No earned rule data in this cycle yet.
+                </p>
+              )}
+            </div>
+
             <div className="space-y-3.5">
               <TooltipProvider>
                 <Tooltip>
@@ -664,72 +809,13 @@ export function CashbackSection({
                   </TooltipContent>
                 </Tooltip>
 
-                <div className="pt-2.5 border-t border-slate-200/60 flex justify-between items-start group relative">
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <div className="flex items-center gap-2 cursor-help pt-1">
-                        <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest group-hover:text-slate-500 transition-colors">
-                          Net Profit
-                        </span>
-                        <Info className="h-2.5 w-2.5 text-slate-300" />
-                      </div>
-                    </TooltipTrigger>
-                    <TooltipContent
-                      side="right"
-                      className="max-w-[240px] bg-slate-900 text-white p-3 border-none shadow-xl space-y-2"
-                    >
-                      <div className="flex flex-col gap-1.5">
-                        <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest">
-                          Net Formula:
-                        </span>
-                        <div className="bg-white/10 p-2 rounded text-[11px] font-mono">
-                          {formatVN(previewBankReward)} (Bank) -{" "}
-                          {formatVN(totalSharedVal)} (Shared)
-                          <div
-                            className={cn(
-                              "mt-1 pt-1 border-t border-white/10 font-bold",
-                              netProfitValue >= 0
-                                ? "text-emerald-400"
-                                : "text-rose-400",
-                            )}
-                          >
-                            = {formatVN(netProfitValue)}
-                          </div>
-                        </div>
-                        {netProfitValue < 0 && (
-                          <p className="text-[9px] text-rose-300 italic">
-                            You are voluntarily giving more to people than bank
-                            rewarded.
-                          </p>
-                        )}
-                      </div>
-                    </TooltipContent>
-                  </Tooltip>
-                  <div className="flex flex-col items-end">
-                    <div className="flex items-center gap-2">
-                      {netProfitValue < 0 && (
-                        <span className="text-[7px] font-black text-rose-500 bg-rose-50 border border-rose-100 px-1 py-0.5 rounded-sm uppercase tracking-tighter">
-                          Voluntary Loss
-                        </span>
-                      )}
-                      <span
-                        className={cn(
-                          "text-lg font-black tabular-nums tracking-tighter transition-all leading-none",
-                          netProfitValue >= 0
-                            ? "text-emerald-600"
-                            : "text-rose-600",
-                        )}
-                      >
-                        {netProfitValue >= 0 ? "+" : ""}
-                        {formatVN(netProfitValue)}
-                      </span>
-                    </div>
-                    {totalGrossAmount > 0 && (
-                      <span className="text-[8px] text-slate-400 font-bold italic mt-1 tracking-tight">
-                        ~{netProfitPercent}% net efficiency
-                      </span>
-                    )}
-                  </div>
+                <div className="pt-2.5 border-t border-slate-200/60 flex justify-between items-center">
+                  <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
+                    Profit Efficiency
+                  </span>
+                  <span className="text-[10px] text-slate-500 font-black">
+                    {totalGrossAmount > 0 ? `~${netProfitPercent}%` : "0%"}
+                  </span>
                 </div>
 
                 {/* BUDGET SECTION */}
@@ -743,6 +829,39 @@ export function CashbackSection({
                       {cycleStats?.cycle?.label || "Current"}
                     </span>
                   </div>
+
+                  <div className="mb-3 rounded-lg border border-indigo-100 bg-indigo-50/40 p-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[8px] font-black text-indigo-500 uppercase tracking-widest">Cycle</span>
+                      <span className="text-[10px] font-black text-indigo-700 tabular-nums">
+                        {cycleStats?.cycle?.label || "Current"}
+                      </span>
+                    </div>
+                    <div className="mt-1 flex items-center justify-between">
+                      <span className="text-[8px] font-black text-slate-400 uppercase tracking-wider">Total Spend This Cycle</span>
+                      <span className="text-[10px] font-black text-slate-700 tabular-nums">
+                        {formatVN(cycleSpendInsight?.cycleSpend || 0)}
+                      </span>
+                    </div>
+                    <div className="mt-1.5 border-t border-indigo-100 pt-1.5 text-[9px] font-bold text-slate-500">
+                      {cycleSpendInsight?.hasRules ? (
+                        <>
+                          <span className="text-indigo-600">Matched:</span>{" "}
+                          {cycleSpendInsight?.matchedLevelName
+                            ? `${cycleSpendInsight.matchedLevelName} (>= ${formatVN(cycleSpendInsight.matchedThreshold || 0)})`
+                            : "No level matched yet"}
+                          {cycleSpendInsight?.nextThreshold !== null && cycleSpendInsight?.nextThreshold !== undefined && (
+                            <span className="ml-1 text-slate-400">
+                              | Next: {formatVN(cycleSpendInsight.nextThreshold)}
+                            </span>
+                          )}
+                        </>
+                      ) : (
+                        <span className="text-slate-400">No Total Spend rules</span>
+                      )}
+                    </div>
+                  </div>
+
                   <div className="grid grid-cols-2 gap-3 mb-3">
                     <div className="bg-slate-50 border border-slate-100 rounded-lg p-2">
                       <span className="text-[8px] font-black text-slate-400 uppercase tracking-tighter block mb-0.5">

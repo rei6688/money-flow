@@ -21,6 +21,7 @@ import {
   getRecentShopByCategoryId,
   getRecentShopIdsByCategoryId,
   getRecentCategoriesByShopId,
+  getRecentCategoryShopByAccountId,
 } from "@/actions/cascade-actions";
 
 type CategoryShopSectionProps = {
@@ -46,6 +47,14 @@ export function CategoryShopSection({
   const transactionType = useWatch({ control: form.control, name: "type" });
   const categoryId = useWatch({ control: form.control, name: "category_id" });
   const shopId = useWatch({ control: form.control, name: "shop_id" });
+  const sourceAccountId = useWatch({
+    control: form.control,
+    name: "source_account_id",
+  });
+  const targetAccountId = useWatch({
+    control: form.control,
+    name: "target_account_id",
+  });
   const isEditingMode = Boolean(isEditing);
 
   const normalizeValue = useCallback(
@@ -89,6 +98,9 @@ export function CategoryShopSection({
   const [categoryHistoricalShopIds, setCategoryHistoricalShopIds] = useState<
     string[]
   >([]);
+  const [prefilledAccountId, setPrefilledAccountId] = useState<string | null>(
+    null,
+  );
 
   // Filter categories based on transaction type
   const filteredCategories = useMemo(() => {
@@ -133,6 +145,21 @@ export function CategoryShopSection({
       });
     }
   }, [categoryId, form, shopId, categories, shops]);
+
+  const activeAccountId = useMemo(() => {
+    if (["income", "repayment"].includes(transactionType)) {
+      return targetAccountId || null;
+    }
+    return sourceAccountId || null;
+  }, [sourceAccountId, targetAccountId, transactionType]);
+
+  // Shop is only truly irrelevant for Internal Transfers, Credit Card Payments, Income and Repayment
+  const isShopHidden = [
+    "transfer",
+    "credit_pay",
+    "income",
+    "repayment",
+  ].includes(transactionType);
 
   const isValidUrl = (url: string | null | undefined): url is string => {
     if (!url) return false;
@@ -343,6 +370,56 @@ export function CategoryShopSection({
     applyCategory();
   }, [shopId, form, shops, resolveCategoryValue]);
 
+  useEffect(() => {
+    if (isEditingMode) return;
+    if (!activeAccountId) return;
+    if (prefilledAccountId === activeAccountId) return;
+
+    const currentCategoryId = resolveCategoryValue(form.getValues("category_id"));
+    const currentShopId = resolveShopValue(form.getValues("shop_id"));
+    if (currentCategoryId || currentShopId) return;
+
+    let cancelled = false;
+
+    const hydrateRecentForAccount = async () => {
+      const recent = await getRecentCategoryShopByAccountId(activeAccountId);
+      if (cancelled) return;
+
+      const nextCategoryId = resolveCategoryValue(recent.categoryId);
+      const nextShopId = resolveShopValue(recent.shopId);
+
+      if (nextCategoryId) {
+        form.setValue("category_id", nextCategoryId, {
+          shouldDirty: true,
+          shouldTouch: true,
+        });
+      }
+
+      if (nextShopId && !isShopHidden) {
+        form.setValue("shop_id", nextShopId, {
+          shouldDirty: true,
+          shouldTouch: true,
+        });
+      }
+
+      setPrefilledAccountId(activeAccountId);
+    };
+
+    hydrateRecentForAccount();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeAccountId,
+    form,
+    isEditingMode,
+    isShopHidden,
+    prefilledAccountId,
+    resolveCategoryValue,
+    resolveShopValue,
+  ]);
+
   // Auto-select defaults logic
   useEffect(() => {
     if (isEditingMode) return;
@@ -382,15 +459,14 @@ export function CategoryShopSection({
 
     const fallback = filteredCategories[0];
     if (fallback) form.setValue("category_id", fallback.id);
-  }, [transactionType, categories, filteredCategories, form, isEditingMode, resolveCategoryValue]);
-
-  // Shop is only truly irrelevant for Internal Transfers, Credit Card Payments, Income and Repayment
-  const isShopHidden = [
-    "transfer",
-    "credit_pay",
-    "income",
-    "repayment",
-  ].includes(transactionType);
+  }, [
+    transactionType,
+    categories,
+    filteredCategories,
+    form,
+    isEditingMode,
+    resolveCategoryValue,
+  ]);
 
   // Auto-clear shop if hidden
   useEffect(() => {

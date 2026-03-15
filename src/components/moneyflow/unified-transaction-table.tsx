@@ -43,7 +43,6 @@ import {
   RotateCcw,
   Ban,
   Loader2,
-  History,
   ChevronRight,
   ChevronLeft,
   Edit,
@@ -381,10 +380,60 @@ export const UnifiedTransactionTable = React.forwardRef<
       },
       [],
     );
+    const handleQuickSyncCycle = useCallback(
+      async (personId: string, cycleTag: string) => {
+        const loadingId = toast.loading(`Syncing ${cycleTag} to Sheet...`);
+        try {
+          const response = await fetch("/api/sheets/manage", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ personId, cycleTag, action: "sync" }),
+          });
+
+          const payload = (await response.json().catch(() => null)) as
+            | {
+                error?: string;
+                requestId?: string;
+                stage?: string;
+                syncedCount?: number;
+              }
+            | null;
+
+          if (!response.ok) {
+            const details = [
+              payload?.requestId ? `Req ${payload.requestId}` : "",
+              payload?.stage ? `Stage ${payload.stage}` : "",
+            ]
+              .filter(Boolean)
+              .join(" | ");
+
+            toast.error(payload?.error || "Sheet sync failed", {
+              id: loadingId,
+              description: details || undefined,
+            });
+            return;
+          }
+
+          toast.success(`Synced cycle ${cycleTag}`, {
+            id: loadingId,
+            description:
+              typeof payload?.syncedCount === "number"
+                ? `${payload.syncedCount} rows synced`
+                : undefined,
+          });
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : "Sheet sync failed";
+          toast.error(message, { id: loadingId });
+        }
+      },
+      [],
+    );
+
     const defaultColumns: ColumnConfig[] = [
       { key: "date", label: "Date", defaultWidth: 138, minWidth: 124 },
-      { key: "shop", label: "Notes Flow", defaultWidth: 420, minWidth: 320 },
-      { key: "account", label: "Flow", defaultWidth: 240, minWidth: 180 },
+      { key: "shop", label: "Notes Flow", defaultWidth: 300, minWidth: 220 },
+      { key: "account", label: "Money Flow", defaultWidth: 380, minWidth: 280 },
       { key: "amount", label: "BASE", defaultWidth: 120, minWidth: 100 },
       {
         key: "total_back",
@@ -398,7 +447,7 @@ export const UnifiedTransactionTable = React.forwardRef<
         defaultWidth: 120,
         minWidth: 100,
       },
-      { key: "category", label: "Category", defaultWidth: 180 },
+      { key: "category", label: "Category", defaultWidth: 130, minWidth: 110 },
       { key: "people", label: "People", defaultWidth: 150 },
       { key: "id", label: "ID", defaultWidth: 100 },
       {
@@ -629,11 +678,15 @@ export const UnifiedTransactionTable = React.forwardRef<
           0,
       );
 
+      const percentMagnitude = Math.abs(percentRaw);
+      const fixedMagnitude = Math.abs(fixedRaw);
+
       const amountAbs = Math.abs(
         Number(txn.original_amount ?? txn.amount ?? 0),
       );
-      const normalizedPercent = percentRaw > 1 ? percentRaw / 100 : percentRaw;
-      const shareComputed = amountAbs * normalizedPercent + fixedRaw;
+      const normalizedPercent =
+        percentMagnitude > 1 ? percentMagnitude / 100 : percentMagnitude;
+      const shareComputed = amountAbs * normalizedPercent + fixedMagnitude;
 
       const shareAmountRaw = Number(
         txn.cashback_share_amount ??
@@ -650,10 +703,12 @@ export const UnifiedTransactionTable = React.forwardRef<
       );
 
       return {
-        percentRaw: Number.isFinite(percentRaw) ? percentRaw : 0,
-        fixedRaw: Number.isFinite(fixedRaw) ? fixedRaw : 0,
-        shareAmount: Number.isFinite(shareAmountRaw) ? shareAmountRaw : 0,
-        bankBack: Number.isFinite(bankBackRaw) ? bankBackRaw : 0,
+        percentRaw: Number.isFinite(percentMagnitude) ? percentMagnitude : 0,
+        fixedRaw: Number.isFinite(fixedMagnitude) ? fixedMagnitude : 0,
+        shareAmount: Number.isFinite(shareAmountRaw)
+          ? Math.abs(shareAmountRaw)
+          : 0,
+        bankBack: Number.isFinite(bankBackRaw) ? Math.abs(bankBackRaw) : 0,
       };
     }, []);
 
@@ -961,13 +1016,106 @@ export const UnifiedTransactionTable = React.forwardRef<
       router.refresh();
     }, [router]);
 
+    const validateRefundVoidOrder = useCallback(
+      (target: TransactionWithDetails): { title: string; description: string } | null => {
+        const findTxnById = (id: string | null | undefined) => {
+          if (!id) return null;
+          return tableData.find((txn) => txn.id === id) ?? null;
+        };
+        const effectiveStatus = (txn: TransactionWithDetails | null) => {
+          if (!txn) return null;
+          return statusOverrides[txn.id] ?? txn.status;
+        };
+
+        const targetMeta = parseMetadata(target.metadata);
+        const isGD3 = targetMeta?.is_refund_confirmation === true;
+        const isGD2 =
+          typeof targetMeta?.original_transaction_id === 'string' && !isGD3;
+
+        if (isGD3) return null;
+
+        if (isGD2) {
+          const directGd3Id =
+            typeof targetMeta?.confirmation_transaction_id === 'string'
+              ? targetMeta.confirmation_transaction_id
+              : null;
+          const gd3FromDirectLink = findTxnById(directGd3Id);
+          const gd3Fallback =
+            tableData.find((txn) => {
+              const meta = parseMetadata(txn.metadata);
+              return (
+                meta?.is_refund_confirmation === true &&
+                meta?.refund_request_id === target.id
+              );
+            }) ?? null;
+          const gd3Txn = gd3FromDirectLink ?? gd3Fallback;
+          if (gd3Txn && effectiveStatus(gd3Txn) !== 'void') {
+            return {
+              title: 'Void blocked by refund order',
+              description: 'Please void GD3 (refund confirmation) before GD2.',
+            };
+          }
+          return null;
+        }
+
+        const isGD1 =
+          target.status === 'waiting_refund' ||
+          targetMeta?.has_refund_request === true ||
+          typeof targetMeta?.refund_request_id === 'string';
+        if (!isGD1) return null;
+
+        const gd2Id =
+          typeof targetMeta?.refund_request_id === 'string'
+            ? targetMeta.refund_request_id
+            : null;
+        const gd2Txn = findTxnById(gd2Id);
+        if (gd2Txn && effectiveStatus(gd2Txn) !== 'void') {
+          return {
+            title: 'Void blocked by refund order',
+            description: 'Please void GD2 (refund request) before GD1.',
+          };
+        }
+
+        const gd3IdFromOriginal =
+          typeof targetMeta?.refund_confirmation_id === 'string'
+            ? targetMeta.refund_confirmation_id
+            : null;
+        const gd2Meta = parseMetadata(gd2Txn?.metadata);
+        const gd3IdFromGd2 =
+          typeof gd2Meta?.confirmation_transaction_id === 'string'
+            ? gd2Meta.confirmation_transaction_id
+            : null;
+        const gd3Txn =
+          findTxnById(gd3IdFromOriginal) ?? findTxnById(gd3IdFromGd2) ?? null;
+        if (gd3Txn && effectiveStatus(gd3Txn) !== 'void') {
+          return {
+            title: 'Void blocked by refund order',
+            description: 'Please void GD3 (refund confirmation) before GD1.',
+          };
+        }
+
+        return null;
+      },
+      [tableData, statusOverrides],
+    );
+
     const handleVoidConfirm = async () => {
       if (!confirmVoidTarget) return;
       setVoidError(null);
+
+      const orderWarning = validateRefundVoidOrder(confirmVoidTarget);
+      if (orderWarning) {
+        toast.error(orderWarning.title, {
+          description: orderWarning.description,
+        });
+        return;
+      }
+
       setIsVoiding(true);
       if (setIsGlobalLoading) setIsGlobalLoading(true);
       if (setLoadingMessage) setLoadingMessage("Voiding transaction...");
       const targetId = confirmVoidTarget.id;
+      setConfirmVoidTarget(null);
       setUpdatingTxnIds((prev) => new Set(prev).add(targetId));
 
       try {
@@ -977,7 +1125,6 @@ export const UnifiedTransactionTable = React.forwardRef<
           return;
         }
         setStatusOverrides((prev) => ({ ...prev, [targetId]: "void" }));
-        closeVoidDialog();
         if (onSuccess) await onSuccess();
         window.dispatchEvent(new CustomEvent("refresh-account-data"));
         router.refresh();
@@ -1003,7 +1150,6 @@ export const UnifiedTransactionTable = React.forwardRef<
             </div>,
             { duration: 8000 },
           );
-          closeVoidDialog();
         } else if (
           err.message &&
           err.message.includes("void the confirmation transaction first")
@@ -1011,7 +1157,6 @@ export const UnifiedTransactionTable = React.forwardRef<
           toast.error("Please void the Confirmation Transaction (GD3) first.", {
             description: "Linked confirmation exists.",
           });
-          closeVoidDialog();
         } else {
           setVoidError(
             err.message || "Unable to void transaction. Please try again.",
@@ -1135,6 +1280,18 @@ export const UnifiedTransactionTable = React.forwardRef<
     // Duplicate feature temporarily removed - will rewrite from scratch later
 
     const handleEdit = (txn: TransactionWithDetails) => {
+      const metadata = parseMetadata((txn as any).metadata);
+      const isBatchTxn = Boolean((metadata as any)?.batch_id);
+      if (isBatchTxn) {
+        const explicitStep = String((metadata as any)?.batch_step || "").toLowerCase();
+        const isStep3 = explicitStep === "step3" || Boolean((metadata as any)?.batch_item_id) || String(txn.note || "").startsWith("[C] ");
+        toast.warning(
+          isStep3
+            ? "This is a Batch Step 3 confirmed transaction. Editing may desync checklist confirmation."
+            : "This is a Batch Step 1 funding transaction. Editing may desync batch funding totals.",
+          { duration: 5000 },
+        );
+      }
       if (externalOnEdit) {
         externalOnEdit(txn);
         return;
@@ -1635,6 +1792,21 @@ export const UnifiedTransactionTable = React.forwardRef<
       const hasRefundRequest =
         (txn.metadata as any)?.has_refund_request ||
         (txn.metadata as any)?.refund_request_id;
+      const resolvedCategory = txn.category_id
+        ? categories.find((category) => category.id === txn.category_id)
+        : null;
+      const categoryName = String(
+        txn.category_name || resolvedCategory?.name || "",
+      ).toLowerCase();
+      const hasShoppingSignal =
+        Boolean(txn.shop_id) ||
+        categoryName.includes("shopping") ||
+        categoryName.includes("mua s") ||
+        categoryName.includes("shop");
+      const canShowCancelActions =
+        !isPendingRefund &&
+        (txn.type === "expense" || txn.type === "debt") &&
+        hasShoppingSignal;
       const baseItemClass = isSheet
         ? "flex w-full items-center gap-3 px-4 py-3 text-sm font-semibold text-slate-700"
         : "flex w-full items-center gap-2 rounded px-3 py-1 text-left hover:bg-slate-50";
@@ -1667,20 +1839,6 @@ export const UnifiedTransactionTable = React.forwardRef<
             >
               <RotateCcw className="h-4 w-4" />
               <span>{isRestoring ? "Restoring..." : "Restore"}</span>
-            </button>
-
-            {divider}
-
-            <button
-              className={neutralItemClass}
-              onClick={(event) => {
-                event.stopPropagation();
-                setHistoryTarget(txn);
-                setActionMenuOpen(null);
-              }}
-            >
-              <History className="h-4 w-4" />
-              <span>View History</span>
             </button>
           </>
         );
@@ -1723,7 +1881,7 @@ export const UnifiedTransactionTable = React.forwardRef<
           </button>
 
           {/* Refund & Cancel Actions - Restored */}
-          {!isPendingRefund && txn.type === "expense" && (
+          {canShowCancelActions && (
             <>
               <button
                 className={`${neutralItemClass} ${hasRefundRequest ? "opacity-50 cursor-not-allowed" : ""}`}
@@ -1763,18 +1921,6 @@ export const UnifiedTransactionTable = React.forwardRef<
               </button>
             </>
           )}
-          <button
-            className={neutralItemClass}
-            onClick={(event) => {
-              event.stopPropagation();
-              setHistoryTarget(txn);
-              setActionMenuOpen(null);
-            }}
-          >
-            <History className="h-4 w-4" />
-            <span>View History</span>
-          </button>
-
           {divider}
 
           <button
@@ -2003,7 +2149,7 @@ export const UnifiedTransactionTable = React.forwardRef<
               style={{ scrollbarGutter: "stable" }}
             >
               {/* Table Loading Overlay */}
-              {(isVoiding || isRestoring || isDeleting) && (
+              {(isRestoring || isDeleting) && (
                 <div className="absolute inset-0 bg-white/60 backdrop-blur-[2px] z-[100] flex items-center justify-center transition-all duration-300 animate-in fade-in">
                   <div className="flex flex-col items-center gap-3 p-6 rounded-2xl bg-white shadow-xl border border-slate-100 scale-in-95 animate-in">
                     <div className="relative">
@@ -2012,11 +2158,9 @@ export const UnifiedTransactionTable = React.forwardRef<
                     </div>
                     <div className="flex flex-col items-center gap-1">
                       <span className="text-sm font-black text-slate-800 uppercase tracking-tight">
-                        {isVoiding
-                          ? "Voiding Transaction..."
-                          : isRestoring
-                            ? "Restoring Transaction..."
-                            : "Deleting Permanently..."}
+                        {isRestoring
+                          ? "Restoring Transaction..."
+                          : "Deleting Permanently..."}
                       </span>
                       <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest animate-pulse">
                         Processing Database
@@ -2164,7 +2308,7 @@ export const UnifiedTransactionTable = React.forwardRef<
                             <span>{columnLabel}</span>
                           ) : col.key === "actions" ? (
                             <div className="flex items-center justify-center w-full relative group">
-                              <span className="mr-6">{columnLabel}</span>
+                              <span>{columnLabel}</span>
                               <CustomTooltip
                                 content="Customize Columns"
                                 side="top"
@@ -2230,10 +2374,19 @@ export const UnifiedTransactionTable = React.forwardRef<
                       const sequenceNumber =
                         (currentPage - 1) * pageSize + rowIndex + 1;
                       const txnMetadata = parseMetadata(txn.metadata);
+                      const refundStatus =
+                        typeof txnMetadata?.refund_status === 'string'
+                          ? txnMetadata.refund_status
+                          : null;
+                      const hasActiveRefundRequest =
+                        (txnMetadata?.has_refund_request ||
+                          txnMetadata?.refund_request_id) &&
+                        refundStatus !== 'request_voided' &&
+                        refundStatus !== 'void';
                       // Refund SEQ Logic (Global for row)
                       let refundSeq = 0;
                       if (
-                        txnMetadata?.has_refund_request ||
+                        hasActiveRefundRequest ||
                         txn.status === "waiting_refund"
                       )
                         refundSeq = 1;
@@ -2347,7 +2500,7 @@ export const UnifiedTransactionTable = React.forwardRef<
                               updatingTxnIds.has(txn.id) ||
                               loadingIds?.has(txn.id);
                             return (
-                              <div className="flex items-center justify-end w-full pr-1">
+                              <div className="flex items-center justify-end w-full">
                                 {isUpdating ? (
                                   <div className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-slate-100/80 animate-pulse">
                                     <Loader2 className="h-3 w-3 animate-spin text-slate-500" />
@@ -2760,9 +2913,16 @@ export const UnifiedTransactionTable = React.forwardRef<
                             // 2. VISUAL BADGES
                             // Hourglass (Tx 1): Shows on Original if refund is requested but not fully refunded
                             const refundStatus = originalMetadata.refund_status;
+                            const hasActiveRefundRequest =
+                              Boolean(
+                                originalMetadata.has_refund_request ||
+                                  originalMetadata.refund_request_id,
+                              ) &&
+                              refundStatus !== 'request_voided' &&
+                              refundStatus !== 'void';
                             // Show hourglass only if requested AND NOT completed
                             const showHourglass =
-                              Boolean(originalMetadata.has_refund_request) &&
+                              hasActiveRefundRequest &&
                               txn.status !== "refunded" &&
                               refundStatus !== "completed" &&
                               refundStatus !== "refunded";
@@ -2770,7 +2930,7 @@ export const UnifiedTransactionTable = React.forwardRef<
                             // Reversed/Refunded Icon (Tx 1): Shows if refund is COMPLETED
                             // This replaces the hourglass when the cycle is done (GD3 exists)
                             const showReversed =
-                              Boolean(originalMetadata.has_refund_request) &&
+                              hasActiveRefundRequest &&
                               (refundStatus === "completed" ||
                                 refundStatus === "refunded" ||
                                 txn.status === "refunded");
@@ -3072,6 +3232,8 @@ export const UnifiedTransactionTable = React.forwardRef<
 
                                     const batchId = metadata?.batch_id;
                                     const batchType = metadata?.type;
+                                    const batchStep = String(metadata?.batch_step || "").toLowerCase();
+                                    const isBatchStep3 = batchStep === "step3" || Boolean(metadata?.batch_item_id) || String(txn.note || "").startsWith("[C] ");
                                     let batchBadge = null;
                                     if (
                                       batchId ||
@@ -3091,7 +3253,7 @@ export const UnifiedTransactionTable = React.forwardRef<
                                             className="inline-flex items-center gap-1.5 px-2 h-[22px] min-w-[70px] justify-center rounded-full bg-indigo-50 text-indigo-600 border border-indigo-200 text-[10px] font-bold whitespace-nowrap transition-all duration-200 shadow-sm hover:bg-indigo-100"
                                           >
                                             <ShoppingBag className="h-3 w-3" />
-                                            BATCH
+                                            {isBatchStep3 ? "BATCH S3" : "BATCH S1"}
                                           </Link>
                                         </CustomTooltip>
                                       );
@@ -3111,6 +3273,53 @@ export const UnifiedTransactionTable = React.forwardRef<
                                       );
                                     }
 
+                                    const updatedAtRaw =
+                                      (txn as any).updated_at ||
+                                      (txn as any).updated ||
+                                      null;
+                                    const createdAtRaw =
+                                      (txn as any).created_at ||
+                                      (txn as any).created ||
+                                      null;
+                                    const editedFromMetadata = Boolean(
+                                      metadata?.is_edited ||
+                                        metadata?.edited ||
+                                        metadata?.edited_at,
+                                    );
+                                    const historyCount = Number(
+                                      (txn as any).history_count || 0,
+                                    );
+                                    const editedFromTimestamps =
+                                      Boolean(updatedAtRaw) &&
+                                      Boolean(createdAtRaw) &&
+                                      Math.abs(
+                                        new Date(String(updatedAtRaw)).getTime() -
+                                          new Date(String(createdAtRaw)).getTime(),
+                                      ) >
+                                        2000;
+                                    const isEdited =
+                                      historyCount > 0 ||
+                                      editedFromMetadata ||
+                                      editedFromTimestamps;
+                                    let editedBadge = null;
+                                    if (isEdited) {
+                                      editedBadge = (
+                                        <CustomTooltip content="Transaction was edited - click to view history">
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setHistoryTarget(txn);
+                                            }}
+                                            className="inline-flex items-center gap-1.5 px-2 h-[22px] min-w-[70px] justify-center rounded-full bg-cyan-50 text-cyan-700 border border-cyan-200 text-[10px] font-bold whitespace-nowrap transition-all duration-200 shadow-sm hover:bg-cyan-100"
+                                          >
+                                            <Pencil className="h-3 w-3" />
+                                            EDITED
+                                          </button>
+                                        </CustomTooltip>
+                                      );
+                                    }
+
                                     const showBadges =
                                       currentInstallmentBadge ||
                                       refundBadge ||
@@ -3119,7 +3328,8 @@ export const UnifiedTransactionTable = React.forwardRef<
                                       duplicationBadge ||
                                       hasBulkDebts ||
                                       batchBadge ||
-                                      confirmedBadge;
+                                      confirmedBadge ||
+                                      editedBadge;
 
                                     if (!showBadges) return null;
 
@@ -3132,6 +3342,7 @@ export const UnifiedTransactionTable = React.forwardRef<
                                         {duplicationBadge}
                                         {batchBadge}
                                         {confirmedBadge}
+                                        {editedBadge}
                                         {hasBulkDebts &&
                                           (() => {
                                             const bulkAllocation =
@@ -3512,6 +3723,8 @@ export const UnifiedTransactionTable = React.forwardRef<
                                   account={sourceAccount}
                                   cycleTag={cycleTag}
                                   txnDate={txn.occurred_at || txn.created_at}
+                                  compact
+                                  className="h-full min-w-[92px] justify-center px-2 rounded-r-md rounded-l-none text-[10px] border-amber-400 bg-amber-200 text-amber-900"
                                   entityName={sourceName}
                                 />
                               ) : null;
@@ -3538,11 +3751,31 @@ export const UnifiedTransactionTable = React.forwardRef<
                               personId && debtTag ? (
                                 <div
                                   key={`debt-tag-${txn.id}`}
-                                  className="flex items-center gap-1.5 shrink-0"
+                                  className="flex items-stretch gap-0 shrink-0 h-full"
                                 >
                                   {sheetUrl && (
                                     <CustomTooltip
-                                      content={`Open Tracking Sheet for ${personName} (${debtTag})`}
+                                      content={
+                                        <div className="flex min-w-[230px] items-center justify-between gap-2">
+                                          <span>
+                                            Open Tracking Sheet for {personName} ({debtTag})
+                                          </span>
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.preventDefault();
+                                              e.stopPropagation();
+                                              void handleQuickSyncCycle(
+                                                personId,
+                                                debtTag,
+                                              );
+                                            }}
+                                            className="inline-flex items-center rounded border border-emerald-300 bg-emerald-500 px-2 py-0.5 text-[10px] font-bold text-white hover:bg-emerald-600 transition-colors"
+                                          >
+                                            Sync
+                                          </button>
+                                        </div>
+                                      }
                                     >
                                       <button
                                         onClick={(e) => {
@@ -3553,10 +3786,9 @@ export const UnifiedTransactionTable = React.forwardRef<
                                             "noopener,noreferrer",
                                           );
                                         }}
-                                        className="inline-flex items-center justify-center gap-1 rounded-[4px] bg-emerald-50 border border-emerald-200 text-emerald-700 px-1.5 h-6 text-[9px] font-black uppercase tracking-tighter cursor-pointer hover:bg-emerald-100 transition-colors shadow-sm"
+                                        className="inline-flex h-full w-7 items-center justify-center rounded-none bg-emerald-200 border-y border-l border-emerald-300 text-emerald-900 cursor-pointer hover:bg-emerald-300 transition-colors"
                                       >
-                                        <ExternalLink className="h-3 w-3" />
-                                        SHEET
+                                        <FileSpreadsheet className="h-3 w-3" />
                                       </button>
                                     </CustomTooltip>
                                   )}
@@ -3573,9 +3805,13 @@ export const UnifiedTransactionTable = React.forwardRef<
                                           "noopener,noreferrer",
                                         );
                                       }}
-                                      className="inline-flex items-center justify-center gap-1 rounded-[4px] bg-blue-50 border border-blue-200 text-blue-700 px-2 h-6 text-[10px] font-extrabold whitespace-nowrap min-w-[110px] cursor-pointer hover:bg-blue-100 transition-colors shadow-sm"
+                                      className={cn(
+                                        "inline-flex items-center justify-center bg-blue-200 border-y border-r border-blue-300 text-blue-900 px-2 h-full text-[10px] font-extrabold whitespace-nowrap cursor-pointer hover:bg-blue-300 transition-colors",
+                                        sheetUrl
+                                          ? "rounded-r-md rounded-l-none"
+                                          : "rounded-r-md rounded-l-none border-l",
+                                      )}
                                     >
-                                      <ExternalLink className="h-3 w-3" />
                                       {debtTag}
                                     </span>
                                   </CustomTooltip>
@@ -3604,26 +3840,17 @@ export const UnifiedTransactionTable = React.forwardRef<
                               // Determine WHICH entity to show
                               let entityToShow: "source" | "person" | "dest" =
                                 "source";
-                              let flowBadgeType: "FROM" | "TO" | null = null; // New variable
 
                               if (isSourceContext) {
                                 // Viewing Account. Show where money went/came from.
                                 entityToShow = hasPerson ? "person" : "dest";
-                                // If account received money (income/repayment), it came FROM the other side.
-                                flowBadgeType =
-                                  visualType === "income" ? "FROM" : "TO";
                               } else if (isDestContext || isPersonContext) {
                                 // Viewing Person/Target. Show the Source Account involved.
                                 entityToShow = "source";
-                                // If account received money (income/repayment), money went TO the account.
-                                flowBadgeType =
-                                  visualType === "income" ? "TO" : "FROM";
                               } else {
                                 // Default if somehow showSingleFlow is true but context not matched
                                 // (e.g. general view for simple single transactions)
                                 entityToShow = "dest";
-                                flowBadgeType =
-                                  visualType === "income" ? "FROM" : "TO";
                               }
 
                               let displayName = sourceName;
@@ -3634,6 +3861,9 @@ export const UnifiedTransactionTable = React.forwardRef<
                               let displayIsAccount = true;
                               let badgeToDisplay = sourceCycleBadge;
                               let isCycleBadge = true;
+                              const isRepaymentFlowWithPerson =
+                                txn.type === "repayment" && hasPerson;
+                              let roleLabel: "FROM" | "TO" = "FROM";
 
                               if (entityToShow === "person") {
                                 displayName = personName;
@@ -3642,6 +3872,9 @@ export const UnifiedTransactionTable = React.forwardRef<
                                   ? `/people/${personRouteId}`
                                   : null;
                                 displayIsAccount = false;
+                                roleLabel = isRepaymentFlowWithPerson
+                                  ? "FROM"
+                                  : "TO";
                                 badgeToDisplay = (
                                   <div className="flex items-center gap-1.5">
                                     {peopleDebtTag}
@@ -3655,6 +3888,7 @@ export const UnifiedTransactionTable = React.forwardRef<
                                   ? `/accounts/${destId}`
                                   : null;
                                 displayIsAccount = !hasPerson;
+                                roleLabel = "TO";
                                 // Destination usually no badge unless debt, but for account transfer no badge currently
                                 badgeToDisplay = null;
                                 isCycleBadge = false;
@@ -3673,6 +3907,12 @@ export const UnifiedTransactionTable = React.forwardRef<
                                   displayImage = cat?.image_url || null;
                                   displayLink = null;
                                 }
+                              }
+
+                              if (entityToShow === "source") {
+                                roleLabel = isRepaymentFlowWithPerson
+                                  ? "TO"
+                                  : "FROM";
                               }
 
                               // Universal fallback for Unknown in Single Flow
@@ -3699,94 +3939,90 @@ export const UnifiedTransactionTable = React.forwardRef<
                                 <div className="flex items-center gap-1.5 w-full min-w-0 h-9">
                                   {borderedTypeIconWide}
 
-                                  <div className="flex-1 min-w-0 max-w-[42%] h-9 px-1.5 py-1 rounded-md bg-slate-50 border border-slate-200 flex items-center gap-2 cursor-pointer hover:bg-slate-100 transition-colors group/pill shadow-sm">
-                                    {/* Flow Badge */}
-                                    {flowBadgeType && (
-                                      <span
-                                        className={cn(
-                                          "inline-flex items-center justify-center rounded-[4px] h-6 text-[10px] font-extrabold whitespace-nowrap shrink-0 w-11 shadow-sm transition-all group-hover/pill:scale-105",
-                                          flowBadgeType === "FROM"
-                                            ? context === "account"
-                                              ? "bg-emerald-50 border border-emerald-200 text-emerald-700"
-                                              : "bg-orange-50 border border-orange-200 text-orange-700"
-                                            : context === "account"
-                                              ? "bg-rose-50 border border-rose-200 text-rose-700"
-                                              : "bg-sky-50 border border-sky-200 text-sky-700",
-                                        )}
+                                  <div className="flex-1 min-w-0 h-9 pl-1.5 pr-0 py-0 rounded-md bg-slate-50 border border-slate-200 flex items-stretch gap-0 cursor-pointer hover:bg-slate-100 transition-colors group/pill shadow-sm overflow-hidden">
+                                    <div className="flex-1 min-w-0 flex items-center gap-2 pr-0">
+                                      {/* Avatar + Name Area with its own tooltip */}
+                                      <CustomTooltip
+                                        content={`Open ${displayName} in new tab`}
                                       >
-                                        {flowBadgeType}
-                                      </span>
-                                    )}
-
-                                    {/* Avatar + Name Area with its own tooltip */}
-                                    <CustomTooltip
-                                      content={`Open ${displayName} in new tab`}
-                                    >
-                                      <div
-                                        className="flex-1 min-w-0 flex items-center gap-2 h-full"
-                                        onClick={(e) => {
-                                          if (displayLink) {
-                                            e.stopPropagation();
-                                            window.open(
-                                              displayLink,
-                                              "_blank",
-                                              "noopener,noreferrer",
-                                            );
-                                          }
-                                        }}
-                                      >
-                                        <div className="shrink-0 h-7 w-7 flex items-center justify-center">
-                                          {displayImage ? (
-                                            <img
-                                              src={displayImage}
-                                              alt=""
-                                              className={cn(
-                                                "h-full w-full object-contain",
-                                                displayIsAccount
-                                                  ? "rounded-sm"
-                                                  : "rounded-none",
-                                              )}
-                                            />
-                                          ) : (
-                                            <div
-                                              className={cn(
-                                                "h-full w-full flex items-center justify-center border border-slate-100 bg-white",
-                                                displayIsAccount
-                                                  ? "rounded-sm"
-                                                  : "rounded-none",
-                                              )}
-                                            >
-                                              {displayIsAccount ? (
-                                                <Wallet className="h-4 w-4 text-slate-400" />
-                                              ) : (
-                                                <User className="h-4 w-4 text-slate-400" />
-                                              )}
+                                        <div
+                                          className="flex-1 min-w-0 flex items-center gap-2 h-full"
+                                          onClick={(e) => {
+                                            if (displayLink) {
+                                              e.stopPropagation();
+                                              window.open(
+                                                displayLink,
+                                                "_blank",
+                                                "noopener,noreferrer",
+                                              );
+                                            }
+                                          }}
+                                        >
+                                          <div className="shrink-0 h-7 w-7 flex items-center justify-center">
+                                            {displayImage ? (
+                                              <img
+                                                src={displayImage}
+                                                alt=""
+                                                className={cn(
+                                                  "h-full w-full object-contain",
+                                                  displayIsAccount
+                                                    ? "rounded-sm"
+                                                    : "rounded-none",
+                                                )}
+                                              />
+                                            ) : (
+                                              <div
+                                                className={cn(
+                                                  "h-full w-full flex items-center justify-center border border-slate-100 bg-white",
+                                                  displayIsAccount
+                                                    ? "rounded-sm"
+                                                    : "rounded-none",
+                                                )}
+                                              >
+                                                {displayIsAccount ? (
+                                                  <Wallet className="h-4 w-4 text-slate-400" />
+                                                ) : (
+                                                  <User className="h-4 w-4 text-slate-400" />
+                                                )}
+                                              </div>
+                                            )}
+                                          </div>
+                                          <div className="min-w-0 overflow-hidden">
+                                            <div className="flex min-w-0 items-center">
+                                              <span
+                                                className={cn(
+                                                  "inline-flex items-center rounded-md border px-1.5 h-4 text-[9px] font-black tracking-wide mr-1.5 shrink-0",
+                                                  roleLabel === "FROM"
+                                                    ? "border-indigo-200 bg-indigo-50 text-indigo-700"
+                                                    : "border-emerald-200 bg-emerald-50 text-emerald-700",
+                                                )}
+                                              >
+                                                {roleLabel}
+                                              </span>
+                                              <span className="min-w-0 block text-sm font-bold text-slate-700 truncate group-hover/pill:text-blue-600 transition-colors">
+                                                {displayName}
+                                              </span>
                                             </div>
+                                          </div>
+                                        </div>
+                                      </CustomTooltip>
+
+                                      {/* Badge area */}
+                                      {badgeToDisplay && (
+                                        <div className="ml-auto shrink-0 self-stretch flex items-stretch">
+                                          {isCycleBadge ? (
+                                            <CustomTooltip
+                                              content={`Open details for ${displayName} in new tab filtered by cycle ${cycleTag || ""}`}
+                                            >
+                                              {badgeToDisplay}
+                                            </CustomTooltip>
+                                          ) : (
+                                            // If debt tag (it manages its own tooltip inside the component)
+                                            badgeToDisplay
                                           )}
                                         </div>
-                                        <div className="flex-1 min-w-0 overflow-hidden">
-                                          <span className="block text-sm font-bold text-slate-700 truncate group-hover/pill:text-blue-600 transition-colors">
-                                            {displayName}
-                                          </span>
-                                        </div>
-                                      </div>
-                                    </CustomTooltip>
-
-                                    {/* Badge area */}
-                                    {badgeToDisplay && (
-                                      <div className="shrink-0">
-                                        {isCycleBadge ? (
-                                          <CustomTooltip
-                                            content={`Open details for ${displayName} in new tab filtered by cycle ${cycleTag || ""}`}
-                                          >
-                                            {badgeToDisplay}
-                                          </CustomTooltip>
-                                        ) : (
-                                          // If debt tag (it manages its own tooltip inside the component)
-                                          badgeToDisplay
-                                        )}
-                                      </div>
-                                    )}
+                                      )}
+                                    </div>
                                   </div>
                                 </div>
                               );
@@ -3836,19 +4072,22 @@ export const UnifiedTransactionTable = React.forwardRef<
                               ? [targetBadges, sourceBadges]
                               : [sourceBadges, targetBadges];
 
+                            const [leftRole, rightRole]: ["FROM" | "TO", "FROM" | "TO"] =
+                              ["FROM", "TO"];
+
                             // Helper to render entity with badge
                             const renderFlowEntity = (
                               entity: typeof sourceEntity,
                               badges: React.ReactNode[],
-                              isTarget: boolean,
+                              roleLabel: "FROM" | "TO",
                             ) => (
-                              <div className="flex-1 min-w-0 max-w-[42%] h-9 px-1.5 py-1 rounded-md bg-slate-50 border border-slate-200 flex items-center gap-2 cursor-pointer hover:bg-slate-100 transition-colors group/pill shadow-sm">
+                              <div className="flex-1 min-w-0 h-9 pl-1.5 pr-0 py-0 rounded-md bg-slate-50 border border-slate-200 flex items-stretch gap-0 cursor-pointer hover:bg-slate-100 transition-colors group/pill shadow-sm overflow-hidden">
                                 {/* Avatar + Name area */}
                                 <CustomTooltip
                                   content={`Open ${entity.name} in new tab`}
                                 >
                                   <div
-                                    className="flex-1 min-w-0 flex items-center gap-2 h-full"
+                                    className="flex-1 min-w-0 flex items-center gap-2 h-full pr-0"
                                     onClick={(e) => {
                                       if (entity.link) {
                                         e.stopPropagation();
@@ -3890,16 +4129,28 @@ export const UnifiedTransactionTable = React.forwardRef<
                                       )}
                                     </div>
                                     <div className="flex-1 min-w-0 overflow-hidden">
-                                      <span className="block text-sm font-bold text-slate-700 truncate group-hover/pill:text-blue-600 transition-colors">
-                                        {entity.name}
-                                      </span>
+                                      <div className="flex min-w-0 items-center">
+                                        <span
+                                          className={cn(
+                                            "inline-flex items-center rounded-md border px-1.5 h-4 text-[9px] font-black tracking-wide mr-1.5 shrink-0",
+                                            roleLabel === "FROM"
+                                              ? "border-indigo-200 bg-indigo-50 text-indigo-700"
+                                              : "border-emerald-200 bg-emerald-50 text-emerald-700",
+                                          )}
+                                        >
+                                          {roleLabel}
+                                        </span>
+                                        <span className="min-w-0 block text-sm font-bold text-slate-700 truncate group-hover/pill:text-blue-600 transition-colors">
+                                          {entity.name}
+                                        </span>
+                                      </div>
                                     </div>
                                   </div>
                                 </CustomTooltip>
 
                                 {/* Badges area */}
                                 {badges.length > 0 && (
-                                  <div className="shrink-0 flex items-center gap-1">
+                                  <div className="ml-auto shrink-0 self-stretch flex items-stretch justify-end gap-0">
                                     {badges.map((badge, idx) => (
                                       <React.Fragment key={idx}>
                                         {badge}
@@ -3916,7 +4167,7 @@ export const UnifiedTransactionTable = React.forwardRef<
                                 {renderFlowEntity(
                                   displayLeft,
                                   leftBadges,
-                                  false,
+                                  leftRole,
                                 )}
                                 <span className="text-slate-300 font-light shrink-0">
                                   |
@@ -3924,7 +4175,7 @@ export const UnifiedTransactionTable = React.forwardRef<
                                 {renderFlowEntity(
                                   displayRight,
                                   rightBadges,
-                                  true,
+                                  rightRole,
                                 )}
                               </div>
                             );
@@ -4115,35 +4366,37 @@ export const UnifiedTransactionTable = React.forwardRef<
                             ) : null;
 
                             return (
-                              <div className="flex flex-col items-end gap-1 w-full">
-                                <div className="flex items-center gap-1.5 justify-end">
-                                  {percentDisp > 0 &&
-                                    !visibleColumns.total_back && (
-                                      <span className="inline-flex items-center px-1 py-0.5 rounded text-[9px] font-bold bg-green-100 text-green-700 border border-green-200">
-                                        -
-                                        {(() => {
-                                          const percentBadgeValue =
-                                            percentDisp > 1
-                                              ? percentDisp
-                                              : percentDisp * 100;
-                                          return percentBadgeValue % 1 === 0
-                                            ? percentBadgeValue.toFixed(0)
-                                            : percentBadgeValue.toFixed(2);
-                                        })()}
-                                        %
+                              <div className="flex flex-col items-start gap-1 w-full">
+                                <div className="flex w-full items-center justify-between gap-1.5">
+                                  <div className="flex items-center gap-1.5 min-w-0">
+                                    {percentDisp > 0 &&
+                                      !visibleColumns.total_back && (
+                                        <span className="inline-flex items-center px-2 h-6 rounded-md text-[10px] font-black bg-sky-100 text-sky-700 border border-sky-200 shrink-0">
+                                          -
+                                          {(() => {
+                                            const percentBadgeValue =
+                                              percentDisp > 1
+                                                ? percentDisp
+                                                : percentDisp * 100;
+                                            return percentBadgeValue % 1 === 0
+                                              ? percentBadgeValue.toFixed(0)
+                                              : percentBadgeValue.toFixed(2);
+                                          })()}
+                                          %
+                                        </span>
+                                      )}
+                                    {fixedDisp > 0 && (
+                                      <span className="inline-flex items-center px-2 h-6 rounded-md text-[10px] font-black bg-sky-100 text-sky-700 border border-sky-200 shrink-0">
+                                        -{numberFormatter.format(fixedDisp)}
                                       </span>
                                     )}
-                                  {fixedDisp > 0 && (
-                                    <span className="inline-flex items-center px-1 py-0.5 rounded text-[9px] font-bold bg-green-100 text-green-700 border border-green-200">
-                                      -{numberFormatter.format(fixedDisp)}
-                                    </span>
-                                  )}
+                                  </div>
                                   <span
                                     className={cn(
-                                      "font-bold tabular-nums tracking-tight truncate",
+                                      "ml-auto text-right font-black tabular-nums tracking-tight truncate",
                                       amountClass,
                                     )}
-                                    style={{ fontSize: `0.9em` }}
+                                    style={{ fontSize: `0.95em` }}
                                   >
                                     {numberFormatter.format(Math.abs(amount))}
                                   </span>
@@ -4159,11 +4412,17 @@ export const UnifiedTransactionTable = React.forwardRef<
                                 ? txn.original_amount
                                 : amount;
 
-                            const { percentRaw, fixedRaw, shareAmount } =
+                            const {
+                              percentRaw,
+                              fixedRaw,
+                              shareAmount,
+                              bankBack,
+                            } =
                               resolveCashbackFields(txn);
                             const percentDisp = percentRaw;
                             const fixedDisp = fixedRaw;
-                            const cashbackAmount = shareAmount;
+                            const cashbackAmount =
+                              shareAmount > 0 ? shareAmount : bankBack;
                             const baseAmount = Math.abs(
                               Number(originalAmount ?? 0),
                             );
@@ -4178,38 +4437,48 @@ export const UnifiedTransactionTable = React.forwardRef<
                                 ? cashbackAmount
                                 : Math.max(0, baseAmount - finalDisp);
 
-                            const hasCashback =
-                              percentDisp > 0 ||
-                              fixedDisp > 0 ||
-                              cashbackAmount > 0;
+                            const netBackAmount =
+                              cashbackAmount > 0
+                                ? cashbackAmount
+                                : Math.max(0, baseAmount - finalDisp);
+                            const netBackClass =
+                              netBackAmount > 0
+                                ? "text-emerald-700"
+                                : "text-slate-500";
+
                             const isRepayment = txn.type === "repayment";
                             const visualType =
                               (txn as any).displayType ?? txn.type;
-                            const amountClass =
+                            const finalAmountClass =
                               visualType === "income" || isRepayment
                                 ? "text-emerald-700"
                                 : visualType === "expense"
                                   ? "text-red-500"
                                   : "text-slate-600";
 
+                            const hasCashback =
+                              percentDisp > 0 ||
+                              fixedDisp > 0 ||
+                              cashbackAmount > 0;
+
                             if (!hasCashback) {
                               return (
-                                <div className="flex flex-col items-end gap-1 w-full">
+                                <div className="flex flex-col items-start gap-1 w-full">
                                   <span
                                     className={cn(
-                                      "font-bold tabular-nums tracking-tight truncate opacity-80",
-                                      amountClass,
+                                      "ml-auto text-right font-black tabular-nums tracking-tight truncate",
+                                      finalAmountClass,
                                     )}
-                                    style={{ fontSize: `0.9em` }}
+                                    style={{ fontSize: `0.95em` }}
                                   >
-                                    {numberFormatter.format(Math.abs(amount))}
+                                    {numberFormatter.format(Math.abs(finalDisp))}
                                   </span>
                                 </div>
                               );
                             }
 
                             return (
-                              <div className="flex flex-col items-end gap-1 w-full">
+                              <div className="flex flex-col items-start gap-1 w-full">
                                 <CustomTooltip
                                   content={
                                     <div className="text-xs space-y-1">
@@ -4231,48 +4500,30 @@ export const UnifiedTransactionTable = React.forwardRef<
                                         </span>
                                       </div>
                                       <div className="flex justify-between gap-4 font-bold border-t border-slate-200 pt-1 mt-1">
-                                        <span>Net Result:</span>
+                                        <span>Back Amount:</span>
                                         <span className="font-bold">
-                                          {numberFormatter.format(finalDisp)}
+                                          {numberFormatter.format(netBackAmount)}
                                         </span>
                                       </div>
                                       <div className="text-[10px] text-slate-400 italic pt-1">
-                                        Formula: Base - (Rate% × Base)
+                                        Formula: Base Amount - Final Amount
                                       </div>
                                     </div>
                                   }
                                   side="bottom"
                                 >
-                                  <div className="flex items-center gap-1.5 justify-end cursor-help">
-                                    {percentDisp > 0 &&
-                                      !visibleColumns.total_back && (
-                                        <span className="inline-flex items-center px-1 py-0.5 rounded text-[9px] font-bold bg-green-100 text-green-700 border border-green-200">
-                                          -
-                                          {(() => {
-                                            const percentBadgeValue =
-                                              percentDisp > 1
-                                                ? percentDisp
-                                                : percentDisp * 100;
-                                            return percentBadgeValue % 1 === 0
-                                              ? percentBadgeValue.toFixed(0)
-                                              : percentBadgeValue.toFixed(2);
-                                          })()}
-                                          %
-                                        </span>
-                                      )}
-                                    {fixedDisp > 0 && (
-                                      <span className="inline-flex items-center px-1 py-0.5 rounded text-[9px] font-bold bg-green-100 text-green-700 border border-green-200">
-                                        -{numberFormatter.format(fixedDisp)}
-                                      </span>
-                                    )}
+                                  <div className="flex w-full items-center justify-between gap-1.5 cursor-help">
+                                    <span className="inline-flex items-center h-6 px-2 rounded-md border border-sky-200 bg-sky-100 text-sky-700 font-black tabular-nums tracking-tight truncate">
+                                      -{numberFormatter.format(netBackAmount)}
+                                    </span>
                                     <span
                                       className={cn(
-                                        "font-bold tabular-nums tracking-tight truncate",
-                                        amountClass,
+                                        "ml-auto text-right font-black tabular-nums tracking-tight truncate",
+                                        finalAmountClass,
                                       )}
-                                      style={{ fontSize: `0.9em` }}
+                                      style={{ fontSize: `0.95em` }}
                                     >
-                                      {numberFormatter.format(finalDisp)}
+                                      {numberFormatter.format(Math.abs(finalDisp))}
                                     </span>
                                   </div>
                                 </CustomTooltip>
@@ -4467,10 +4718,7 @@ export const UnifiedTransactionTable = React.forwardRef<
                             const allowOverflow = col.key === "date";
                             const stickyStyle: React.CSSProperties = {
                               width: columnWidths[col.key],
-                              maxWidth:
-                                col.key === "account"
-                                  ? "none"
-                                  : columnWidths[col.key],
+                              maxWidth: columnWidths[col.key],
                               overflow: allowOverflow ? "visible" : "hidden",
                               whiteSpace: allowOverflow ? "nowrap" : "nowrap",
                             };
@@ -4484,9 +4732,13 @@ export const UnifiedTransactionTable = React.forwardRef<
                                   handleCellMouseEnter(txn.id, col.key)
                                 }
                                 className={cn(
-                                  `border-r border-slate-200 ${col.key === "amount" ? "text-right" : ""} ${
+                                  `border-r border-slate-200 ${
                                     col.key === "amount" ? "font-bold" : ""
                                   } ${col.key === "amount" ? amountClass : ""} ${voidedTextClass} truncate`,
+                                  (col.key === "amount" ||
+                                    col.key === "final_price") && "text-right",
+                                  col.key === "account" && "pr-1",
+                                  col.key === "actions" && "px-1",
                                   col.key === "date" && "p-1",
                                   col.key === "date" &&
                                     "relative overflow-visible",

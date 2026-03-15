@@ -15,6 +15,18 @@
   - Cycle picker account/debt mode conflicts
 - Do not start coding until you can reproduce all 3 issues in handover checklist.
 
+### ⚠️ Latest Continuation Context (March 15, 2026)
+- New handover package: [docs/handovers/HANDOVER_2026-03-15_BATCH_DEBT_SYNC_AND_NEXT_AGENT.md](./docs/handovers/HANDOVER_2026-03-15_BATCH_DEBT_SYNC_AND_NEXT_AGENT.md)
+- Next-agent research priorities (strict order):
+  1. Installment data source audit (`/installment`: Supabase vs PocketBase)
+  2. Service page/code and monthly Vercel cron diagnosis
+  3. Bot refactor to Q&A only (no transaction submission)
+- Plan docs to read first:
+  - [docs/plans/INSTALLMENT_DB_AUDIT_PLAN_2026-03-15.md](./docs/plans/INSTALLMENT_DB_AUDIT_PLAN_2026-03-15.md)
+  - [docs/plans/SERVICE_CRON_RESEARCH_PLAN_2026-03-15.md](./docs/plans/SERVICE_CRON_RESEARCH_PLAN_2026-03-15.md)
+  - [docs/plans/BOT_QA_REFACTOR_PLAN_2026-03-15.md](./docs/plans/BOT_QA_REFACTOR_PLAN_2026-03-15.md)
+- Branch naming is mandatory for all new tasks: `agent/<scope>-<ddmmyyyy>-<short-task>`.
+
 ### Step 1: Understand V2 Architecture (5 min)
 ```
 TransactionSlideV2 = Right-side slide panel (replaces old center modal)

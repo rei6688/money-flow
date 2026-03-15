@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { createBatch, createBatchFromClone } from '@/services/batch.service'
+import { pocketbaseList, pocketbaseUpdate, toPocketBaseId } from '@/services/pocketbase/server'
 
 /**
  * Create a fresh batch (empty)
@@ -85,20 +86,15 @@ export async function createCloneBatchAction(params: {
  */
 export async function getBatchItemsAction(batchId: string) {
     try {
-        const { createClient } = await import('@/lib/supabase/server')
-        const supabase = createClient()
-
-        const { data, error } = await supabase
-            .from('batch_items')
-            .select('*')
-            .eq('batch_id', batchId)
-            .order('created_at', { ascending: true })
-
-        if (error) throw error
+        const result = await pocketbaseList<any>('batch_items', {
+            filter: `batch_id = "${toPocketBaseId(batchId, 'batches')}"`,
+            sort: 'created',
+            perPage: 1000,
+        })
 
         return {
             success: true,
-            data: data || []
+            data: result.items || []
         }
     } catch (error) {
         console.error('Failed to get batch items:', error)
@@ -106,6 +102,50 @@ export async function getBatchItemsAction(batchId: string) {
             success: false,
             error: error instanceof Error ? error.message : 'Failed to get batch items',
             data: []
+        }
+    }
+}
+
+/**
+ * Set period on an existing batch record.
+ */
+export async function setBatchPeriodAction(batchId: string, period: 'before' | 'after') {
+    try {
+        const normalizedId = toPocketBaseId(batchId, 'batches')
+        const data = await pocketbaseUpdate<any>('batches', normalizedId, {
+            period,
+            updated_at: new Date().toISOString(),
+        })
+
+        revalidatePath('/batch')
+        return { success: true, data }
+    } catch (error) {
+        console.error('Failed to set batch period:', error)
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : 'Failed to set batch period',
+        }
+    }
+}
+
+/**
+ * Set phase_id on an existing batch record.
+ */
+export async function setBatchPhaseAction(batchId: string, phaseId: string) {
+    try {
+        const normalizedId = toPocketBaseId(batchId, 'batches')
+        const data = await pocketbaseUpdate<any>('batches', normalizedId, {
+            phase_id: phaseId,
+            updated_at: new Date().toISOString(),
+        })
+
+        revalidatePath('/batch')
+        return { success: true, data }
+    } catch (error) {
+        console.error('Failed to set batch phase:', error)
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : 'Failed to set batch phase',
         }
     }
 }

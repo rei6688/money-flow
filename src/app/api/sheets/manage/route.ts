@@ -8,41 +8,82 @@ function isUuidLike(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
 }
 
+function makeRequestId(): string {
+  try {
+    return crypto.randomUUID()
+  } catch {
+    return `sheet-${Date.now()}`
+  }
+}
+
+function errorResponse(
+  requestId: string,
+  stage: NonNullable<ManageCycleSheetResponse['stage']>,
+  error: string,
+  status: number,
+  debugMessage?: string,
+) {
+  return NextResponse.json(
+    {
+      error,
+      requestId,
+      stage,
+      debugMessage,
+    } satisfies Partial<ManageCycleSheetResponse>,
+    { status },
+  )
+}
+
 export async function POST(request: Request) {
+  const requestId = makeRequestId()
   try {
     const payload = (await request.json()) as ManageCycleSheetRequest
     const personId = payload?.personId?.trim()
     const action = payload?.action || 'sync'
 
+    console.info('[ManageSheet API] request:start', { requestId, action, hasPersonId: Boolean(personId) })
+
     if (!personId) {
-      return NextResponse.json({ error: 'Missing personId' }, { status: 400 })
+      console.warn('[ManageSheet API] validation failed: missing personId', { requestId })
+      return errorResponse(requestId, 'validate_payload', 'Missing personId', 400)
     }
 
     // Handle Test Create Action
     if (action === 'test_create') {
       const result = await createTestSheet(personId)
       if (!result.success) {
-        return NextResponse.json({ error: result.message ?? 'Test create failed' }, { status: 400 })
+        console.warn('[ManageSheet API] test_create failed', { requestId, personId, message: result.message })
+        return errorResponse(
+          requestId,
+          'test_create',
+          result.message ?? 'Test create failed',
+          400,
+          result.message ?? 'createTestSheet returned success=false',
+        )
       }
       return NextResponse.json({
         status: 'test_created',
         sheetUrl: result.sheetUrl,
-        sheetId: result.sheetId
+        sheetId: result.sheetId,
+        requestId,
+        stage: 'test_create',
       })
     }
 
     // Default Sync Action
     const rawCycle = payload?.cycleTag?.trim()
     if (!rawCycle) {
-      return NextResponse.json({ error: 'Missing cycleTag' }, { status: 400 })
+      console.warn('[ManageSheet API] validation failed: missing cycleTag', { requestId, personId })
+      return errorResponse(requestId, 'validate_payload', 'Missing cycleTag', 400)
     }
 
     const normalizedCycle = normalizeMonthTag(rawCycle)
     if (!normalizedCycle || !isYYYYMM(normalizedCycle)) {
-      return NextResponse.json({ error: 'Invalid cycleTag format' }, { status: 400 })
+      console.warn('[ManageSheet API] validation failed: invalid cycleTag', { requestId, personId, rawCycle, normalizedCycle })
+      return errorResponse(requestId, 'validate_payload', 'Invalid cycleTag format', 400)
     }
 
-    console.info('[ManageSheet API] request', { personId, cycleTag: normalizedCycle })
+    console.info('[ManageSheet API] request', { requestId, personId, cycleTag: normalizedCycle })
 
     const supabase = createClient()
     type CycleSheetRow = { id: string; sheet_id?: string | null; sheet_url?: string | null }
@@ -50,7 +91,7 @@ export async function POST(request: Request) {
     let tableAvailable = isUuidLike(personId)
 
     if (!tableAvailable) {
-      console.info('[ManageSheet API] skip person_cycle_sheets lookup: personId is not UUID, using direct create/sync path', { personId })
+      console.info('[ManageSheet API] skip person_cycle_sheets lookup: personId is not UUID, using direct create/sync path', { requestId, personId })
     }
 
     if (tableAvailable) {
@@ -63,7 +104,12 @@ export async function POST(request: Request) {
 
       if (existingResult.error) {
         tableAvailable = false
-        console.warn('person_cycle_sheets lookup failed:', existingResult.error)
+        console.warn('[ManageSheet API] person_cycle_sheets lookup failed:', {
+          requestId,
+          personId,
+          cycleTag: normalizedCycle,
+          error: existingResult.error,
+        })
       } else {
         existing = existingResult.data as CycleSheetRow | null
       }
@@ -76,13 +122,19 @@ export async function POST(request: Request) {
       existing?.sheet_url ??
       (existing?.sheet_id ? `https://docs.google.com/spreadsheets/d/${existing.sheet_id}` : null)
     let sheetId = existing?.sheet_id ?? null
-    console.info('[ManageSheet API] existing', { found: !!existing, sheetId, sheetUrl, hasSheetInfo })
+    console.info('[ManageSheet API] existing', { requestId, found: !!existing, sheetId, sheetUrl, hasSheetInfo })
 
     if (!hasSheetInfo) {
       const createResult = await createCycleSheet(personId, normalizedCycle)
-      console.info('[ManageSheet API] create result', createResult)
+      console.info('[ManageSheet API] create result', { requestId, success: createResult.success, message: createResult.message, sheetId: createResult.sheetId })
       if (!createResult.success) {
-        return NextResponse.json({ error: createResult.message ?? 'Create failed' }, { status: 400 })
+        return errorResponse(
+          requestId,
+          'create_sheet',
+          createResult.message ?? 'Create failed',
+          400,
+          createResult.message ?? 'createCycleSheet returned success=false',
+        )
       }
 
       status = 'created'
@@ -115,7 +167,7 @@ export async function POST(request: Request) {
             .update({ google_sheet_url: sheetUrl })
             .eq('id', personId)
         } catch (profileError) {
-          console.warn('Unable to update profile sheet url:', profileError)
+          console.warn('[ManageSheet API] unable to update profile sheet url', { requestId, personId, profileError })
         }
       }
     } else if (tableAvailable && existingRowId) {
@@ -126,21 +178,39 @@ export async function POST(request: Request) {
     }
 
     const syncResult = await syncCycleTransactions(personId, normalizedCycle, sheetId)
-    console.info('[ManageSheet API] sync result', syncResult)
+    console.info('[ManageSheet API] sync result', { requestId, success: syncResult.success, message: syncResult.message, syncedCount: (syncResult as any).syncedCount })
     if (!syncResult.success) {
-      return NextResponse.json({ error: syncResult.message ?? 'Sync failed' }, { status: 400 })
+      return errorResponse(
+        requestId,
+        'sync_transactions',
+        syncResult.message ?? 'Sync failed',
+        400,
+        syncResult.message ?? 'syncCycleTransactions returned success=false',
+      )
     }
 
     return NextResponse.json({
       status,
       sheetUrl,
       sheetId,
+      requestId,
+      stage: 'sync_transactions',
       syncedCount: (syncResult as any).syncedCount,
       manualPreserved: (syncResult as any).manualPreserved,
       totalRows: (syncResult as any).totalRows
     })
   } catch (error: any) {
-    console.error('Manage sheet endpoint failed:', error)
-    return NextResponse.json({ error: error?.message ?? 'Unexpected error' }, { status: 500 })
+    console.error('[ManageSheet API] unexpected failure', {
+      requestId,
+      error: error?.message,
+      stack: error?.stack,
+    })
+    return errorResponse(
+      requestId,
+      'unexpected',
+      error?.message ?? 'Unexpected error',
+      500,
+      error?.message ?? 'Unhandled exception in manage sheet API',
+    )
   }
 }

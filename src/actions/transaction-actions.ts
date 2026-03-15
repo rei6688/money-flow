@@ -5,6 +5,7 @@ import { syncTransactionToSheet } from '@/services/sheet.service';
 import { parseMetadata } from '@/lib/transaction-mapper';
 import { normalizeMonthTag } from '@/lib/month-tag';
 import { revalidatePath } from 'next/cache';
+import { REFUND_PENDING_ACCOUNT_ID } from '@/constants/refunds';
 import { CashbackMode } from '@/types/moneyflow.types';
 import {
   createTransaction as createPBTransaction,
@@ -72,8 +73,45 @@ export async function restoreTransaction(id: string): Promise<boolean> {
   try {
     await pocketbaseUpdate('transactions', pbId, { status: 'posted' });
     
-    // Sync restore to sheet
     const existing = await pocketbaseGetById<any>('transactions', pbId);
+    const existingMeta =
+      typeof existing?.metadata === 'object' && existing.metadata !== null
+        ? existing.metadata
+        : {};
+
+    const originalTxnId =
+      typeof existingMeta.original_transaction_id === 'string'
+        ? existingMeta.original_transaction_id
+        : null;
+    const isRefundRequestTxn =
+      Boolean(originalTxnId) && existingMeta.is_refund_confirmation !== true;
+
+    if (isRefundRequestTxn && originalTxnId) {
+      try {
+        const originalTxn = await pocketbaseGetById<any>('transactions', originalTxnId);
+        if (originalTxn) {
+          const originalMeta =
+            typeof originalTxn.metadata === 'object' && originalTxn.metadata !== null
+              ? originalTxn.metadata
+              : {};
+
+          await pocketbaseUpdate('transactions', originalTxnId, {
+            status: originalTxn.status === 'posted' ? 'waiting_refund' : originalTxn.status,
+            metadata: {
+              ...(originalMeta as Record<string, unknown>),
+              has_refund_request: true,
+              refund_status: 'requested',
+              refund_request_id: pbId,
+              refund_restored_at: new Date().toISOString(),
+            },
+          });
+        }
+      } catch (restoreRefundChainError) {
+        console.warn('[DB:PB] restoreTransaction refund chain restore skipped:', restoreRefundChainError);
+      }
+    }
+
+    // Sync restore to sheet
     if (existing?.person_id) {
        void syncTransactionToSheet(existing.person_id, {
          id: pbId,
@@ -305,19 +343,95 @@ export async function requestRefund(
     const existing = await pocketbaseGetById<any>('transactions', pbId);
     if (!existing) throw new Error('Transaction not found');
 
+    const existingMeta =
+      typeof existing.metadata === 'object' && existing.metadata !== null
+        ? existing.metadata
+        : {};
+
+    if (existingMeta.refund_request_id) {
+      return { success: true };
+    }
+
+    const refundAmount = Math.max(0, Math.abs(Number(amount || 0)));
+    if (refundAmount <= 0) {
+      return { success: false, error: 'Refund amount must be positive' };
+    }
+
+    const pendingRefundId = toPocketBaseId(
+      `${pbId}:refund:${Date.now()}:${Math.random()}`,
+      'transactions',
+    );
+    const shortId = (value: string | null | undefined) => String(value || '').slice(0, 6)
+    const gd1Tag = `[GD1|${shortId(pbId)}→${shortId(pendingRefundId)}]`
+    const gd2Tag = `[GD2|${shortId(pbId)}]`
+    const pendingRefundAccountId = toPocketBaseId(
+      REFUND_PENDING_ACCOUNT_ID,
+      'accounts',
+    );
+
+    const pendingMeta = {
+      original_transaction_id: pbId,
+      original_account_id: existing.account_id || null,
+      original_transaction_type: existing.type || null,
+      has_refund_request: true,
+      is_refund_confirmation: false,
+      refund_amount: refundAmount,
+      is_partial_refund: isPartial,
+      refund_requested_at: new Date().toISOString(),
+      refund_stage_tag: 'GD2',
+      refund_sequence: 2,
+      ...(existingMeta && typeof existingMeta === 'object' ? existingMeta : {}),
+    };
+
+    await pocketbaseCreate('transactions', {
+      id: pendingRefundId,
+      date: existing.date || existing.occurred_at || new Date().toISOString(),
+      occurred_at: existing.occurred_at || existing.date || new Date().toISOString(),
+      note: `${gd2Tag} Refund for: ${existing.note || existing.description || 'Order'}`,
+      description: `${gd2Tag} Refund for: ${existing.note || existing.description || 'Order'}`,
+      type: existing.type || 'expense',
+      status: 'pending',
+      amount: refundAmount,
+      final_price: refundAmount,
+      account_id: pendingRefundAccountId,
+      to_account_id: existing.account_id || null,
+      category_id: existing.category_id || null,
+      person_id: existing.person_id || null,
+      shop_id: existing.shop_id || null,
+      tag: existing.tag || null,
+      debt_cycle_tag: existing.debt_cycle_tag || existing.tag || null,
+      persisted_cycle_tag: existing.persisted_cycle_tag || null,
+      cashback_share_percent: 0,
+      cashback_share_fixed: 0,
+      cashback_mode: 'none_back',
+      metadata: pendingMeta,
+    });
+
     const updateData: any = {
       status: 'waiting_refund',
+      note:
+        typeof existing.note === 'string' && existing.note.startsWith('[GD1|')
+          ? existing.note
+          : `${gd1Tag} ${existing.note || existing.description || 'Order'}`,
       metadata: {
-        ...(typeof existing.metadata === 'object' ? existing.metadata : {}),
+        ...(existingMeta as Record<string, unknown>),
         has_refund_request: true,
-        refund_amount: amount,
+        refund_amount: refundAmount,
         is_partial_refund: isPartial,
-        refund_requested_at: new Date().toISOString()
+        refund_requested_at: new Date().toISOString(),
+        refund_request_id: pendingRefundId,
+        refund_status: 'requested',
+        refund_stage_tag: 'GD1',
+        refund_sequence: 1,
       }
     };
 
     await pocketbaseUpdate('transactions', pbId, updateData);
-    revalidatePath('/transactions');
+    try {
+      revalidatePath('/transactions');
+    } catch (revalidateError) {
+      console.warn('[DB:PB] requestRefund revalidate skipped:', revalidateError);
+    }
     return { success: true };
   } catch (error: any) {
     console.error('[DB:PB] requestRefund failed:', error);

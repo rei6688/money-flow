@@ -2,23 +2,19 @@ import Link from 'next/link'
 import Image from 'next/image'
 import { Card, CardContent } from '@/components/ui/card'
 import { ArrowRight, Database, AlertCircle, CheckCircle2, Clock } from 'lucide-react'
-import { getBatchSettingsAction } from '@/actions/batch-settings.actions'
 import { BankLinkWithLoading } from './bank-link-with-loading'
 import { BankSettingsSlideTrigger } from './bank-settings-slide'
-import { getBatchesByType } from '@/services/batch.service'
+import { getBatchesByType, getBatchSettings } from '@/services/batch.service'
 import { cn } from '@/lib/utils'
 
 export async function BankSelectionLanding() {
-    // Load settings and data
-    const [mbbResult, vibResult, mbbBatches, vibBatches] = await Promise.all([
-        getBatchSettingsAction('MBB'),
-        getBatchSettingsAction('VIB'),
+    // Load settings and data directly via service layer to avoid server-action prerender noise
+    const [mbbSetting, vibSetting, mbbBatches, vibBatches] = await Promise.all([
+        getBatchSettings('MBB').catch(() => null),
+        getBatchSettings('VIB').catch(() => null),
         getBatchesByType('MBB'),
         getBatchesByType('VIB')
     ])
-
-    const mbbSetting = (mbbResult as any).data
-    const vibSetting = (vibResult as any).data
 
     // Helper to calculate stats
     const calculateStats = (batches: any[]) => {

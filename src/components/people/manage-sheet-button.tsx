@@ -347,12 +347,34 @@ export function ManageSheetButton({
           body: JSON.stringify({ personId, cycleTag }),
         })
 
-        const data = (await res.json()) as ManageCycleSheetResponse
+        let data: ManageCycleSheetResponse | null = null
+        try {
+          data = (await res.json()) as ManageCycleSheetResponse
+        } catch {
+          data = null
+        }
 
         if (!res.ok || data?.error) {
           toast.dismiss(toastId)
           const errorMessage = data?.error ?? res.statusText
-          toast.error(errorMessage || 'Manage sheet failed')
+          const debugParts = [
+            data?.requestId ? `Req: ${data.requestId}` : null,
+            data?.stage ? `Stage: ${data.stage}` : null,
+          ].filter(Boolean)
+
+          toast.error(errorMessage || 'Manage sheet failed', {
+            description: debugParts.length > 0 ? debugParts.join(' | ') : undefined,
+          })
+
+          if (data?.requestId || data?.stage || data?.debugMessage) {
+            console.error('[ManageSheet] API failure', {
+              requestId: data?.requestId,
+              stage: data?.stage,
+              error: data?.error,
+              debugMessage: data?.debugMessage,
+              status: res.status,
+            })
+          }
           return
         }
 
@@ -387,6 +409,7 @@ export function ManageSheetButton({
       } catch (error) {
         toast.dismiss(toastId)
         toast.error('Manage sheet failed.')
+        console.error('[ManageSheet] unexpected client failure', error)
       } finally {
         if (setIsGlobalLoading) setIsGlobalLoading(false)
         if (setLoadingMessage) setLoadingMessage(null)

@@ -266,10 +266,7 @@ export function TransactionSlideV2({
         null;
       const normalizedInitialTag = isYYYYMM(String(candidateTag || "").trim())
         ? String(candidateTag).trim()
-        : calculatePersistedCycleTag(
-            occurredAt ? new Date(occurredAt) : new Date(),
-            undefined,
-          );
+        : generateTag(occurredAt ? new Date(occurredAt) : new Date());
       const values: SingleTransactionFormValues = {
         type,
         category_id: resolveCategoryId(initialData.category_id),
@@ -788,10 +785,7 @@ export function TransactionSlideV2({
                 person_id: txn.person_id || null,
                 tag: isYYYYMM(String(txn.tag || "").trim())
                   ? String(txn.tag).trim()
-                  : calculatePersistedCycleTag(
-                      new Date(txn.occurred_at),
-                      undefined,
-                    ),
+                  : generateTag(new Date(txn.occurred_at)),
                 cashback_mode: txn.cashback_mode || "none_back",
                 cashback_share_percent:
                   typeof txn.cashback_share_percent === "number"

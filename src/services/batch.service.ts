@@ -3,6 +3,7 @@ import { Database } from '@/types/database.types'
 import { addMonths } from 'date-fns'
 import { SYSTEM_ACCOUNTS, SYSTEM_CATEGORIES } from '@/lib/constants'
 import { isLegacyMMMYY, isYYYYMM, normalizeMonthTag, toLegacyMMMYYFromDate, toYYYYMMFromDate } from '@/lib/month-tag'
+import { pocketbaseList, toPocketBaseId } from '@/services/pocketbase/server'
 
 export type Batch = Database['public']['Tables']['batches']['Row']
 export type BatchItem = Database['public']['Tables']['batch_items']['Row']
@@ -332,7 +333,7 @@ export async function confirmBatchItem(itemId: string, targetAccountId?: string)
             type: 'transfer',
             is_installment: isInstallment,
             installment_plan_id: installmentPlanId,
-            metadata: { type: 'batch_funding', batch_id: item.batch_id, batch_item_id: item.id } as any
+            metadata: { type: 'batch_funding', batch_step: 'step3', batch_id: item.batch_id, batch_item_id: item.id } as any
         })
         .select()
         .single()
@@ -407,10 +408,48 @@ export async function revertBatchItem(transactionId: string) {
  * Used for "Confirm Money Received" feature on Account Cards
  */
 export async function getPendingBatchItemsByAccount(accountId: string) {
-    // Guard: PB accounts don't have batch items (Supabase-only feature)
     const isPB = accountId && accountId.length === 15
     if (isPB) {
-        return []
+        const loadAllBatchItems = async () => {
+            const perPage = 200
+            let page = 1
+            let totalPages = 1
+            const rows: any[] = []
+
+            do {
+                const resp = await pocketbaseList<any>('batch_items', {
+                    page,
+                    perPage,
+                })
+                rows.push(...(resp.items || []))
+                totalPages = Number(resp.totalPages || 1)
+                page += 1
+            } while (page <= totalPages)
+
+            return rows
+        }
+
+        const normalizedAccountId = toPocketBaseId(accountId, 'accounts')
+        // Query unfiltered list then filter in memory to avoid PB filter parser edge-cases.
+        const allItems = await loadAllBatchItems()
+
+        const filtered = allItems.filter((item: any) => {
+            const status = String(item?.status || '').toLowerCase()
+            const target = String(item?.target_account_id || '')
+            const hasTxn = Boolean(item?.transaction_id)
+            const amount = Number(item?.amount || 0)
+            const isPendingLike = status === 'pending' || status === 'draft'
+            return target === normalizedAccountId && isPendingLike && !hasTxn && amount > 0
+        })
+
+        return filtered.map((item: any) => ({
+            id: item.id,
+            amount: Number(item.amount || 0),
+            receiver_name: item.receiver_name || null,
+            note: item.note || null,
+            batch_id: item.batch_id,
+            batch: null,
+        }))
     }
 
     const supabase: any = createClient()
@@ -423,6 +462,84 @@ export async function getPendingBatchItemsByAccount(accountId: string) {
 
     if (error) throw error
     return data as any[]
+}
+
+export async function getPendingBatchItemsSummary(): Promise<Array<{
+    accountId: string
+    accountName: string | null
+    count: number
+    totalAmount: number
+}>> {
+    try {
+        const perPage = 200
+        let page = 1
+        let totalPages = 1
+        const allItems: any[] = []
+
+        do {
+            const resp = await pocketbaseList<any>('batch_items', {
+                page,
+                perPage,
+            })
+            allItems.push(...(resp.items || []))
+            totalPages = Number(resp.totalPages || 1)
+            page += 1
+        } while (page <= totalPages)
+
+        const summary = new Map<string, { accountId: string; accountName: string | null; count: number; totalAmount: number }>()
+        for (const item of allItems) {
+            const status = String(item?.status || '').toLowerCase()
+            const hasTxn = Boolean(item?.transaction_id)
+            const amount = Math.abs(Number(item?.amount || 0))
+            const isPendingLike = status === 'pending' || status === 'draft'
+            if (!isPendingLike || hasTxn || amount <= 0) continue
+
+            const accountId = String(item?.target_account_id || '').trim()
+            if (!accountId) continue
+
+            const prev = summary.get(accountId) || {
+                accountId,
+                accountName: null,
+                count: 0,
+                totalAmount: 0,
+            }
+            prev.count += 1
+            prev.totalAmount += amount
+            summary.set(accountId, prev)
+        }
+
+        return Array.from(summary.values())
+            .filter((row) => row.count > 0)
+            .sort((a, b) => b.count - a.count)
+    } catch {
+        const supabase: any = createClient()
+        const { data, error } = await supabase
+            .from('batch_items')
+            .select('target_account_id, amount, target_account:accounts(name)')
+            .eq('status', 'pending')
+
+        if (error) throw error
+
+        const summary = new Map<string, { accountId: string; accountName: string | null; count: number; totalAmount: number }>()
+        for (const item of data || []) {
+            const accountId = String(item?.target_account_id || '').trim()
+            if (!accountId) continue
+
+            const prev = summary.get(accountId) || {
+                accountId,
+                accountName: item?.target_account?.name || null,
+                count: 0,
+                totalAmount: 0,
+            }
+            prev.count += 1
+            prev.totalAmount += Math.abs(Number(item?.amount || 0))
+            summary.set(accountId, prev)
+        }
+
+        return Array.from(summary.values())
+            .filter((row) => row.count > 0)
+            .sort((a, b) => b.count - a.count)
+    }
 }
 
 /**
@@ -750,7 +867,7 @@ export async function fundBatch(batchId: string, overrideSourceAccountId?: strin
             }
         }
 
-        const metadata = { batch_id: batch.id, type: 'batch_funding_additional' }
+        const metadata = { batch_id: batch.id, type: 'batch_funding_additional', batch_step: 'step1' }
 
         const nameParts = batch.name.split(' ')
         const tag = nameParts[nameParts.length - 1]
@@ -804,7 +921,7 @@ export async function fundBatch(batchId: string, overrideSourceAccountId?: strin
     const nameParts = batch.name.split(' ')
     const rawTag = nameParts[nameParts.length - 1]
     const tag = normalizeMonthTag(rawTag) ?? rawTag
-    const metadata = { batch_id: batch.id, type: 'batch_funding' }
+    const metadata = { batch_id: batch.id, type: 'batch_funding', batch_step: 'step1' }
 
     // 4. Create Transaction [Single-Table Schema]
     const { data: txn, error: txnError } = await supabase

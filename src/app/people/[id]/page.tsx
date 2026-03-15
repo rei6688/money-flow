@@ -153,11 +153,12 @@ async function PeopleDetailContent({
 
   // Fetch transactions
   const transactions = isGroupProfile
-    ? await getTransactionsByPeople(groupPersonIds, 2000)
+    ? await getTransactionsByPeople(groupPersonIds, 2000, true)
     : await getUnifiedTransactions({
       personId: sourcePersonId,
       limit: 2000,
       context: 'person',
+      includeVoided: true,
     })
 
   const balance = person.balance ?? 0

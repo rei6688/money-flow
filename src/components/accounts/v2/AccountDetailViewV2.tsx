@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useCallback, useEffect, useState, useTransition, useMemo } from 'react'
+import React, { useCallback, useEffect, useState, useTransition, useMemo, useRef } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { toast } from 'sonner'
 import {
@@ -147,6 +147,7 @@ export function AccountDetailViewV2({
     const [pendingRefundAmount, setPendingRefundAmount] = useState(0)
     const [pendingRefundCount, setPendingRefundCount] = useState(0)
     const [isLoadingPending, setIsLoadingPending] = useState(true)
+    const pendingQueryOpenedRef = useRef(false)
 
     const summary = useMemo(() => {
         const targetYear = selectedYear ? parseInt(selectedYear) : (selectedCycle && selectedCycle !== 'all' ? parseInt(selectedCycle.split('-')[0]) : new Date().getFullYear());
@@ -396,6 +397,19 @@ export function AccountDetailViewV2({
 
     const pendingBatchAmount = pendingItems.reduce((sum, item) => sum + Math.abs(item.amount ?? 0), 0)
     const pendingTotal = pendingBatchAmount + pendingRefundAmount
+
+    useEffect(() => {
+        const wantsPendingModal = searchParams.get('pending') === '1'
+        if (!wantsPendingModal || isLoadingPending || pendingQueryOpenedRef.current) return
+
+        pendingQueryOpenedRef.current = true
+        const pendingCount = pendingItems.length + pendingRefundCount
+        if (pendingCount > 0) {
+            window.dispatchEvent(new CustomEvent('open-pending-items-modal', {
+                detail: { accountId: account.id },
+            }))
+        }
+    }, [searchParams, isLoadingPending, pendingItems.length, pendingRefundCount, account.id])
 
     return (
         <div className="flex flex-col h-full overflow-hidden bg-white relative">

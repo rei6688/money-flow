@@ -56,7 +56,7 @@ export default async function MemberDetailsPage({ params }: { params: Promise<{ 
 
     // Fetch transactions
     const transactions = isGroupProfile
-        ? await getTransactionsByPeople(groupPersonIds, 1000)
+        ? await getTransactionsByPeople(groupPersonIds, 1000, true)
         : await getUnifiedTransactions({
             personId: person.id,
             context: 'person',

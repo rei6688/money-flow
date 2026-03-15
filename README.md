@@ -2,6 +2,22 @@
 
 Money Flow 3 is a comprehensive personal finance application focused on transaction management, debt tracking, and spending analytics.
 
+## Update 2026-03-15
+- Batch phase sync UX fixed (`Sync Master` + immediate checklist refresh on active phase).
+- People cycle sheet sync hardened for stale PocketBase linked account references.
+- Debt cycle tagged repayment allocation improved for custom tags.
+- Flow badges in unified transaction table aligned consistently.
+
+### Next-Agent Plan Pack (read first)
+- `docs/handovers/HANDOVER_2026-03-15_BATCH_DEBT_SYNC_AND_NEXT_AGENT.md`
+- `docs/plans/INSTALLMENT_DB_AUDIT_PLAN_2026-03-15.md`
+- `docs/plans/SERVICE_CRON_RESEARCH_PLAN_2026-03-15.md`
+- `docs/plans/BOT_QA_REFACTOR_PLAN_2026-03-15.md`
+
+### Branch naming rule (mandatory)
+- New working branches must include `ddmmyyyy`.
+- Pattern: `agent/<scope>-<ddmmyyyy>-<short-task>`.
+
 ## Tech Stack
 - **Framework:** Next.js 15 (App Router)
 - **Language:** TypeScript
@@ -29,6 +45,9 @@ Money Flow 3 is a comprehensive personal finance application focused on transact
 - [People + Sheet Config + Cycle UX Handover](./docs/handovers/PHASE_PEOPLE_SHEET_HANDOVER_2026-03-11.md)
 - Contains: progress report, unresolved issues, migration gaps (Supabase vs PocketBase), next-agent priority plan.
 - Branch handover (current work): [fix-people-account-ui-cleanup](./.agent/context/fix-people-account-ui-cleanup.md)
+
+### 🔄 Latest Hot Handover (Mar 15, 2026)
+- [Batch + Debt Sync + Next Agent Roadmap](./docs/handovers/HANDOVER_2026-03-15_BATCH_DEBT_SYNC_AND_NEXT_AGENT.md)
 
 ### 🤖 For AI Agents (MANDATORY)
 1. **[MASTER_CONTEXT_LOAD.md](./.agent/prompts/MASTER_CONTEXT_LOAD.md)**: Run this first to initialize your session with full repo context.

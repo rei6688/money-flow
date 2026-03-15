@@ -422,7 +422,7 @@ export function UnifiedTransactionsPage({
         }
     }
 
-    const handleModeChange = (mode: 'month' | 'range' | 'date' | 'all' | 'year') => {
+    const handleModeChange = (mode: 'month' | 'range' | 'date' | 'all' | 'year' | 'cycle') => {
         setDateMode(mode)
         if (mode === 'all') {
             setDateRange(undefined)
@@ -529,8 +529,10 @@ export function UnifiedTransactionsPage({
             if (statusFilter === 'void' && t.status !== 'void') return false
             if (statusFilter === 'pending') {
                 const isPendingRefund = t.account_id === REFUND_PENDING_ACCOUNT_ID;
+                const isPendingRefundByName =
+                    String(t.account_name || '').toLowerCase() === 'pending refunds (system)'.toLowerCase();
                 const isSystemPending = t.status === 'pending';
-                if (!isPendingRefund && !isSystemPending) return false;
+                if (!isPendingRefund && !isPendingRefundByName && !isSystemPending) return false;
             }
 
             // 1. Date Filter
@@ -572,20 +574,31 @@ export function UnifiedTransactionsPage({
 
             // 5. Search
             if (search) {
+                const metadataMatch = (() => {
+                    try {
+                        const m = (typeof t.metadata === 'string' ? JSON.parse(t.metadata) : t.metadata) as any;
+                        const linkedIds = [
+                            m?.duplicated_from_id,
+                            m?.original_transaction_id,
+                            m?.refund_request_id,
+                            m?.refund_confirmation_id,
+                            m?.confirmation_transaction_id,
+                        ]
+                            .filter((value): value is string => typeof value === 'string' && value.length > 0)
+                            .map(value => value.toLowerCase());
+                        return linkedIds.some(value => value.includes(lowerSearch));
+                    } catch {
+                        return false;
+                    }
+                })();
+
                 const match =
                     t.note?.toLowerCase().includes(lowerSearch) ||
                     t.shop_name?.toLowerCase().includes(lowerSearch) ||
                     t.category_name?.toLowerCase().includes(lowerSearch) ||
                     String(t.amount).includes(lowerSearch) ||
                     t.id.toLowerCase().includes(lowerSearch) ||
-                    (() => {
-                        try {
-                            const m = (typeof t.metadata === 'string' ? JSON.parse(t.metadata) : t.metadata) as any;
-                            return m?.duplicated_from_id && String(m.duplicated_from_id).toLowerCase().includes(lowerSearch);
-                        } catch {
-                            return false;
-                        }
-                    })() ||
+                    metadataMatch ||
                     getTransactionAccountIds(t).some((accId) => matchedAccountIds.includes(accId)) ||
                     (t.person_id && matchedPersonIds.includes(t.person_id))
 
@@ -953,6 +966,7 @@ export function UnifiedTransactionsPage({
                 <UnifiedTransactionTable
                     ref={tableRef}
                     transactions={filteredTransactions}
+                    activeTab={statusFilter}
                     accounts={accounts}
                     categories={categories}
                     people={people}

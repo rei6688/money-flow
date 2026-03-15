@@ -35,6 +35,7 @@ type PocketBaseTransaction = {
   cashback_amount: number;
   status?: string;
   tag?: string;
+  persisted_cycle_tag?: string | null;
   debt_cycle_tag?: string;
   statement_cycle_tag?: string;
   is_installment: boolean;

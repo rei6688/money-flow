@@ -36,6 +36,7 @@ async function trySyncPeopleSheet(
     occurred_at?: string | null;
     note?: string | null;
     tag?: string | null;
+    shop_id?: string | null;
     amount?: number | null;
     original_amount?: number | null;
     cashback_share_percent?: number | null;
@@ -64,10 +65,15 @@ export async function loadAccountTransactionsV2(accountId: string, limit = 2000)
   return loadPocketBaseTransactionsForAccount(accountId, limit);
 }
 
-export async function getTransactionsByPeople(personIds: string[], limit = 2000) {
+export async function getTransactionsByPeople(
+  personIds: string[],
+  limit = 2000,
+  includeVoided = false,
+) {
   return loadTransactions({
     personIds,
-    limit
+    limit,
+    includeVoided,
   });
 }
 
@@ -277,6 +283,10 @@ async function logHistory(
 ) {
   try {
     const pbTxnId = toPocketBaseId(transactionId, 'transactions');
+    const historyId = toPocketBaseId(
+      `${pbTxnId}:${changeType}:${Date.now()}:${Math.random()}`,
+      'txnh',
+    );
     const compactSnapshot = {
       id: snapshot?.id ?? pbTxnId,
       occurred_at: snapshot?.occurred_at ?? snapshot?.date ?? null,
@@ -306,6 +316,7 @@ async function logHistory(
     };
 
     await pocketbaseCreate('transaction_history', {
+      id: historyId,
       transaction_id: pbTxnId,
       change_type: changeType,
       snapshot_before: compactSnapshot,
@@ -534,6 +545,7 @@ export async function createTransaction(input: CreateTransactionInput): Promise<
           occurred_at: normalized.occurred_at,
           note: normalized.note ?? null,
           tag: normalized.tag ?? normalized.debt_cycle_tag ?? null,
+          shop_id: normalized.shop_id ?? null,
           amount: Math.abs(normalized.amount ?? 0),
           original_amount: Math.abs(normalized.amount ?? 0),
           cashback_share_percent: normalized.cashback_share_percent ?? null,
@@ -562,6 +574,17 @@ export async function updateTransaction(id: string, input: CreateTransactionInpu
 
     const normalized = await normalizeInput(input);
     await logHistory(pbId, "edit", existing);
+
+    const mergedMetadata = {
+      ...(typeof existing.metadata === 'object' && existing.metadata !== null
+        ? existing.metadata
+        : {}),
+      ...(typeof normalized.metadata === 'object' && normalized.metadata !== null
+        ? normalized.metadata
+        : {}),
+      is_edited: true,
+      edited_at: new Date().toISOString(),
+    };
     
     await pocketbaseUpdate('transactions', pbId, {
       ...normalized,
@@ -570,6 +593,7 @@ export async function updateTransaction(id: string, input: CreateTransactionInpu
       description: normalized.note || '',
       note: normalized.note || '',
       final_price: normalized.amount,
+      metadata: mergedMetadata,
     });
 
     const affectedAccounts = new Set<string>();
@@ -607,6 +631,7 @@ export async function updateTransaction(id: string, input: CreateTransactionInpu
           occurred_at: normalized.occurred_at,
           note: normalized.note ?? null,
           tag: newTag,
+          shop_id: normalized.shop_id ?? null,
           amount: Math.abs(normalized.amount ?? 0),
           original_amount: Math.abs(normalized.amount ?? 0),
           cashback_share_percent: normalized.cashback_share_percent ?? null,
@@ -635,12 +660,128 @@ export async function voidTransaction(id: string): Promise<boolean> {
     const existing = await pocketbaseGetById<any>('transactions', pbId);
     if (!existing) return false;
 
+    const existingMeta =
+      typeof existing.metadata === 'object' && existing.metadata !== null
+        ? existing.metadata
+        : {};
+    const originalTxnId =
+      typeof (existingMeta as Record<string, unknown>).original_transaction_id === 'string'
+        ? ((existingMeta as Record<string, unknown>).original_transaction_id as string)
+        : null;
+    const refundRequestTxnId =
+      typeof (existingMeta as Record<string, unknown>).refund_request_id === 'string'
+        ? ((existingMeta as Record<string, unknown>).refund_request_id as string)
+        : null;
+    const isRefundConfirmationTxn =
+      (existingMeta as Record<string, unknown>).is_refund_confirmation === true;
+    const isRefundRequestTxn =
+      Boolean(originalTxnId) && (existingMeta as Record<string, unknown>).is_refund_confirmation !== true;
+
     await logHistory(pbId, "void", existing);
-    await pocketbaseUpdate('transactions', pbId, { status: 'void' });
+    await pocketbaseUpdate('transactions', pbId, {
+      status: 'void',
+      metadata: {
+        ...(existingMeta as Record<string, unknown>),
+        refund_status: 'void',
+        voided_at: new Date().toISOString(),
+      },
+    });
+
+    if (isRefundRequestTxn && originalTxnId) {
+      try {
+        const originalTxn = await pocketbaseGetById<any>('transactions', originalTxnId);
+        if (originalTxn) {
+          const originalMeta =
+            typeof originalTxn.metadata === 'object' && originalTxn.metadata !== null
+              ? originalTxn.metadata
+              : {};
+
+          const linkedRefundRequestId =
+            typeof (originalMeta as Record<string, unknown>).refund_request_id === 'string'
+              ? ((originalMeta as Record<string, unknown>).refund_request_id as string)
+              : null;
+          const shouldRollbackOriginal = linkedRefundRequestId === pbId;
+
+          if (shouldRollbackOriginal) {
+            await pocketbaseUpdate('transactions', originalTxnId, {
+              status: originalTxn.status === 'waiting_refund' ? 'posted' : originalTxn.status,
+              metadata: {
+                ...(originalMeta as Record<string, unknown>),
+                has_refund_request: false,
+                refund_status: 'request_voided',
+                refund_request_id: null,
+                refund_request_voided_at: new Date().toISOString(),
+              },
+            });
+          }
+        }
+      } catch (refundRollbackError) {
+        console.warn('[DB:PB] voidTransaction refund rollback skipped:', refundRollbackError);
+      }
+    }
+
+    if (isRefundConfirmationTxn) {
+      try {
+        if (refundRequestTxnId) {
+          const refundRequestTxn = await pocketbaseGetById<any>('transactions', refundRequestTxnId);
+          if (refundRequestTxn) {
+            const refundRequestMeta =
+              typeof refundRequestTxn.metadata === 'object' && refundRequestTxn.metadata !== null
+                ? refundRequestTxn.metadata
+                : {};
+
+            await pocketbaseUpdate('transactions', refundRequestTxnId, {
+              status: 'pending',
+              metadata: {
+                ...(refundRequestMeta as Record<string, unknown>),
+                is_refund_confirmation: false,
+                refund_status: 'requested',
+                confirmation_transaction_id: null,
+                refund_confirmed_at: null,
+              },
+            });
+          }
+        }
+
+        if (originalTxnId) {
+          const originalTxn = await pocketbaseGetById<any>('transactions', originalTxnId);
+          if (originalTxn) {
+            const originalMeta =
+              typeof originalTxn.metadata === 'object' && originalTxn.metadata !== null
+                ? originalTxn.metadata
+                : {};
+
+            await pocketbaseUpdate('transactions', originalTxnId, {
+              status: originalTxn.status === 'void' ? 'void' : 'waiting_refund',
+              metadata: {
+                ...(originalMeta as Record<string, unknown>),
+                has_refund_request: true,
+                refund_status: 'requested',
+                refund_request_id: refundRequestTxnId || (typeof (originalMeta as Record<string, unknown>).refund_request_id === 'string'
+                  ? ((originalMeta as Record<string, unknown>).refund_request_id as string)
+                  : null),
+                refund_confirmation_id: null,
+                refund_confirmed_at: null,
+              },
+            });
+          }
+        }
+      } catch (refundReopenError) {
+        console.warn('[DB:PB] voidTransaction confirmation rollback skipped:', refundReopenError);
+      }
+    }
 
     const affectedAccounts = new Set<string>();
     affectedAccounts.add(existing.account_id);
     if (existing.target_account_id) affectedAccounts.add(existing.target_account_id);
+    if (originalTxnId) {
+      try {
+        const originalTxn = await pocketbaseGetById<any>('transactions', originalTxnId);
+        if (originalTxn?.account_id) affectedAccounts.add(originalTxn.account_id);
+      } catch {
+        // no-op
+      }
+    }
     await recalcForAccounts(affectedAccounts);
 
     await trySyncPeopleSheet(
@@ -755,22 +896,104 @@ export async function confirmRefund(
     const existing = await pocketbaseGetById<any>('transactions', pbTxnId);
     if (!existing) return { success: false, error: 'Transaction not found' };
 
-    // Update the transaction status and account
+    const existingMeta =
+      typeof existing.metadata === 'object' && existing.metadata !== null
+        ? existing.metadata
+        : {};
+
+    const originalTxnId =
+      typeof existingMeta.original_transaction_id === 'string'
+        ? existingMeta.original_transaction_id
+        : null;
+
+    const confirmationTxnId = toPocketBaseId(
+      `${pbTxnId}:refund:confirm:${Date.now()}:${Math.random()}`,
+      'transactions',
+    );
+    const shortId = (value: string | null | undefined) => String(value || '').slice(0, 6)
+    const gd3Tag = `[GD3|${shortId(originalTxnId || pbTxnId)}]`
+
+    // TXN3: explicit refund confirmation transaction
+    await pocketbaseCreate('transactions', {
+      id: confirmationTxnId,
+      date: existing.date || existing.occurred_at || new Date().toISOString(),
+      occurred_at: existing.occurred_at || existing.date || new Date().toISOString(),
+      note: `${gd3Tag} Refund received: ${existing.note || 'Refund'}`,
+      description: `${gd3Tag} Refund received: ${existing.note || 'Refund'}`,
+      type: existing.type || 'income',
+      status: 'completed',
+      amount: Math.abs(Number(existing.amount || 0)),
+      final_price: Math.abs(Number(existing.amount || 0)),
+      account_id: pbAccId,
+      to_account_id: existing.account_id || null,
+      category_id: existing.category_id || null,
+      person_id: existing.person_id || null,
+      shop_id: existing.shop_id || null,
+      tag: existing.tag || null,
+      debt_cycle_tag: existing.debt_cycle_tag || existing.tag || null,
+      persisted_cycle_tag: existing.persisted_cycle_tag || null,
+      cashback_share_percent: 0,
+      cashback_share_fixed: 0,
+      cashback_mode: 'none_back',
+      metadata: {
+        ...(existingMeta as Record<string, unknown>),
+        original_transaction_id: originalTxnId,
+        refund_request_id: pbTxnId,
+        is_refund_confirmation: true,
+        refund_confirmed_at: new Date().toISOString(),
+        refund_stage_tag: 'GD3',
+        refund_sequence: 3,
+      },
+    });
+
+    // TXN2: pending refund request remains as its own transaction, now completed
     await pocketbaseUpdate('transactions', pbTxnId, {
       status: 'completed',
-      account_id: pbAccId,
       metadata: {
-        ...(typeof existing.metadata === 'object' ? existing.metadata : {}),
-        refund_confirmed_at: new Date().toISOString()
+        ...(existingMeta as Record<string, unknown>),
+        is_refund_confirmation: false,
+        refund_status: 'completed',
+        refund_confirmed_at: new Date().toISOString(),
+        confirmation_transaction_id: confirmationTxnId,
       }
     });
+
+    // TXN1: original transaction keeps canonical chain status
+    if (originalTxnId) {
+      try {
+        const originalTxn = await pocketbaseGetById<any>('transactions', originalTxnId);
+        const originalMeta =
+          typeof originalTxn?.metadata === 'object' && originalTxn.metadata !== null
+            ? originalTxn.metadata
+            : {};
+
+        await pocketbaseUpdate('transactions', originalTxnId, {
+          status: 'refunded',
+          metadata: {
+            ...(originalMeta as Record<string, unknown>),
+            has_refund_request: true,
+            refund_status: 'completed',
+            refund_request_id: pbTxnId,
+            refund_confirmation_id: confirmationTxnId,
+            refund_confirmed_at: new Date().toISOString(),
+          },
+        });
+      } catch (originalUpdateError) {
+        console.warn('[DB:PB] confirmRefund original update skipped:', originalUpdateError);
+      }
+    }
 
     const affectedAccounts = new Set<string>();
     affectedAccounts.add(existing.account_id);
     affectedAccounts.add(pbAccId);
     await recalcForAccounts(affectedAccounts);
 
-    revalidatePath("/transactions");
+    try {
+      revalidatePath("/transactions");
+    } catch (revalidateError) {
+      console.warn('[DB:PB] confirmRefund revalidate skipped:', revalidateError);
+    }
+
     return { success: true };
   } catch (error: any) {
     console.error("[DB:PB] confirmRefund failed:", error);
