@@ -2,6 +2,7 @@
 
 import { pocketbaseCreate, pocketbaseUpdate, pocketbaseDelete, pocketbaseList, toPocketBaseId } from '@/services/pocketbase/server'
 import { revalidatePath } from 'next/cache'
+import { syncTransactionToSheet } from '@/services/sheet.service'
 
 /**
  * Handles batch debt repayment.
@@ -30,7 +31,7 @@ export async function repayBatchDebt(
             type: 'income',
             account_id: pbBankAccountId,
             amount: Math.abs(totalAmount),
-            person_id: '', // Using empty string for null in PB if needed
+            person_id: null,
             metadata: {
                 is_debt_repayment_parent: true,
                 original_person_id: pbPersonId
@@ -49,8 +50,8 @@ export async function repayBatchDebt(
                 date: new Date().toISOString(),
                 note: `Allocated Repayment for ${tag}`,
                 description: `Allocated Repayment for ${tag}`,
-                type: 'income',
-                account_id: '', // Virtual transaction
+                type: 'repayment',
+                account_id: pbBankAccountId,
                 person_id: pbPersonId,
                 amount: Math.abs(amount),
                 tag: tag,
@@ -73,11 +74,11 @@ export async function repayBatchDebt(
                 date: new Date().toISOString(),
                 note: `Unallocated Repayment (Excess)`,
                 description: `Unallocated Repayment (Excess)`,
-                type: 'income',
-                account_id: '',
+                type: 'repayment',
+                account_id: pbBankAccountId,
                 person_id: pbPersonId,
                 amount: excess,
-                tag: '',
+                tag: null,
                 linked_transaction_id: parent.id,
                 status: 'posted',
                 metadata: {
@@ -94,6 +95,17 @@ export async function repayBatchDebt(
             for (const child of childrenToInsert) {
                 const created = await pocketbaseCreate<any>('transactions', child);
                 createdChildren.push(created);
+
+                await syncTransactionToSheet(pbPersonId, {
+                    id: created.id,
+                    occurred_at: created.occurred_at,
+                    note: created.note,
+                    tag: created.tag || null,
+                    amount: Math.abs(Number(created.amount || 0)),
+                    original_amount: Math.abs(Number(created.amount || 0)),
+                    type: created.type,
+                    status: created.status || 'posted',
+                } as any, 'create');
             }
         } catch (childError) {
             console.error("[DB:PB] Child Creation Error:", childError);

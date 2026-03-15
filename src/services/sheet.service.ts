@@ -358,14 +358,22 @@ export async function syncTransactionToSheet(
 
     let resolvedBankInfo = manualBankInfo
     if (showBankAccount && linkedBankId) {
-      const acc = await pocketbaseGetById<Account>('accounts', linkedBankId)
-      if (acc) {
-        const parts = [
-          acc.name,
-          acc.account_number,
-          acc.receiver_name
-        ].filter(Boolean)
-        resolvedBankInfo = parts.join(' ') || manualBankInfo
+      try {
+        const acc = await pocketbaseGetById<Account>('accounts', linkedBankId)
+        if (acc) {
+          const parts = [
+            acc.name,
+            acc.account_number,
+            acc.receiver_name
+          ].filter(Boolean)
+          resolvedBankInfo = parts.join(' ') || manualBankInfo
+        }
+      } catch (error) {
+        console.warn('[syncTransactionToSheet] linked bank account lookup failed, fallback to manual bank info', {
+          personId,
+          linkedBankId,
+          error: (error as any)?.message,
+        })
       }
     }
 
@@ -470,14 +478,22 @@ export async function syncAllTransactions(personId: string) {
 
     let resolvedBankInfo = manualBankInfo
     if (showBankAccount && linkedBankId) {
-      const acc = await pocketbaseGetById<Account>('accounts', linkedBankId)
-      if (acc) {
-        const parts = [
-          acc.name,
-          acc.account_number,
-          acc.receiver_name
-        ].filter(Boolean)
-        resolvedBankInfo = parts.join(' ') || manualBankInfo
+      try {
+        const acc = await pocketbaseGetById<Account>('accounts', linkedBankId)
+        if (acc) {
+          const parts = [
+            acc.name,
+            acc.account_number,
+            acc.receiver_name
+          ].filter(Boolean)
+          resolvedBankInfo = parts.join(' ') || manualBankInfo
+        }
+      } catch (error) {
+        console.warn('[syncAllTransactions] linked bank account lookup failed, fallback to manual bank info', {
+          personId,
+          linkedBankId,
+          error: (error as any)?.message,
+        })
       }
     }
 
@@ -816,14 +832,22 @@ export async function syncCycleTransactions(
 
     let resolvedBankInfo = manualBankInfo
     if (showBankAccount && linkedBankId) {
-      const acc = await pocketbaseGetById<Account>('accounts', linkedBankId)
-      if (acc) {
-        const parts = [
-          acc.name,
-          acc.account_number,
-          acc.receiver_name
-        ].filter(Boolean)
-        resolvedBankInfo = parts.join(' ') || manualBankInfo
+      try {
+        const acc = await pocketbaseGetById<Account>('accounts', linkedBankId)
+        if (acc) {
+          const parts = [
+            acc.name,
+            acc.account_number,
+            acc.receiver_name
+          ].filter(Boolean)
+          resolvedBankInfo = parts.join(' ') || manualBankInfo
+        }
+      } catch (error) {
+        console.warn('[syncCycleTransactions] linked bank account lookup failed, fallback to manual bank info', {
+          personId,
+          linkedBankId,
+          error: (error as any)?.message,
+        })
       }
     }
 

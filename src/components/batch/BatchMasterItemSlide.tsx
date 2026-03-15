@@ -37,6 +37,7 @@ interface BatchMasterItemSlideProps {
     onOpenChange: (open: boolean) => void
     bankType: 'MBB' | 'VIB'
     accounts: any[]
+    categories?: any[]
     bankMappings: any[]
     item?: any // For edit mode
     onSuccess?: () => void
@@ -48,6 +49,7 @@ export function BatchMasterItemSlide({
     onOpenChange,
     bankType,
     accounts,
+    categories = [],
     bankMappings,
     item,
     onSuccess,
@@ -608,6 +610,7 @@ export function BatchMasterItemSlide({
                     onOpenChange={setIsAccountSlideOpen}
                     account={selectedAccountForEdit}
                     allAccounts={accounts}
+                    categories={categories}
                     onBack={() => setIsAccountSlideOpen(false)}
                 />
             </div>

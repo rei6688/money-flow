@@ -3,6 +3,7 @@ export const dynamic = 'force-dynamic'
 import { getPocketBaseAccounts } from '@/services/pocketbase/account-details.service'
 import { getBankMappings } from '@/services/bank.service'
 import { getSheetWebhookLinks } from '@/services/webhook-link.service'
+import { getCategories } from '@/services/category.service'
 import { BatchPageClientV2 } from '@/components/batch/batch-page-client-v2'
 import { pocketbaseList } from '@/services/pocketbase/server'
 
@@ -75,6 +76,7 @@ export default async function VIBBatchPage(props: {
     }
 
     const accounts = await getPocketBaseAccounts()
+    const categories = await getCategories()
     const bankMappings = await getBankMappings(bankType)
     const webhookLinks = await getSheetWebhookLinks()
     const { getAccountsWithActiveInstallments } = await import('@/services/installment.service')
@@ -85,6 +87,7 @@ export default async function VIBBatchPage(props: {
             <BatchPageClientV2
                 batches={batches}
                 accounts={accounts}
+                categories={categories}
                 bankMappings={bankMappings}
                 webhookLinks={webhookLinks}
                 bankType={bankType}

@@ -1,5 +1,14 @@
 # 🚀 START HERE - Agent Onboarding Prompt
 
+## Update 2026-03-15
+- Latest handover: `docs/handovers/HANDOVER_2026-03-15_BATCH_DEBT_SYNC_AND_NEXT_AGENT.md`
+- Next priorities: Installment -> Service/Cron -> Bot Q&A.
+- Branch naming is mandatory with `ddmmyyyy`: `agent/<scope>-<ddmmyyyy>-<short-task>`.
+- Plan pack:
+   - `docs/plans/INSTALLMENT_DB_AUDIT_PLAN_2026-03-15.md`
+   - `docs/plans/SERVICE_CRON_RESEARCH_PLAN_2026-03-15.md`
+   - `docs/plans/BOT_QA_REFACTOR_PLAN_2026-03-15.md`
+
 ## Phase: Transaction Table Flow Column - Critical Issues Resolution
 
 ### Your First Task (READ BEFORE CODING)

@@ -57,6 +57,12 @@ function resolveBaseType(type: TransactionType | null | undefined): 'income' | '
   return 'expense'
 }
 
+function canonicalDebtTag(value: unknown): string | null {
+  const raw = String(value ?? '').trim()
+  if (!raw) return null
+  return normalizeMonthTag(raw) || raw
+}
+
 /**
  * Calculate final price (amount after cashback deduction)
  * Final Price = Amount - Cashback
@@ -291,7 +297,7 @@ export async function getDebtByTags(personId: string): Promise<DebtByTagAggregat
   for (const repay of repaymentList) {
     if (repay.amount <= 0.01) continue;
 
-    const repayTag = normalizeMonthTag(repay.metadata?.tag || repay.tag);
+    const repayTag = canonicalDebtTag(repay.metadata?.tag || repay.tag);
 
     if (repayTag) {
       // Find debts with matching tag (Oldest First)
@@ -299,7 +305,7 @@ export async function getDebtByTags(personId: string): Promise<DebtByTagAggregat
         const entry = debtsMap.get(debt.id)!;
         if (entry.remaining <= 0.01) continue;
 
-        const debtTag = normalizeMonthTag(debt.tag);
+        const debtTag = canonicalDebtTag(debt.tag);
         if (debtTag === repayTag) {
           const pay = Math.min(repay.amount, entry.remaining);
 
@@ -326,8 +332,8 @@ export async function getDebtByTags(personId: string): Promise<DebtByTagAggregat
 
   const generalQueue = repaymentList.filter(r => {
     if (r.amount <= 0.01) return false;
-    const tag = normalizeMonthTag(r.metadata?.tag || r.tag);
-    return !tag; // Only include untagged repayments
+    const tag = canonicalDebtTag(r.metadata?.tag || r.tag);
+    return !tag; // Only include truly untagged repayments
   });
 
   for (const debt of debtsList) {

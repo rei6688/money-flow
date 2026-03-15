@@ -27,6 +27,7 @@ interface BatchMasterChecklistProps {
     period?: 'before' | 'after'
     monthYear?: string
     initialPhaseId?: string | null
+    refreshNonce?: number
     onPhaseChange?: (phaseId: string) => void
 }
 
@@ -37,6 +38,7 @@ export function BatchMasterChecklist({
     period,
     monthYear,
     initialPhaseId = null,
+    refreshNonce = 0,
     onPhaseChange,
 }: BatchMasterChecklistProps) {
     const currentYear = new Date().getFullYear()
@@ -129,6 +131,11 @@ export function BatchMasterChecklist({
     useEffect(() => {
         refreshChecklist()
     }, [selectedMonth, masterItems, batches, phases])
+
+    useEffect(() => {
+        if (!loadedOnce.current) return
+        handleFastRefresh()
+    }, [refreshNonce])
 
     async function loadData() {
         setLoading(true)

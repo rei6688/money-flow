@@ -18,6 +18,7 @@ import { Combobox } from '@/components/ui/combobox'
 interface BatchPageClientV2Props {
     batches: any[]
     accounts: any[]
+    categories?: any[]
     bankMappings: any[]
     webhookLinks: any[]
     bankType: string
@@ -33,6 +34,7 @@ interface BatchPageClientV2Props {
 export function BatchPageClientV2({
     batches,
     accounts,
+    categories = [],
     bankMappings,
     webhookLinks,
     bankType,
@@ -52,6 +54,7 @@ export function BatchPageClientV2({
     const [activeTab, setActiveTab] = useState<'active' | 'archived'>('active')
     const [isSyncingMaster, setIsSyncingMaster] = useState(false)
     const [loadingMonth, setLoadingMonth] = useState<string | null>(null)
+    const [checklistRefreshNonce, setChecklistRefreshNonce] = useState(0)
 
     const searchParams = useSearchParams()
     const selectedMonthParam = searchParams.get('month')
@@ -177,6 +180,7 @@ export function BatchPageClientV2({
             })
             if (result.success) {
                 toast.success(`Synced ${result.initializedCount ?? 0} items`)
+                setChecklistRefreshNonce((prev) => prev + 1)
                 router.refresh()
             } else {
                 toast.error('Sync failed')
@@ -268,7 +272,7 @@ export function BatchPageClientV2({
                                     className="h-10 px-3 rounded-xl border-slate-200 hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-600 font-black text-[9px] uppercase tracking-widest gap-2 shrink-0"
                                 >
                                     {isSyncingMaster ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5 text-slate-400" />}
-                                    <span>Sync</span>
+                                    <span>Sync Master</span>
                                 </Button>
                                 <div className="w-[130px] shrink-0">
                                     <Combobox
@@ -362,6 +366,7 @@ export function BatchPageClientV2({
                                     bankMappings={bankMappings}
                                     monthYear={currentMonth || ''}
                                     initialPhaseId={currentPhaseId}
+                                    refreshNonce={checklistRefreshNonce}
                                     onPhaseChange={(phaseId) => {
                                         const nextPhase = effectivePhases.find((phase: any) => phase.id === phaseId)
                                         if (!nextPhase || !currentMonth) return
@@ -397,6 +402,7 @@ export function BatchPageClientV2({
                 onOpenChange={setTemplateOpen}
                 bankType={bankType as any}
                 accounts={accounts}
+                categories={categories}
                 bankMappings={bankMappings}
             />
         </div >

@@ -15,11 +15,12 @@ import { BatchMasterItemSlide } from './BatchMasterItemSlide'
 interface BatchMasterManagerProps {
     bankType: 'MBB' | 'VIB'
     accounts: any[]
+    categories?: any[]
     bankMappings: any[]
     phasesOverride?: any[]
 }
 
-export function BatchMasterManager({ bankType, accounts, bankMappings, phasesOverride }: BatchMasterManagerProps) {
+export function BatchMasterManager({ bankType, accounts, categories = [], bankMappings, phasesOverride }: BatchMasterManagerProps) {
     const [items, setItems] = useState<any[]>([])
     const [phases, setPhases] = useState<any[]>([])
     const [loading, setLoading] = useState(true)
@@ -233,6 +234,7 @@ export function BatchMasterManager({ bankType, accounts, bankMappings, phasesOve
                 onOpenChange={setIsSlideOpen}
                 bankType={bankType}
                 accounts={accounts}
+                categories={categories}
                 bankMappings={bankMappings}
                 item={selectedItem}
                 onSuccess={loadItems}

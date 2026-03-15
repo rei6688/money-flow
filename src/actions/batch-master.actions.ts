@@ -18,6 +18,7 @@ function normalizeMasterPayload(item: Partial<BatchMasterItem>, id: string) {
     return {
         ...item,
         id,
+        is_active: item.is_active ?? true,
         target_account_id: item.target_account_id || null,
         category_id: item.category_id || null,
         phase_id: item.phase_id || null,

@@ -3779,26 +3779,17 @@ export const UnifiedTransactionTable = React.forwardRef<
                               // Determine WHICH entity to show
                               let entityToShow: "source" | "person" | "dest" =
                                 "source";
-                              let flowBadgeType: "FROM" | "TO" | null = null; // New variable
 
                               if (isSourceContext) {
                                 // Viewing Account. Show where money went/came from.
                                 entityToShow = hasPerson ? "person" : "dest";
-                                // If account received money (income/repayment), it came FROM the other side.
-                                flowBadgeType =
-                                  visualType === "income" ? "FROM" : "TO";
                               } else if (isDestContext || isPersonContext) {
                                 // Viewing Person/Target. Show the Source Account involved.
                                 entityToShow = "source";
-                                // If account received money (income/repayment), money went TO the account.
-                                flowBadgeType =
-                                  visualType === "income" ? "TO" : "FROM";
                               } else {
                                 // Default if somehow showSingleFlow is true but context not matched
                                 // (e.g. general view for simple single transactions)
                                 entityToShow = "dest";
-                                flowBadgeType =
-                                  visualType === "income" ? "FROM" : "TO";
                               }
 
                               let displayName = sourceName;
@@ -3875,31 +3866,13 @@ export const UnifiedTransactionTable = React.forwardRef<
                                   {borderedTypeIconWide}
 
                                   <div className="flex-1 min-w-0 h-9 px-1.5 py-1 rounded-md bg-slate-50 border border-slate-200 flex items-center gap-2 cursor-pointer hover:bg-slate-100 transition-colors group/pill shadow-sm">
-                                    {/* Flow Badge */}
-                                    {flowBadgeType && (
-                                      <span
-                                        className={cn(
-                                          "inline-flex items-center justify-center rounded-[4px] h-6 text-[10px] font-extrabold whitespace-nowrap shrink-0 w-11 shadow-sm transition-all group-hover/pill:scale-105",
-                                          flowBadgeType === "FROM"
-                                            ? context === "account"
-                                              ? "bg-emerald-50 border border-emerald-200 text-emerald-700"
-                                              : "bg-orange-50 border border-orange-200 text-orange-700"
-                                            : context === "account"
-                                              ? "bg-rose-50 border border-rose-200 text-rose-700"
-                                              : "bg-sky-50 border border-sky-200 text-sky-700",
-                                        )}
-                                      >
-                                        {flowBadgeType}
-                                      </span>
-                                    )}
-
-                                    <div className="flex-1 min-w-0 flex items-center justify-center gap-2">
+                                    <div className="flex-1 min-w-0 flex items-center gap-2">
                                       {/* Avatar + Name Area with its own tooltip */}
                                       <CustomTooltip
                                         content={`Open ${displayName} in new tab`}
                                       >
                                         <div
-                                          className="min-w-0 flex items-center gap-2 h-full max-w-[65%]"
+                                          className="flex-1 min-w-0 flex items-center gap-2 h-full"
                                           onClick={(e) => {
                                             if (displayLink) {
                                               e.stopPropagation();
@@ -3950,7 +3923,7 @@ export const UnifiedTransactionTable = React.forwardRef<
 
                                       {/* Badge area */}
                                       {badgeToDisplay && (
-                                        <div className="shrink-0">
+                                        <div className="ml-auto shrink-0 flex justify-end">
                                           {isCycleBadge ? (
                                             <CustomTooltip
                                               content={`Open details for ${displayName} in new tab filtered by cycle ${cycleTag || ""}`}
@@ -4076,7 +4049,7 @@ export const UnifiedTransactionTable = React.forwardRef<
 
                                 {/* Badges area */}
                                 {badges.length > 0 && (
-                                  <div className="shrink-0 flex items-center gap-1">
+                                  <div className="ml-auto shrink-0 flex items-center justify-end gap-1">
                                     {badges.map((badge, idx) => (
                                       <React.Fragment key={idx}>
                                         {badge}

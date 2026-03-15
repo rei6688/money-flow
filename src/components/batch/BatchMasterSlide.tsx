@@ -33,6 +33,7 @@ interface BatchMasterSlideProps {
     onOpenChange: (open: boolean) => void
     bankType: 'MBB' | 'VIB'
     accounts: any[]
+    categories?: any[]
     bankMappings: any[]
 }
 
@@ -41,6 +42,7 @@ export function BatchMasterSlide({
     onOpenChange,
     bankType,
     accounts,
+    categories = [],
     bankMappings
 }: BatchMasterSlideProps) {
     const [phases, setPhases] = useState<any[]>([])
@@ -330,6 +332,7 @@ export function BatchMasterSlide({
                     <BatchMasterManager
                         bankType={bankType}
                         accounts={accounts}
+                        categories={categories}
                         bankMappings={bankMappings}
                         phasesOverride={phases}
                     />

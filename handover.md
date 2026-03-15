@@ -1,3 +1,26 @@
+# UPDATE 2026-03-15: Batch + Debt Sync Stabilization and Next-Agent Plan
+
+## Done in this release slice
+- Fixed Sync Master behavior so new master items appear after sync in current phase context.
+- Renamed header sync action to `Sync Master`.
+- Fixed people cycle sheet sync failure path when linked bank account record is missing (PocketBase 404 fallback).
+- Fixed debt cycle allocation for custom tags so repayments stay in correct cycle bucket.
+- Aligned debt cycle badges in transaction flow cells.
+
+## Next-agent priority order (strict)
+1. Installment (`/installment` data source audit: Supabase vs PocketBase)
+2. Service + monthly Vercel cron reliability research
+3. Bot refactor to advisory Q&A only (remove submit transaction tasks)
+
+## Read-first docs
+- `docs/handovers/HANDOVER_2026-03-15_BATCH_DEBT_SYNC_AND_NEXT_AGENT.md`
+- `docs/plans/INSTALLMENT_DB_AUDIT_PLAN_2026-03-15.md`
+- `docs/plans/SERVICE_CRON_RESEARCH_PLAN_2026-03-15.md`
+- `docs/plans/BOT_QA_REFACTOR_PLAN_2026-03-15.md`
+
+## Branch naming rule
+- Mandatory pattern: `agent/<scope>-<ddmmyyyy>-<short-task>`
+
 # 🔴 UPDATE 2026-03-10: Transactions Backfill Failed (Needs Full Remigration)
 
 ## Current Incident
