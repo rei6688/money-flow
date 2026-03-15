@@ -410,21 +410,45 @@ export async function revertBatchItem(transactionId: string) {
 export async function getPendingBatchItemsByAccount(accountId: string) {
     const isPB = accountId && accountId.length === 15
     if (isPB) {
+        const loadAllBatchItems = async () => {
+            const perPage = 200
+            let page = 1
+            let totalPages = 1
+            const rows: any[] = []
+
+            do {
+                const resp = await pocketbaseList<any>('batch_items', {
+                    page,
+                    perPage,
+                })
+                rows.push(...(resp.items || []))
+                totalPages = Number(resp.totalPages || 1)
+                page += 1
+            } while (page <= totalPages)
+
+            return rows
+        }
+
         const normalizedAccountId = toPocketBaseId(accountId, 'accounts')
-        const pbResult = await pocketbaseList<any>('batch_items', {
-            filter: `target_account_id = "${normalizedAccountId}" && status = "pending"`,
-            perPage: 5000,
-            sort: '-created',
-            expand: 'batch_id',
+        // Query unfiltered list then filter in memory to avoid PB filter parser edge-cases.
+        const allItems = await loadAllBatchItems()
+
+        const filtered = allItems.filter((item: any) => {
+            const status = String(item?.status || '').toLowerCase()
+            const target = String(item?.target_account_id || '')
+            const hasTxn = Boolean(item?.transaction_id)
+            const amount = Number(item?.amount || 0)
+            const isPendingLike = status === 'pending' || status === 'draft'
+            return target === normalizedAccountId && isPendingLike && !hasTxn && amount > 0
         })
 
-        return (pbResult.items || []).map((item: any) => ({
+        return filtered.map((item: any) => ({
             id: item.id,
             amount: Number(item.amount || 0),
             receiver_name: item.receiver_name || null,
             note: item.note || null,
             batch_id: item.batch_id,
-            batch: item?.expand?.batch_id ? { name: item.expand.batch_id.name || '' } : null,
+            batch: null,
         }))
     }
 
@@ -447,25 +471,40 @@ export async function getPendingBatchItemsSummary(): Promise<Array<{
     totalAmount: number
 }>> {
     try {
-        const pbResult = await pocketbaseList<any>('batch_items', {
-            filter: 'status = "pending" && amount > 0',
-            perPage: 5000,
-            expand: 'target_account_id',
-        })
+        const perPage = 200
+        let page = 1
+        let totalPages = 1
+        const allItems: any[] = []
+
+        do {
+            const resp = await pocketbaseList<any>('batch_items', {
+                page,
+                perPage,
+            })
+            allItems.push(...(resp.items || []))
+            totalPages = Number(resp.totalPages || 1)
+            page += 1
+        } while (page <= totalPages)
 
         const summary = new Map<string, { accountId: string; accountName: string | null; count: number; totalAmount: number }>()
-        for (const item of pbResult.items || []) {
+        for (const item of allItems) {
+            const status = String(item?.status || '').toLowerCase()
+            const hasTxn = Boolean(item?.transaction_id)
+            const amount = Math.abs(Number(item?.amount || 0))
+            const isPendingLike = status === 'pending' || status === 'draft'
+            if (!isPendingLike || hasTxn || amount <= 0) continue
+
             const accountId = String(item?.target_account_id || '').trim()
             if (!accountId) continue
 
             const prev = summary.get(accountId) || {
                 accountId,
-                accountName: item?.expand?.target_account_id?.name || null,
+                accountName: null,
                 count: 0,
                 totalAmount: 0,
             }
             prev.count += 1
-            prev.totalAmount += Math.abs(Number(item?.amount || 0))
+            prev.totalAmount += amount
             summary.set(accountId, prev)
         }
 
