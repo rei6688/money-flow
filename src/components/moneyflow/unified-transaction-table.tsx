@@ -3694,7 +3694,7 @@ export const UnifiedTransactionTable = React.forwardRef<
                                   cycleTag={cycleTag}
                                   txnDate={txn.occurred_at || txn.created_at}
                                   compact
-                                  className="h-full px-2 rounded-r-md rounded-l-none text-[10px] border-amber-400 bg-amber-200 text-amber-900"
+                                  className="h-full min-w-[92px] justify-center px-2 rounded-r-md rounded-l-none text-[10px] border-amber-400 bg-amber-200 text-amber-900"
                                   entityName={sourceName}
                                 />
                               ) : null;
@@ -3890,7 +3890,7 @@ export const UnifiedTransactionTable = React.forwardRef<
                                   {borderedTypeIconWide}
 
                                   <div className="flex-1 min-w-0 h-9 pl-1.5 pr-0 py-0 rounded-md bg-slate-50 border border-slate-200 flex items-stretch gap-0 cursor-pointer hover:bg-slate-100 transition-colors group/pill shadow-sm overflow-hidden">
-                                    <div className="flex-1 min-w-0 flex items-center gap-2 pr-1">
+                                    <div className="flex-1 min-w-0 flex items-center gap-2 pr-0">
                                       {/* Avatar + Name Area with its own tooltip */}
                                       <CustomTooltip
                                         content={`Open ${displayName} in new tab`}
@@ -4037,7 +4037,7 @@ export const UnifiedTransactionTable = React.forwardRef<
                                   content={`Open ${entity.name} in new tab`}
                                 >
                                   <div
-                                    className="flex-1 min-w-0 flex items-center gap-2 h-full pr-1"
+                                    className="flex-1 min-w-0 flex items-center gap-2 h-full pr-0"
                                     onClick={(e) => {
                                       if (entity.link) {
                                         e.stopPropagation();
@@ -4321,7 +4321,7 @@ export const UnifiedTransactionTable = React.forwardRef<
                                   <div className="flex items-center gap-1.5 min-w-0">
                                     {percentDisp > 0 &&
                                       !visibleColumns.total_back && (
-                                        <span className="inline-flex items-center px-2 h-6 rounded-md text-[10px] font-black bg-green-100 text-green-700 border border-green-200 shrink-0">
+                                        <span className="inline-flex items-center px-2 h-6 rounded-md text-[10px] font-black bg-sky-100 text-sky-700 border border-sky-200 shrink-0">
                                           -
                                           {(() => {
                                             const percentBadgeValue =
@@ -4336,7 +4336,7 @@ export const UnifiedTransactionTable = React.forwardRef<
                                         </span>
                                       )}
                                     {fixedDisp > 0 && (
-                                      <span className="inline-flex items-center px-2 h-6 rounded-md text-[10px] font-black bg-green-100 text-green-700 border border-green-200 shrink-0">
+                                      <span className="inline-flex items-center px-2 h-6 rounded-md text-[10px] font-black bg-sky-100 text-sky-700 border border-sky-200 shrink-0">
                                         -{numberFormatter.format(fixedDisp)}
                                       </span>
                                     )}
@@ -4463,8 +4463,8 @@ export const UnifiedTransactionTable = React.forwardRef<
                                   side="bottom"
                                 >
                                   <div className="flex w-full items-center justify-between gap-1.5 cursor-help">
-                                    <span className="inline-flex items-center h-6 px-2 rounded-md border border-emerald-200 bg-emerald-50 text-emerald-700 font-black tabular-nums tracking-tight truncate">
-                                      {numberFormatter.format(netBackAmount)}
+                                    <span className="inline-flex items-center h-6 px-2 rounded-md border border-sky-200 bg-sky-100 text-sky-700 font-black tabular-nums tracking-tight truncate">
+                                      -{numberFormatter.format(netBackAmount)}
                                     </span>
                                     <span
                                       className={cn(
