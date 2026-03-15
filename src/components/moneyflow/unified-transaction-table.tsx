@@ -43,7 +43,6 @@ import {
   RotateCcw,
   Ban,
   Loader2,
-  History,
   ChevronRight,
   ChevronLeft,
   Edit,
@@ -1791,20 +1790,6 @@ export const UnifiedTransactionTable = React.forwardRef<
               <RotateCcw className="h-4 w-4" />
               <span>{isRestoring ? "Restoring..." : "Restore"}</span>
             </button>
-
-            {divider}
-
-            <button
-              className={neutralItemClass}
-              onClick={(event) => {
-                event.stopPropagation();
-                setHistoryTarget(txn);
-                setActionMenuOpen(null);
-              }}
-            >
-              <History className="h-4 w-4" />
-              <span>View History</span>
-            </button>
           </>
         );
       }
@@ -1886,18 +1871,6 @@ export const UnifiedTransactionTable = React.forwardRef<
               </button>
             </>
           )}
-          <button
-            className={neutralItemClass}
-            onClick={(event) => {
-              event.stopPropagation();
-              setHistoryTarget(txn);
-              setActionMenuOpen(null);
-            }}
-          >
-            <History className="h-4 w-4" />
-            <span>View History</span>
-          </button>
-
           {divider}
 
           <button
@@ -3281,11 +3254,18 @@ export const UnifiedTransactionTable = React.forwardRef<
                                     let editedBadge = null;
                                     if (isEdited) {
                                       editedBadge = (
-                                        <CustomTooltip content="Transaction was edited">
-                                          <span className="inline-flex items-center gap-1.5 px-2 h-[22px] min-w-[70px] justify-center rounded-full bg-cyan-50 text-cyan-700 border border-cyan-200 text-[10px] font-bold whitespace-nowrap transition-all duration-200 shadow-sm">
+                                        <CustomTooltip content="Transaction was edited - click to view history">
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setHistoryTarget(txn);
+                                            }}
+                                            className="inline-flex items-center gap-1.5 px-2 h-[22px] min-w-[70px] justify-center rounded-full bg-cyan-50 text-cyan-700 border border-cyan-200 text-[10px] font-bold whitespace-nowrap transition-all duration-200 shadow-sm hover:bg-cyan-100"
+                                          >
                                             <Pencil className="h-3 w-3" />
                                             EDITED
-                                          </span>
+                                          </button>
                                         </CustomTooltip>
                                       );
                                     }

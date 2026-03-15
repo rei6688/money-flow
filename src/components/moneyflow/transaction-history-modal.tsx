@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
-import { X, History, Loader2, ArrowRight, AlertCircle, Edit, Ban } from 'lucide-react'
+import { X, History, Loader2, AlertCircle, Edit, Ban } from 'lucide-react'
 import { getTransactionHistory, TransactionHistoryWithDiff, HistoryDiff } from '@/actions/history-actions'
 import { cn } from '@/lib/utils'
 
@@ -59,22 +59,23 @@ function formatTimestamp(isoString: string): string {
     }
 }
 
-function DiffItem({ diff }: { diff: HistoryDiff }) {
+function DiffRow({ diff }: { diff: HistoryDiff }) {
     return (
-        <div className="flex items-start gap-2 py-1.5 border-b border-slate-100 last:border-0">
-            <span className="text-xs font-semibold text-slate-500 min-w-[100px] shrink-0">
-                {diff.field}:
-            </span>
-            <div className="flex items-center gap-1.5 flex-wrap text-sm">
-                <span className="text-red-600 line-through bg-red-50 px-1.5 py-0.5 rounded">
+        <tr className="border-b border-slate-100 last:border-0">
+            <td className="px-3 py-2 text-xs font-semibold text-slate-600 align-top w-[180px]">
+                {diff.field}
+            </td>
+            <td className="px-3 py-2 align-top">
+                <span className="inline-flex max-w-[220px] break-all text-xs text-rose-700 line-through bg-rose-50 border border-rose-100 rounded px-2 py-1">
                     {formatValue(diff.oldValue)}
                 </span>
-                <ArrowRight className="h-3 w-3 text-slate-400 shrink-0" />
-                <span className="text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded font-medium">
+            </td>
+            <td className="px-3 py-2 align-top">
+                <span className="inline-flex max-w-[220px] break-all text-xs text-emerald-700 bg-emerald-50 border border-emerald-100 rounded px-2 py-1 font-semibold">
                     {formatValue(diff.newValue)}
                 </span>
-            </div>
-        </div>
+            </td>
+        </tr>
     )
 }
 
@@ -83,11 +84,11 @@ function HistoryEntry({ entry, index }: { entry: TransactionHistoryWithDiff; ind
 
     return (
         <div className={cn(
-            "rounded-lg border p-4",
+            "rounded-lg border overflow-hidden",
             isVoid ? "border-red-200 bg-red-50/50" : "border-slate-200 bg-white"
         )}>
             {/* Header */}
-            <div className="flex items-center justify-between mb-3 pb-2 border-b border-slate-200">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 bg-slate-50">
                 <div className="flex items-center gap-2">
                     <span className={cn(
                         "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-bold",
@@ -123,15 +124,28 @@ function HistoryEntry({ entry, index }: { entry: TransactionHistoryWithDiff; ind
 
             {/* Diffs */}
             {entry.diffs.length > 0 ? (
-                <div className="space-y-0">
-                    {entry.diffs.map((diff, i) => (
-                        <DiffItem key={i} diff={diff} />
-                    ))}
+                <div className="overflow-x-auto">
+                    <table className="w-full min-w-[620px] text-sm border-collapse">
+                        <thead>
+                            <tr className="bg-slate-50/70 border-b border-slate-200">
+                                <th className="text-left px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">Field</th>
+                                <th className="text-left px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">Before</th>
+                                <th className="text-left px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">After</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {entry.diffs.map((diff, i) => (
+                                <DiffRow key={i} diff={diff} />
+                            ))}
+                        </tbody>
+                    </table>
                 </div>
             ) : (
-                <p className="text-sm text-slate-500 italic">
-                    {isVoid ? 'Transaction was voided' : 'No field changes detected'}
-                </p>
+                <div className="px-4 py-4">
+                    <p className="text-sm text-slate-500 italic">
+                        {isVoid ? 'Transaction was voided' : 'No field changes detected'}
+                    </p>
+                </div>
             )}
         </div>
     )
