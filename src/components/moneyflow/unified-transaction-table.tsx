@@ -383,8 +383,8 @@ export const UnifiedTransactionTable = React.forwardRef<
     );
     const defaultColumns: ColumnConfig[] = [
       { key: "date", label: "Date", defaultWidth: 138, minWidth: 124 },
-      { key: "shop", label: "Notes Flow", defaultWidth: 340, minWidth: 240 },
-      { key: "account", label: "Money Flow", defaultWidth: 320, minWidth: 240 },
+      { key: "shop", label: "Notes Flow", defaultWidth: 300, minWidth: 220 },
+      { key: "account", label: "Money Flow", defaultWidth: 380, minWidth: 280 },
       { key: "amount", label: "BASE", defaultWidth: 120, minWidth: 100 },
       {
         key: "total_back",
@@ -398,7 +398,7 @@ export const UnifiedTransactionTable = React.forwardRef<
         defaultWidth: 120,
         minWidth: 100,
       },
-      { key: "category", label: "Category", defaultWidth: 150, minWidth: 120 },
+      { key: "category", label: "Category", defaultWidth: 130, minWidth: 110 },
       { key: "people", label: "People", defaultWidth: 150 },
       { key: "id", label: "ID", defaultWidth: 100 },
       {
@@ -4306,31 +4306,33 @@ export const UnifiedTransactionTable = React.forwardRef<
 
                             return (
                               <div className="flex flex-col items-start gap-1 w-full">
-                                <div className="flex items-center gap-1.5 justify-start">
-                                  {percentDisp > 0 &&
-                                    !visibleColumns.total_back && (
-                                      <span className="inline-flex items-center px-2 h-6 rounded-md text-[10px] font-black bg-green-100 text-green-700 border border-green-200">
-                                        -
-                                        {(() => {
-                                          const percentBadgeValue =
-                                            percentDisp > 1
-                                              ? percentDisp
-                                              : percentDisp * 100;
-                                          return percentBadgeValue % 1 === 0
-                                            ? percentBadgeValue.toFixed(0)
-                                            : percentBadgeValue.toFixed(2);
-                                        })()}
-                                        %
+                                <div className="flex w-full items-center justify-between gap-1.5">
+                                  <div className="flex items-center gap-1.5 min-w-0">
+                                    {percentDisp > 0 &&
+                                      !visibleColumns.total_back && (
+                                        <span className="inline-flex items-center px-2 h-6 rounded-md text-[10px] font-black bg-green-100 text-green-700 border border-green-200 shrink-0">
+                                          -
+                                          {(() => {
+                                            const percentBadgeValue =
+                                              percentDisp > 1
+                                                ? percentDisp
+                                                : percentDisp * 100;
+                                            return percentBadgeValue % 1 === 0
+                                              ? percentBadgeValue.toFixed(0)
+                                              : percentBadgeValue.toFixed(2);
+                                          })()}
+                                          %
+                                        </span>
+                                      )}
+                                    {fixedDisp > 0 && (
+                                      <span className="inline-flex items-center px-2 h-6 rounded-md text-[10px] font-black bg-green-100 text-green-700 border border-green-200 shrink-0">
+                                        -{numberFormatter.format(fixedDisp)}
                                       </span>
                                     )}
-                                  {fixedDisp > 0 && (
-                                    <span className="inline-flex items-center px-2 h-6 rounded-md text-[10px] font-black bg-green-100 text-green-700 border border-green-200">
-                                      -{numberFormatter.format(fixedDisp)}
-                                    </span>
-                                  )}
+                                  </div>
                                   <span
                                     className={cn(
-                                      "font-black tabular-nums tracking-tight truncate",
+                                      "ml-auto text-right font-black tabular-nums tracking-tight truncate",
                                       amountClass,
                                     )}
                                     style={{ fontSize: `0.95em` }}
@@ -4349,11 +4351,17 @@ export const UnifiedTransactionTable = React.forwardRef<
                                 ? txn.original_amount
                                 : amount;
 
-                            const { percentRaw, fixedRaw, shareAmount } =
+                            const {
+                              percentRaw,
+                              fixedRaw,
+                              shareAmount,
+                              bankBack,
+                            } =
                               resolveCashbackFields(txn);
                             const percentDisp = percentRaw;
                             const fixedDisp = fixedRaw;
-                            const cashbackAmount = shareAmount;
+                            const cashbackAmount =
+                              shareAmount > 0 ? shareAmount : bankBack;
                             const baseAmount = Math.abs(
                               Number(originalAmount ?? 0),
                             );
@@ -4386,7 +4394,7 @@ export const UnifiedTransactionTable = React.forwardRef<
                               return (
                                 <div className="flex flex-col items-start gap-1 w-full">
                                   <span
-                                    className="font-black tabular-nums tracking-tight truncate opacity-70 text-slate-500"
+                                    className="ml-auto text-right font-black tabular-nums tracking-tight truncate opacity-70 text-slate-500"
                                     style={{ fontSize: `0.95em` }}
                                   >
                                     0
@@ -4430,10 +4438,10 @@ export const UnifiedTransactionTable = React.forwardRef<
                                   }
                                   side="bottom"
                                 >
-                                  <div className="flex items-center gap-1.5 justify-start cursor-help">
+                                  <div className="flex w-full items-center justify-end gap-1.5 cursor-help">
                                     <span
                                       className={cn(
-                                        "inline-flex items-center h-6 px-2 rounded-md border border-slate-200 bg-white font-black tabular-nums tracking-tight truncate",
+                                        "inline-flex items-center h-6 px-2 rounded-md border border-slate-200 bg-white font-black tabular-nums tracking-tight truncate ml-auto",
                                         netBackClass,
                                       )}
                                       style={{ fontSize: `0.95em` }}
@@ -4650,6 +4658,8 @@ export const UnifiedTransactionTable = React.forwardRef<
                                   `border-r border-slate-200 ${
                                     col.key === "amount" ? "font-bold" : ""
                                   } ${col.key === "amount" ? amountClass : ""} ${voidedTextClass} truncate`,
+                                  (col.key === "amount" ||
+                                    col.key === "final_price") && "text-right",
                                   col.key === "account" && "pr-1",
                                   col.key === "actions" && "px-1",
                                   col.key === "date" && "p-1",
