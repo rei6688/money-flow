@@ -388,46 +388,46 @@ export const UnifiedTransactionTable = React.forwardRef<
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ personId, cycleTag, action: "sync" }),
-
-    const cancelQuickSheetSyncToast = useCallback(() => {
-      if (sheetHoverToastTimerRef.current !== null) {
-        window.clearTimeout(sheetHoverToastTimerRef.current);
-        sheetHoverToastTimerRef.current = null;
-      }
-    }, []);
-
-    const showQuickSheetSyncToast = useCallback(
-      (personId?: string | null, cycleTag?: string | null) => {
-        if (!personId || !cycleTag) return;
-
-        cancelQuickSheetSyncToast();
-
-        const toastKey = `${personId}:${cycleTag}`;
-        if (lastSheetHoverToastKeyRef.current === toastKey) return;
-
-        sheetHoverToastTimerRef.current = window.setTimeout(() => {
-          lastSheetHoverToastKeyRef.current = toastKey;
-          toast("Quick sync this cycle", {
-            description: `Cycle ${cycleTag}`,
-            duration: 4500,
-            action: {
-              label: "Sync",
-              onClick: () => {
-                void handleQuickSyncCycle(personId, cycleTag);
-              },
-            },
           });
 
-          window.setTimeout(() => {
-            if (lastSheetHoverToastKeyRef.current === toastKey) {
-              lastSheetHoverToastKeyRef.current = null;
-            }
-          }, 5000);
+          const payload = (await response.json().catch(() => null)) as
+            | {
+                error?: string;
+                requestId?: string;
+                stage?: string;
+                syncedCount?: number;
+              }
+            | null;
 
-          sheetHoverToastTimerRef.current = null;
-        });
+          if (!response.ok) {
+            const details = [
+              payload?.requestId ? `Req ${payload.requestId}` : "",
+              payload?.stage ? `Stage ${payload.stage}` : "",
+            ]
+              .filter(Boolean)
+              .join(" | ");
+
+            toast.error(payload?.error || "Sheet sync failed", {
+              id: loadingId,
+              description: details || undefined,
+            });
+            return;
+          }
+
+          toast.success(`Synced cycle ${cycleTag}`, {
+            id: loadingId,
+            description:
+              typeof payload?.syncedCount === "number"
+                ? `${payload.syncedCount} rows synced`
+                : undefined,
+          });
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : "Sheet sync failed";
+          toast.error(message, { id: loadingId });
+        }
       },
-      [cancelQuickSheetSyncToast, handleQuickSyncCycle],
+      [],
     );
 
     const defaultColumns: ColumnConfig[] = [
