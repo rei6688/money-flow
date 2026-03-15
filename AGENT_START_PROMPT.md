@@ -1,5 +1,37 @@
 # Agent Start Prompt — PocketBase Migration Continuation
 
+## Update 2026-03-15 (Read Before Any Code)
+
+### Current branch and release context
+- Active branch used in this handover cycle: `feat/account-details-pending-profit-debug`.
+- Latest fixes in branch include:
+  - Batch master sync visibility + refresh signal on current phase tab.
+  - Debt/repayment flow corrections for PB + people sheet sync hardening.
+  - Unified flow badge alignment cleanup.
+
+### Mandatory branch naming rule (force)
+All new task branches MUST include `ddmmyyyy` in branch name.
+
+Required pattern:
+- `agent/<scope>-<ddmmyyyy>-<short-task>`
+
+Valid examples:
+- `agent/installment-15032026-db-audit`
+- `agent/service-15032026-cron-research`
+- `agent/bot-15032026-qa-refactor-plan`
+
+Do not open PRs from branches without `ddmmyyyy`.
+
+### Next-agent priority order (strict)
+1. Installment
+2. Service
+3. Bot
+
+Reference plans (must read before implementation):
+- `docs/plans/INSTALLMENT_DB_AUDIT_PLAN_2026-03-15.md`
+- `docs/plans/SERVICE_CRON_RESEARCH_PLAN_2026-03-15.md`
+- `docs/plans/BOT_QA_REFACTOR_PLAN_2026-03-15.md`
+
 ## Objective
 Continue migration work safely from current base branch state, with strict branch isolation and clear handover discipline.
 

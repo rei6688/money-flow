@@ -23,6 +23,7 @@ import {
     TrendingUp,
     Calculator,
     Info,
+    AlertCircle,
     Zap,
     Users,
     Building2,
@@ -67,6 +68,11 @@ interface AccountRowProps {
     allAccounts?: Account[];
     categories?: Category[];
     people?: Person[];
+    pendingSummaryMap?: Record<string, {
+        count: number
+        totalAmount: number
+        accountName?: string | null
+    }>;
 }
 
 const numberFormatter = new Intl.NumberFormat('en-US', {
@@ -87,6 +93,7 @@ export function AccountRowV2({
     allAccounts,
     categories,
     people: initialPeople,
+    pendingSummaryMap,
 }: AccountRowProps) {
     const router = useRouter();
     const [isTransactionsModalOpen, setIsTransactionsModalOpen] = useState(false);
@@ -187,7 +194,8 @@ export function AccountRowV2({
                             isTransactionsModalOpen,
                             onEditTransaction,
                             modalRefreshKey,
-                            initialPeople
+                            initialPeople,
+                            pendingSummaryMap
                         )}
                     </td>
                 ))}
@@ -249,7 +257,12 @@ function renderCell(
     isTransactionsModalOpen?: boolean,
     onEditTransaction?: (id: string) => void,
     modalRefreshKey?: number,
-    people?: Person[]
+    people?: Person[],
+    pendingSummaryMap?: Record<string, {
+        count: number
+        totalAmount: number
+        accountName?: string | null
+    }>
 ) {
     const { onEdit, onLend, onRepay, onPay, onTransfer } = actions;
     const stats = account.stats;
@@ -376,6 +389,8 @@ function renderCell(
     switch (key) {
         case 'account': {
             const children = allAccounts?.filter((a: Account) => a.parent_account_id === account.id) || [];
+            const pendingCount = Number(pendingSummaryMap?.[account.id]?.count || 0)
+            const pendingTotalAmount = Number(pendingSummaryMap?.[account.id]?.totalAmount || 0)
 
             const MainPlaceholderIcon = getPlaceholderIcon(account.type);
 
@@ -410,6 +425,17 @@ function renderCell(
                                         >
                                             {account.name}
                                         </Link>
+                                        {pendingCount > 0 && (
+                                            <Link
+                                                href={`/accounts/${account.id}?pending=1`}
+                                                className="inline-flex items-center gap-1 rounded-md border border-rose-200 bg-rose-50 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider text-rose-600 hover:bg-rose-100"
+                                                title={`Pending confirm: ${pendingCount} item(s), ${formatMoneyVND(pendingTotalAmount)}`}
+                                                onClick={(e) => e.stopPropagation()}
+                                            >
+                                                <AlertCircle className="h-2.5 w-2.5" />
+                                                {pendingCount} Pending
+                                            </Link>
+                                        )}
                                     </div>
                                     {(account.receiver_name || account.account_number) && (
                                         <div className="flex items-center gap-1.5 min-w-0">

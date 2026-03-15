@@ -2,6 +2,17 @@
 
 import { pocketbaseList, pocketbaseGetById, toPocketBaseId } from '@/services/pocketbase/server'
 
+type TransactionHistoryPbRecord = {
+    id: string
+    transaction_id?: string | null
+    snapshot_before?: unknown
+    change_type?: 'edit' | 'void' | string
+    created?: string
+    changed_by?: string | null
+}
+
+type PocketBaseTransactionRecord = Record<string, unknown>
+
 export type TransactionHistoryRecord = {
     id: string
     transaction_id: string
@@ -31,31 +42,50 @@ export async function getTransactionHistory(
     try {
         const pbTxnId = toPocketBaseId(transactionId, 'transactions');
 
-        // Primary query: direct relation by transaction_id
-        const historyResp = await pocketbaseList<any>('transaction_history', {
-            filter: `transaction_id = "${pbTxnId}"`,
-            sort: '-created', // PocketBase uses 'created' for timestamp
-            perPage: 100
-        });
+        let historyItems: TransactionHistoryPbRecord[] = []
 
-        let historyItems = historyResp.items;
+        // Primary query: direct relation by transaction_id.
+        // Some migrated datasets can trigger PB 400 for filtered JSON/relation queries,
+        // so we guard and gracefully fallback to in-app filtering.
+        try {
+            const historyResp = await pocketbaseList<TransactionHistoryPbRecord>('transaction_history', {
+                filter: `transaction_id = "${pbTxnId}"`,
+                sort: '-created', // PocketBase uses 'created' for timestamp
+                perPage: 100
+            });
+            historyItems = historyResp.items || []
+        } catch {
+            historyItems = []
+        }
 
         // Fallback for legacy migrated rows where transaction_id may be empty
         // and the transaction reference lives inside snapshot_before.id.
         if (!historyItems.length) {
-            const fallbackResp = await pocketbaseList<any>('transaction_history', {
-                sort: '-created',
-                perPage: 500
-            });
-            historyItems = (fallbackResp.items || []).filter((item) => {
-                const snapshot = parseSnapshot(item.snapshot_before)
-                const snapshotId = String((snapshot as any).id || '')
-                return snapshotId === pbTxnId || snapshotId === transactionId
-            })
+            const fallbackAttempts: Array<Record<string, string | number>> = [
+                { sort: '-created', perPage: 200 },
+                { perPage: 200 },
+                { sort: '-changed_at', perPage: 100 },
+                { perPage: 100 },
+            ]
+
+            for (const params of fallbackAttempts) {
+                try {
+                    const fallbackResp = await pocketbaseList<TransactionHistoryPbRecord>('transaction_history', params)
+                    historyItems = (fallbackResp.items || []).filter((item) => {
+                        const snapshot = parseSnapshot(item.snapshot_before)
+                        const relationId = String(item.transaction_id || '')
+                        const snapshotId = String(snapshot.id || '')
+                        return relationId === pbTxnId || snapshotId === pbTxnId || snapshotId === transactionId
+                    })
+                    if (historyItems.length > 0) break
+                } catch {
+                    // Keep trying next fallback shape.
+                }
+            }
         }
 
         // Fetch current transaction state for comparison
-        const currentTxn = await pocketbaseGetById<any>('transactions', pbTxnId);
+        const currentTxn = await pocketbaseGetById<PocketBaseTransactionRecord>('transactions', pbTxnId);
 
         // Parse snapshots and compute diffs
         const result: TransactionHistoryWithDiff[] = []
@@ -78,10 +108,10 @@ export async function getTransactionHistory(
 
             result.push({
                 id: record.id,
-                transaction_id: record.transaction_id,
+                transaction_id: String(record.transaction_id || ''),
                 snapshot_before: snapshotBefore,
-                change_type: record.change_type as 'edit' | 'void',
-                created_at: record.created, // Use PB created timestamp
+                change_type: record.change_type === 'void' ? 'void' : 'edit',
+                created_at: record.created || '', // Use PB created timestamp
                 changed_by: record.changed_by || null,
                 changed_by_email: null, // PB doesn't expose this easily here
                 diffs,
@@ -89,9 +119,10 @@ export async function getTransactionHistory(
         }
 
         return { success: true, data: result }
-    } catch (error: any) {
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : 'An unexpected error occurred'
         console.error('[DB:PB] getTransactionHistory failed:', error)
-        return { success: false, error: error.message || 'An unexpected error occurred' }
+        return { success: false, error: message }
     }
 }
 
@@ -101,22 +132,40 @@ export async function getTransactionHistory(
 export async function hasTransactionHistory(transactionId: string): Promise<boolean> {
     try {
         const pbTxnId = toPocketBaseId(transactionId, 'transactions');
-        const resp = await pocketbaseList<any>('transaction_history', {
-            filter: `transaction_id = "${pbTxnId}"`,
-            perPage: 1
-        });
+        try {
+            const resp = await pocketbaseList<TransactionHistoryPbRecord>('transaction_history', {
+                filter: `transaction_id = "${pbTxnId}"`,
+                perPage: 1
+            });
 
-        if (resp.totalItems > 0) return true
+            if (resp.totalItems > 0) return true
+        } catch {
+            // Ignore and use fallback scan below.
+        }
 
-        const fallbackResp = await pocketbaseList<any>('transaction_history', {
-            sort: '-created',
-            perPage: 500
-        })
-        return (fallbackResp.items || []).some((item) => {
-            const snapshot = parseSnapshot(item.snapshot_before)
-            const snapshotId = String((snapshot as any).id || '')
-            return snapshotId === pbTxnId || snapshotId === transactionId
-        })
+        const fallbackAttempts: Array<Record<string, string | number>> = [
+            { sort: '-created', perPage: 200 },
+            { perPage: 200 },
+            { sort: '-changed_at', perPage: 100 },
+            { perPage: 100 },
+        ]
+
+        for (const params of fallbackAttempts) {
+            try {
+                const fallbackResp = await pocketbaseList<TransactionHistoryPbRecord>('transaction_history', params)
+                const found = (fallbackResp.items || []).some((item) => {
+                    const snapshot = parseSnapshot(item.snapshot_before)
+                    const relationId = String(item.transaction_id || '')
+                    const snapshotId = String(snapshot.id || '')
+                    return relationId === pbTxnId || snapshotId === pbTxnId || snapshotId === transactionId
+                })
+                if (found) return true
+            } catch {
+                // Keep trying next fallback shape.
+            }
+        }
+
+        return false
     } catch {
         return false
     }

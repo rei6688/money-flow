@@ -3,7 +3,9 @@ export const dynamic = 'force-dynamic'
 import { getPocketBaseAccounts } from '@/services/pocketbase/account-details.service'
 import { getBankMappings } from '@/services/bank.service'
 import { getSheetWebhookLinks } from '@/services/webhook-link.service'
+import { getCategories } from '@/services/category.service'
 import { BatchPageClientV2 } from '@/components/batch/batch-page-client-v2'
+import { pocketbaseList } from '@/services/pocketbase/server'
 
 import type { Metadata } from 'next'
 import { Suspense } from 'react'
@@ -21,7 +23,7 @@ export async function generateMetadata(): Promise<Metadata> {
  * VIB Batch page
  */
 export default async function VIBBatchPage(props: {
-    searchParams: Promise<{ month?: string, period?: string }>
+    searchParams: Promise<{ month?: string, period?: string, phase?: string }>
 }) {
     const searchParams = await props.searchParams
     const month = searchParams.month
@@ -32,7 +34,16 @@ export default async function VIBBatchPage(props: {
     const settings = await getBatchSettings(bankType)
     const cutoffDay = settings?.cutoff_day || 15
 
-    const period = searchParams.period || 'before'
+    const phaseResult = await pocketbaseList<any>('batch_phases', {
+        filter: `bank_type = "${bankType}" && is_active = true`,
+        sort: 'sort_order',
+        perPage: 100,
+    })
+    const phases = phaseResult.items || []
+
+    const selectedPhaseId = searchParams.phase || phases[0]?.id || null
+    const selectedPhase = phases.find((phase: any) => phase.id === selectedPhaseId) || null
+    const period = searchParams.period || selectedPhase?.period_type || 'before'
 
     let activeBatch = null
     const visibleBatches = batches.filter((b: any) => !b.is_archived)
@@ -40,7 +51,14 @@ export default async function VIBBatchPage(props: {
     let targetBatchId = null
     if (month) {
         // Try to find batch for the selected month AND period
-        const found = batches.find((b: any) => b.month_year === month && (b.period === period || (!b.period && period === 'before')))
+        const found = batches.find((b: any) =>
+            b.month_year === month
+            && (
+                (selectedPhaseId && b.phase_id === selectedPhaseId)
+                || b.period === period
+                || (!b.period && period === 'before')
+            ),
+        )
         if (found) {
             targetBatchId = found.id
         }
@@ -58,6 +76,7 @@ export default async function VIBBatchPage(props: {
     }
 
     const accounts = await getPocketBaseAccounts()
+    const categories = await getCategories()
     const bankMappings = await getBankMappings(bankType)
     const webhookLinks = await getSheetWebhookLinks()
     const { getAccountsWithActiveInstallments } = await import('@/services/installment.service')
@@ -68,6 +87,7 @@ export default async function VIBBatchPage(props: {
             <BatchPageClientV2
                 batches={batches}
                 accounts={accounts}
+                categories={categories}
                 bankMappings={bankMappings}
                 webhookLinks={webhookLinks}
                 bankType={bankType}
@@ -76,6 +96,8 @@ export default async function VIBBatchPage(props: {
                 cutoffDay={cutoffDay}
                 globalSheetUrl={settings?.display_sheet_url}
                 globalSheetName={settings?.display_sheet_name}
+                phases={phases}
+                selectedPhaseId={selectedPhaseId}
             />
         </Suspense>
     )

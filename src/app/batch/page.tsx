@@ -1,6 +1,8 @@
 import { BankSelectionLanding } from '@/components/batch/bank-selection-landing'
 import { Metadata } from 'next'
 
+export const dynamic = 'force-dynamic'
+
 export const metadata: Metadata = {
   title: 'Batch Import | Money Flow',
 }

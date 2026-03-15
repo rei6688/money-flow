@@ -671,18 +671,96 @@ export function UnifiedTransactionTableV2({
     router.refresh()
   }, [router])
 
+  const validateRefundVoidOrder = useCallback((target: TransactionWithDetails): { title: string; description: string } | null => {
+    const findTxnById = (id: string | null | undefined) => {
+      if (!id) return null
+      return tableData.find(txn => txn.id === id) ?? null
+    }
+    const effectiveStatus = (txn: TransactionWithDetails | null) => {
+      if (!txn) return null
+      return statusOverrides[txn.id] ?? txn.status
+    }
+
+    const targetMeta = parseMetadata(target.metadata)
+    const isGD3 = targetMeta?.is_refund_confirmation === true
+    const isGD2 = typeof targetMeta?.original_transaction_id === 'string' && !isGD3
+
+    if (isGD3) return null
+
+    if (isGD2) {
+      const directGd3Id = typeof targetMeta?.confirmation_transaction_id === 'string'
+        ? targetMeta.confirmation_transaction_id
+        : null
+      const gd3FromDirectLink = findTxnById(directGd3Id)
+      const gd3Fallback = tableData.find(txn => {
+        const meta = parseMetadata(txn.metadata)
+        return meta?.is_refund_confirmation === true && meta?.refund_request_id === target.id
+      }) ?? null
+      const gd3Txn = gd3FromDirectLink ?? gd3Fallback
+      if (gd3Txn && effectiveStatus(gd3Txn) !== 'void') {
+        return {
+          title: 'Void blocked by refund order',
+          description: 'Please void GD3 (refund confirmation) before GD2.',
+        }
+      }
+      return null
+    }
+
+    const isGD1 =
+      target.status === 'waiting_refund' ||
+      targetMeta?.has_refund_request === true ||
+      typeof targetMeta?.refund_request_id === 'string'
+    if (!isGD1) return null
+
+    const gd2Id = typeof targetMeta?.refund_request_id === 'string' ? targetMeta.refund_request_id : null
+    const gd2Txn = findTxnById(gd2Id)
+    if (gd2Txn && effectiveStatus(gd2Txn) !== 'void') {
+      return {
+        title: 'Void blocked by refund order',
+        description: 'Please void GD2 (refund request) before GD1.',
+      }
+    }
+
+    const gd3IdFromOriginal = typeof targetMeta?.refund_confirmation_id === 'string'
+      ? targetMeta.refund_confirmation_id
+      : null
+    const gd2Meta = parseMetadata(gd2Txn?.metadata)
+    const gd3IdFromGd2 = typeof gd2Meta?.confirmation_transaction_id === 'string'
+      ? gd2Meta.confirmation_transaction_id
+      : null
+    const gd3Txn = findTxnById(gd3IdFromOriginal) ?? findTxnById(gd3IdFromGd2) ?? null
+    if (gd3Txn && effectiveStatus(gd3Txn) !== 'void') {
+      return {
+        title: 'Void blocked by refund order',
+        description: 'Please void GD3 (refund confirmation) before GD1.',
+      }
+    }
+
+    return null
+  }, [tableData, statusOverrides])
+
   const handleVoidConfirm = () => {
     if (!confirmVoidTarget) return
     setVoidError(null)
+
+    const orderWarning = validateRefundVoidOrder(confirmVoidTarget)
+    if (orderWarning) {
+      toast.error(orderWarning.title, {
+        description: orderWarning.description,
+      })
+      return
+    }
+
     setIsVoiding(true)
-    void voidTransactionAction(confirmVoidTarget.id)
+    const targetId = confirmVoidTarget.id
+    setConfirmVoidTarget(null)
+    void voidTransactionAction(targetId)
       .then(ok => {
         if (!ok) {
           setVoidError('Unable to void transaction. Please try again.')
           return
         }
-        setStatusOverrides(prev => ({ ...prev, [confirmVoidTarget.id]: 'void' }))
-        closeVoidDialog()
+        setStatusOverrides(prev => ({ ...prev, [targetId]: 'void' }))
         router.refresh()
       })
       .catch(err => {
@@ -700,12 +778,10 @@ export function UnifiedTransactionTableV2({
             </div>,
             { duration: 8000 }
           );
-          closeVoidDialog();
         } else if (err.message && err.message.includes('void the confirmation transaction first')) {
           toast.error("Please void the Confirmation Transaction (GD3) first.", {
             description: "Linked confirmation exists."
           });
-          closeVoidDialog();
         } else {
           setVoidError(err.message || 'Unable to void transaction. Please try again.')
         }
@@ -1525,9 +1601,14 @@ export function UnifiedTransactionTableV2({
                   const isVoided = effectiveStatus === 'void'
                   const isMenuOpen = actionMenuOpen === txn.id
                   const txnMetadata = parseMetadata(txn.metadata)
+                  const refundStatus = typeof txnMetadata?.refund_status === 'string' ? txnMetadata.refund_status : null
+                  const hasActiveRefundRequest =
+                    (txnMetadata?.has_refund_request || txnMetadata?.refund_request_id) &&
+                    refundStatus !== 'request_voided' &&
+                    refundStatus !== 'void'
                   // Refund SEQ Logic (Global for row)
                   let refundSeq = 0;
-                  if (txnMetadata?.has_refund_request || txn.status === 'waiting_refund') refundSeq = 1;
+                  if (hasActiveRefundRequest || txn.status === 'waiting_refund') refundSeq = 1;
                   else if (txnMetadata?.original_transaction_id && !txnMetadata.is_refund_confirmation) refundSeq = 2;
                   else if (txnMetadata?.is_refund_confirmation) refundSeq = 3;
 
@@ -1644,15 +1725,19 @@ export function UnifiedTransactionTableV2({
                         // 2. VISUAL BADGES
                         // Hourglass (Tx 1): Shows on Original if refund is requested but not fully refunded
                         const refundStatus = originalMetadata.refund_status;
+                        const hasActiveRefundRequest =
+                          Boolean(originalMetadata.has_refund_request || originalMetadata.refund_request_id)
+                          && refundStatus !== 'request_voided'
+                          && refundStatus !== 'void'
                         // Show hourglass only if requested AND NOT completed
-                        const showHourglass = Boolean(originalMetadata.has_refund_request)
+                        const showHourglass = hasActiveRefundRequest
                           && txn.status !== 'refunded'
                           && refundStatus !== 'completed'
                           && refundStatus !== 'refunded';
 
                         // Reversed/Refunded Icon (Tx 1): Shows if refund is COMPLETED
                         // This replaces the hourglass when the cycle is done (GD3 exists)
-                        const showReversed = Boolean(originalMetadata.has_refund_request)
+                        const showReversed = hasActiveRefundRequest
                           && (refundStatus === 'completed' || refundStatus === 'refunded' || txn.status === 'refunded');
 
                         // Check (Tx 2): Shows on Request if it is Completed (Confirmed)

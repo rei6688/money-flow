@@ -45,10 +45,10 @@ interface TransactionHeaderProps {
   // Date State (Parent)
   date: Date
   dateRange: DateRange | undefined
-  dateMode: 'month' | 'range' | 'date' | 'all' | 'year'
+  dateMode: 'month' | 'range' | 'date' | 'all' | 'year' | 'cycle'
   onDateChange: (date: Date) => void
   onRangeChange: (range: DateRange | undefined) => void
-  onModeChange: (mode: 'month' | 'range' | 'date' | 'all' | 'year') => void
+  onModeChange: (mode: 'month' | 'range' | 'date' | 'all' | 'year' | 'cycle') => void
 
   // Filter State (Parent)
   accountId?: string

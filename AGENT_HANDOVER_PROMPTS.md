@@ -1,5 +1,34 @@
 # Agent Handover Prompts
 
+## Prompt 2026-03-15: Installment -> Service -> Bot Research Sprint
+
+---
+
+## TASK: Prepare migration and refactor plan pack (read-first + research-first)
+
+### Objective
+Produce implementation-ready analysis and phased plans in this strict priority order:
+1. `/installment` data source audit (Supabase vs PocketBase)
+2. Service page/code + monthly Vercel cron reliability research
+3. Chat bot refactor to Q&A-only assistant based on transaction history + cashback/card config
+
+### Hard rules
+- Branch naming is mandatory: `agent/<scope>-<ddmmyyyy>-<task>`.
+- Do not include bot transaction-submission workflows in new design.
+- Bot scope must be Q&A only (Vietnamese prompts supported), eg: "bao hiem xai the gi" -> suggest configured card policy.
+- Prioritize research and architecture notes before coding.
+
+### Required outputs
+- Update / create docs under `docs/plans/` for each stream.
+- Include source-of-truth file list and risk map for each stream.
+- Include phased execution checklist and validation criteria.
+
+### Start here
+- `docs/handovers/HANDOVER_2026-03-15_BATCH_DEBT_SYNC_AND_NEXT_AGENT.md`
+- `docs/plans/INSTALLMENT_DB_AUDIT_PLAN_2026-03-15.md`
+- `docs/plans/SERVICE_CRON_RESEARCH_PLAN_2026-03-15.md`
+- `docs/plans/BOT_QA_REFACTOR_PLAN_2026-03-15.md`
+
 ## Prompt A: Repository Analysis & Preparation
 
 ---

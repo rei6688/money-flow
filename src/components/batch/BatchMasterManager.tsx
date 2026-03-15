@@ -15,10 +15,12 @@ import { BatchMasterItemSlide } from './BatchMasterItemSlide'
 interface BatchMasterManagerProps {
     bankType: 'MBB' | 'VIB'
     accounts: any[]
+    categories?: any[]
     bankMappings: any[]
+    phasesOverride?: any[]
 }
 
-export function BatchMasterManager({ bankType, accounts, bankMappings }: BatchMasterManagerProps) {
+export function BatchMasterManager({ bankType, accounts, categories = [], bankMappings, phasesOverride }: BatchMasterManagerProps) {
     const [items, setItems] = useState<any[]>([])
     const [phases, setPhases] = useState<any[]>([])
     const [loading, setLoading] = useState(true)
@@ -30,6 +32,12 @@ export function BatchMasterManager({ bankType, accounts, bankMappings }: BatchMa
     useEffect(() => {
         loadItems()
     }, [bankType])
+
+    useEffect(() => {
+        if (phasesOverride && phasesOverride.length > 0) {
+            setPhases(phasesOverride)
+        }
+    }, [phasesOverride])
 
     const filteredItems = items.filter(i => {
         if (!searchQuery) return true
@@ -46,7 +54,9 @@ export function BatchMasterManager({ bankType, accounts, bankMappings }: BatchMa
         try {
             const [itemsResult, phasesResult] = await Promise.all([
                 getBatchMasterItemsAction(bankType),
-                listBatchPhasesAction(bankType)
+                phasesOverride && phasesOverride.length > 0
+                    ? Promise.resolve({ success: true, data: phasesOverride })
+                    : listBatchPhasesAction(bankType)
             ])
             if (itemsResult.success) {
                 setItems(itemsResult.data || [])
@@ -124,22 +134,30 @@ export function BatchMasterManager({ bankType, accounts, bankMappings }: BatchMa
             </div>
 
             <Tabs defaultValue={phases[0]?.id || 'before'} className="w-full">
-                <TabsList className="bg-slate-100 p-1 rounded-2xl h-14 w-full md:w-auto shadow-sm flex-wrap">
+                <TabsList className="bg-slate-100 p-1 rounded-2xl h-14 w-full shadow-inner border border-slate-200 overflow-x-auto whitespace-nowrap no-scrollbar justify-start">
                     {phases.length > 0 ? phases.map((phase) => (
+                        (() => {
+                            const phaseCount = filteredItems.filter(i => i.phase_id === phase.id || (!i.phase_id && i.cutoff_period === phase.period_type)).length
+                            return (
                         <TabsTrigger
                             key={phase.id}
                             value={phase.id}
-                            className="rounded-xl px-8 h-full data-[state=active]:bg-indigo-600 data-[state=active]:text-white font-black text-xs uppercase tracking-widest transition-all"
+                            className="rounded-xl px-4 h-full shrink-0 border border-transparent data-[state=active]:bg-indigo-600 data-[state=active]:text-white data-[state=active]:border-indigo-700 data-[state=active]:shadow-md font-black text-xs uppercase tracking-widest transition-all"
                         >
-                            {phase.label}
+                            <span>{phase.label}</span>
+                            <span className="ml-2 inline-flex items-center rounded-md border border-slate-300/70 bg-white/70 px-1.5 py-0.5 text-[9px] leading-none text-slate-500 data-[state=active]:text-indigo-700">
+                                {phaseCount}
+                            </span>
                         </TabsTrigger>
+                            )
+                        })()
                     )) : ['before', 'after'].map(p => (
                         <TabsTrigger
                             key={p}
                             value={p}
-                            className="rounded-xl px-12 h-full data-[state=active]:bg-indigo-600 data-[state=active]:text-white font-black text-xs uppercase tracking-widest transition-all"
+                            className="rounded-xl px-8 h-full shrink-0 border border-transparent data-[state=active]:bg-indigo-600 data-[state=active]:text-white data-[state=active]:border-indigo-700 data-[state=active]:shadow-md font-black text-xs uppercase tracking-widest transition-all"
                         >
-                            {p === 'before' ? 'Phase 1: Before' : 'Phase 2: After'}
+                            {p === 'before' ? 'Phase 1' : 'Phase 2'}
                         </TabsTrigger>
                     ))}
                 </TabsList>
@@ -216,6 +234,7 @@ export function BatchMasterManager({ bankType, accounts, bankMappings }: BatchMa
                 onOpenChange={setIsSlideOpen}
                 bankType={bankType}
                 accounts={accounts}
+                categories={categories}
                 bankMappings={bankMappings}
                 item={selectedItem}
                 onSuccess={loadItems}

@@ -10,8 +10,8 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { BatchMasterManager } from '@/components/batch/BatchMasterManager'
-import { Sparkles, Settings, Plus, XCircle, Loader2, Check, List } from 'lucide-react'
-import { listAllBatchPhasesAction, createBatchPhaseAction, deleteBatchPhaseAction } from '@/actions/batch-phases.actions'
+import { Sparkles, Settings, Plus, XCircle, Loader2, Edit2, Check } from 'lucide-react'
+import { listAllBatchPhasesAction, createBatchPhaseAction, deleteBatchPhaseAction, updateBatchPhaseAction } from '@/actions/batch-phases.actions'
 import { Select } from '@/components/ui/select'
 import { DayOfMonthPicker } from '@/components/ui/day-of-month-picker'
 import { toast } from 'sonner'
@@ -33,6 +33,7 @@ interface BatchMasterSlideProps {
     onOpenChange: (open: boolean) => void
     bankType: 'MBB' | 'VIB'
     accounts: any[]
+    categories?: any[]
     bankMappings: any[]
 }
 
@@ -41,17 +42,19 @@ export function BatchMasterSlide({
     onOpenChange,
     bankType,
     accounts,
+    categories = [],
     bankMappings
 }: BatchMasterSlideProps) {
     const [phases, setPhases] = useState<any[]>([])
     const [loadingPhases, setLoadingPhases] = useState(true)
     const [adding, setAdding] = useState(false)
     const [deletingId, setDeletingId] = useState<string | null>(null)
+    const [savingPhaseId, setSavingPhaseId] = useState<string | null>(null)
     const [deleteConfirm, setDeleteConfirm] = useState<{ id: string; label: string; itemCount: number } | null>(null)
+    const [editingPhase, setEditingPhase] = useState<any | null>(null)
     const [newLabel, setNewLabel] = useState('')
     const [newPeriodType, setNewPeriodType] = useState<string | undefined>('before')
     const [newCutoffDay, setNewCutoffDay] = useState<number | null>(15)
-    const [showPhaseSetup, setShowPhaseSetup] = useState(false)
 
     useEffect(() => {
         if (open) {
@@ -87,6 +90,43 @@ export function BatchMasterSlide({
             toast.error('Tạo phase thất bại')
         }
         setAdding(false)
+    }
+
+    function handleStartEditPhase(phase: any) {
+        setEditingPhase(phase)
+        setNewLabel(phase.label || '')
+        setNewPeriodType((phase.period_type || 'before') as 'before' | 'after')
+        setNewCutoffDay(Number(phase.cutoff_day || 15))
+    }
+
+    function resetPhaseEditor() {
+        setEditingPhase(null)
+        setNewLabel('')
+        setNewPeriodType('before')
+        setNewCutoffDay(15)
+    }
+
+    async function handleSavePhaseEdit() {
+        if (!editingPhase?.id) return
+        if (!newLabel.trim()) { toast.error('Nhập tên phase'); return }
+        if (!newPeriodType) { toast.error('Chọn loại Before / After'); return }
+        if (!newCutoffDay) { toast.error('Chọn ngày cutoff'); return }
+
+        setSavingPhaseId(editingPhase.id)
+        const result = await updateBatchPhaseAction(editingPhase.id, {
+            label: newLabel.trim(),
+            periodType: newPeriodType as 'before' | 'after',
+            cutoffDay: newCutoffDay,
+        })
+
+        if (result.success) {
+            toast.success(`Phase "${newLabel.trim()}" đã cập nhật`)
+            await loadPhases()
+            resetPhaseEditor()
+        } else {
+            toast.error('Cập nhật phase thất bại')
+        }
+        setSavingPhaseId(null)
     }
 
     function handleDeleteClick(id: string, label: string, itemCount: number) {
@@ -128,27 +168,16 @@ export function BatchMasterSlide({
                                 Global Recurring Payment Targets & Phase Management
                             </p>
                         </div>
-                        <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => setShowPhaseSetup(v => !v)}
-                            className={cn(
-                                "h-8 px-3 rounded-xl text-[10px] font-black uppercase tracking-widest gap-1.5 transition-colors",
-                                showPhaseSetup
-                                    ? "bg-indigo-100 text-indigo-600 hover:bg-indigo-200"
-                                    : "hover:bg-slate-100 text-slate-400 hover:text-slate-600"
-                            )}
-                        >
+                        <div className="h-8 px-3 rounded-xl text-[10px] font-black uppercase tracking-widest gap-1.5 transition-colors bg-indigo-50 text-indigo-600 border border-indigo-100 inline-flex items-center">
                             <Settings className="h-3.5 w-3.5" />
-                            {showPhaseSetup ? 'Close Phases' : 'Manage Phases'}
-                        </Button>
+                            Phase Setup Enabled
+                        </div>
                     </div>
                 </SheetHeader>
 
                 <div className="p-6 space-y-6">
                     {/* Phase Setup Section */}
-                    {showPhaseSetup && (
-                        <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden animate-in slide-in-from-top-2 duration-200">
+                    <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden animate-in slide-in-from-top-2 duration-200">
                             <div className="px-4 py-3 bg-slate-50/80 border-b border-slate-100">
                                 <h3 className="font-black text-sm text-slate-900 flex items-center gap-2">
                                     <Settings className="h-4 w-4 text-indigo-500" />
@@ -181,6 +210,29 @@ export function BatchMasterSlide({
                                                     <Tooltip>
                                                         <TooltipTrigger asChild>
                                                             <button
+                                                                onClick={() => handleStartEditPhase(p)}
+                                                                disabled={savingPhaseId === p.id}
+                                                                className={cn(
+                                                                    "h-5 w-5 rounded-md flex items-center justify-center transition-colors",
+                                                                    savingPhaseId === p.id
+                                                                        ? "text-slate-300 cursor-not-allowed"
+                                                                        : "text-slate-300 hover:text-indigo-600 hover:bg-indigo-50"
+                                                                )}
+                                                            >
+                                                                {savingPhaseId === p.id ? (
+                                                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                                                ) : (
+                                                                    <Edit2 className="h-3 w-3" />
+                                                                )}
+                                                            </button>
+                                                        </TooltipTrigger>
+                                                        <TooltipContent side="top" className="text-xs">Edit phase</TooltipContent>
+                                                    </Tooltip>
+                                                </TooltipProvider>
+                                                <TooltipProvider>
+                                                    <Tooltip>
+                                                        <TooltipTrigger asChild>
+                                                            <button
                                                                 onClick={() => handleDeleteClick(p.id, p.label, 0)}
                                                                 disabled={deletingId === p.id}
                                                                 className={cn(
@@ -207,7 +259,7 @@ export function BatchMasterSlide({
                                     </div>
                                 ) : (
                                     <p className="text-xs text-slate-400 font-medium text-center py-2">
-                                        Chưa có phase nào. Thêm ít nhất 2 phase (Before + After).
+                                        Chưa có phase nào. Thêm phase đầu tiên để bắt đầu chia range.
                                     </p>
                                 )}
 
@@ -221,7 +273,7 @@ export function BatchMasterSlide({
                                             value={newLabel}
                                             onChange={e => setNewLabel(e.target.value)}
                                             onKeyDown={e => e.key === 'Enter' && handleAddPhase()}
-                                            placeholder="VD: Before 15"
+                                            placeholder="VD: After 20"
                                             className="h-9 rounded-xl text-sm font-medium"
                                         />
                                     </div>
@@ -251,23 +303,38 @@ export function BatchMasterSlide({
                                         />
                                     </div>
                                     <Button
-                                        onClick={handleAddPhase}
-                                        disabled={adding || !newLabel.trim()}
+                                        onClick={editingPhase ? handleSavePhaseEdit : handleAddPhase}
+                                        disabled={adding || !!savingPhaseId || !newLabel.trim()}
                                         className="h-9 px-4 rounded-xl font-black text-[10px] uppercase tracking-widest bg-indigo-600 hover:bg-indigo-700 text-white gap-1.5 shrink-0"
                                     >
-                                        {adding ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
-                                        Add
+                                        {(adding || !!savingPhaseId)
+                                            ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                            : editingPhase
+                                                ? <Check className="h-3.5 w-3.5" />
+                                                : <Plus className="h-3.5 w-3.5" />}
+                                        {editingPhase ? 'Save' : 'Add'}
                                     </Button>
+                                    {editingPhase && (
+                                        <Button
+                                            variant="outline"
+                                            onClick={resetPhaseEditor}
+                                            disabled={!!savingPhaseId}
+                                            className="h-9 px-4 rounded-xl font-black text-[10px] uppercase tracking-widest"
+                                        >
+                                            Cancel
+                                        </Button>
+                                    )}
                                 </div>
                             </div>
-                        </div>
-                    )}
+                    </div>
 
                     {/* Master Items List */}
                     <BatchMasterManager
                         bankType={bankType}
                         accounts={accounts}
+                        categories={categories}
                         bankMappings={bankMappings}
+                        phasesOverride={phases}
                     />
                 </div>
             </SheetContent>

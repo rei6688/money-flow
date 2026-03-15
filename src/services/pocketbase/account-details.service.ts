@@ -28,6 +28,15 @@ import { resolvePocketBasePersonRecord } from "./people.service";
 
 type PocketBaseRecord = Record<string, any>;
 
+function chunkArray<T>(items: T[], size: number): T[][] {
+  if (size <= 0) return [items];
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+  return chunks;
+}
+
 function toAccountType(value: string | null | undefined): Account["type"] {
   if (!value) return "bank";
   if (value === "e_wallet") return "ewallet";
@@ -177,6 +186,7 @@ function inferTieredPolicyByCategoryName(
 function mapTransaction(
   record: PocketBaseRecord,
   currentAccountSourceId: string,
+  historyCount = 0,
 ): TransactionWithDetails {
   const expandedAccount = record.expand?.account_id;
   const expandedTargetAccount = record.expand?.to_account_id;
@@ -257,7 +267,49 @@ function mapTransaction(
       source_account_id: sourceAccountSourceId,
       source_target_account_id: targetAccountSourceId,
     },
+    history_count: historyCount,
   } as TransactionWithDetails;
+}
+
+async function fetchPocketBaseHistoryCountMap(
+  transactionIds: string[],
+): Promise<Map<string, number>> {
+  const countMap = new Map<string, number>();
+  const uniqueIds = Array.from(
+    new Set(transactionIds.filter((value) => Boolean(value))),
+  );
+  if (uniqueIds.length === 0) return countMap;
+
+  const chunks = chunkArray(uniqueIds, 40);
+
+  for (const chunk of chunks) {
+    const filter = chunk.map((id) => `transaction_id='${id}'`).join(" || ");
+    let page = 1;
+
+    while (true) {
+      const response = await pocketbaseList<PocketBaseRecord>(
+        "transaction_history",
+        {
+          page,
+          perPage: 200,
+          filter,
+          fields: "transaction_id",
+        },
+      );
+
+      for (const item of response.items || []) {
+        const transactionId = String(item.transaction_id || "");
+        if (!transactionId) continue;
+        countMap.set(transactionId, (countMap.get(transactionId) ?? 0) + 1);
+      }
+
+      const totalPages = Number(response.totalPages || 1);
+      if (page >= totalPages) break;
+      page += 1;
+    }
+  }
+
+  return countMap;
 }
 
 async function listAllRecords(
@@ -1266,13 +1318,18 @@ export async function getPocketBaseAccountSpendingStatsSnapshot(
   }
 
   const minSpend = cycle?.min_spend_target ?? account.cb_min_spend ?? null;
-  const maxCashback = cycle?.max_budget ?? account.cb_max_budget ?? null;
+  const rawMaxCashback = cycle?.max_budget ?? account.cb_max_budget ?? null;
+  const isUnlimitedBudget =
+    Boolean(account.cb_is_unlimited) ||
+    rawMaxCashback === null ||
+    Number(rawMaxCashback) <= 0;
+  const maxCashback = isUnlimitedBudget ? null : Number(rawMaxCashback);
   const earnedSoFar = estimatedCashback;
   const netProfit = earnedSoFar - sharedAmount;
   const remainingBudget =
     maxCashback === null
       ? null
-      : Math.max(0, Number(maxCashback) - earnedSoFar);
+      : Math.max(0, maxCashback - earnedSoFar);
   const isMinSpendMet =
     minSpend === null ? true : currentSpend >= Number(minSpend);
   const activeRules = Array.from(activeRuleMap.values()).sort(
@@ -1289,7 +1346,7 @@ export async function getPocketBaseAccountSpendingStatsSnapshot(
   return {
     currentSpend,
     minSpend: minSpend === null ? null : Number(minSpend),
-    maxCashback: maxCashback === null ? null : Number(maxCashback),
+    maxCashback,
     actualClaimed,
     rate: Number(account.cb_base_rate || 0) / 100,
     earnedSoFar,
@@ -1634,27 +1691,28 @@ export async function getPocketBaseCycleTransactions(
   //   - PB uses 'date' for sort
   //   - 'to_account_id' is the destination relation
   //   - prefer top-level persisted_cycle_tag, fallback to metadata.persisted_cycle_tag for legacy records
-  let records: PocketBaseRecord[] = [];
+  let primaryRecords: PocketBaseRecord[] = [];
 
   try {
-    records = await listAllRecords("transactions", {
+    primaryRecords = await listAllRecords("transactions", {
       sort: "-date",
       expand:
         "account_id,to_account_id,category_id,shop_id,person_id,parent_transaction_id",
       filter: `(account_id='${pocketBaseAccountId}' || to_account_id='${pocketBaseAccountId}') && persisted_cycle_tag='${cycleTag}'`,
     });
   } catch {
-    records = [];
+    primaryRecords = [];
   }
 
-  if (records.length === 0) {
-    records = await listAllRecords("transactions", {
-      sort: "-date",
-      expand:
-        "account_id,to_account_id,category_id,shop_id,person_id,parent_transaction_id",
-      filter: `(account_id='${pocketBaseAccountId}' || to_account_id='${pocketBaseAccountId}') && metadata.persisted_cycle_tag='${cycleTag}'`,
-    });
-  }
+  const records =
+    primaryRecords.length > 0
+      ? primaryRecords
+      : await listAllRecords("transactions", {
+          sort: "-date",
+          expand:
+            "account_id,to_account_id,category_id,shop_id,person_id,parent_transaction_id",
+          filter: `(account_id='${pocketBaseAccountId}' || to_account_id='${pocketBaseAccountId}') && metadata.persisted_cycle_tag='${cycleTag}'`,
+        });
 
   return records.map((item) => mapTransaction(item, sourceAccountId));
 }
@@ -1824,10 +1882,11 @@ export async function getPocketBaseUnifiedTransactions(
   options: {
     limit?: number;
     includeVoided?: boolean;
+    includeHistoryCount?: boolean;
   } = {},
 ): Promise<TransactionWithDetails[]> {
-  const { limit = 1000, includeVoided = false } = options;
-  console.log("[DB:PB] transactions.unified.list", { limit, includeVoided });
+  const { limit = 1000, includeVoided = false, includeHistoryCount = false } = options;
+  console.log("[DB:PB] transactions.unified.list", { limit, includeVoided, includeHistoryCount });
 
   // The /transactions page separately loads accounts, categories, people, shops.
   // Fetching without expand avoids PB 400 errors caused by JOIN complexity on bulk queries.
@@ -1867,7 +1926,16 @@ export async function getPocketBaseUnifiedTransactions(
     }
   }
 
-  const result = records.map((item) => mapTransaction(item, ""));
+  let historyCountMap = new Map<string, number>();
+  if (includeHistoryCount) {
+    historyCountMap = await fetchPocketBaseHistoryCountMap(
+      records.map((item) => String(item.id || "")),
+    );
+  }
+
+  const result = records.map((item) =>
+    mapTransaction(item, "", historyCountMap.get(String(item.id || "")) ?? 0),
+  );
   console.log("[DB:PB] transactions.unified.list →", result.length, "records");
   return result;
 }

@@ -12,6 +12,7 @@ type SheetSyncTransaction = {
   note?: string | null
   tag?: string | null
   shop_name?: string | null
+  shop_id?: string | null
   amount?: number | null
   original_amount?: number | null
   cashback_share_percent?: number | null
@@ -186,7 +187,13 @@ function extractSheetId(sheetUrl: string | null | undefined): string | null {
 
 async function getProfileSheetLink(personId: string): Promise<string | null> {
   const pbId = toPocketBaseId(personId, 'people')
-  const profile = await pocketbaseGetById<Person>('people', pbId)
+  let profile: Person | null = null
+
+  try {
+    profile = await pocketbaseGetById<Person>('people', pbId)
+  } catch {
+    profile = null
+  }
 
   if (profile) {
     const sheetLink = profile.sheet_link?.trim() ?? null
@@ -202,13 +209,17 @@ async function getProfileSheetLink(personId: string): Promise<string | null> {
 
   // Fallback: Check if it's a debt account (which also has owner_id)
   // Actually, people should be enough.
-  const account = await pocketbaseGetById<Account>('accounts', pbId)
-  if (account && account.owner_id) {
-    const owner = await pocketbaseGetById<Person>('people', account.owner_id as string)
-    if (owner?.sheet_link) {
-      const sheetLink = owner.sheet_link?.trim()
-      if (isValidWebhook(sheetLink)) return sheetLink
+  try {
+    const account = await pocketbaseGetById<Account>('accounts', pbId)
+    if (account && account.owner_id) {
+      const owner = await pocketbaseGetById<Person>('people', account.owner_id as string)
+      if (owner?.sheet_link) {
+        const sheetLink = owner.sheet_link?.trim()
+        if (isValidWebhook(sheetLink)) return sheetLink
+      }
     }
+  } catch {
+    // The provided id is usually a person id; account lookup is best-effort only.
   }
 
   console.warn('[Sheet] No valid sheet link configured for', personId)
@@ -217,7 +228,13 @@ async function getProfileSheetLink(personId: string): Promise<string | null> {
 
 async function getProfileSheetInfo(personId: string): Promise<{ sheetUrl: string | null; sheetId: string | null }> {
   const pbId = toPocketBaseId(personId, 'people')
-  const profile = await pocketbaseGetById<Person>('people', pbId)
+  let profile: Person | null = null
+
+  try {
+    profile = await pocketbaseGetById<Person>('people', pbId)
+  } catch {
+    profile = null
+  }
 
   if (profile?.google_sheet_url) {
     const sheetUrl = profile.google_sheet_url.trim()
@@ -225,13 +242,17 @@ async function getProfileSheetInfo(personId: string): Promise<{ sheetUrl: string
   }
 
   // Fallback to account owner
-  const account = await pocketbaseGetById<Account>('accounts', pbId)
-  if (account?.owner_id) {
-    const owner = await pocketbaseGetById<Person>('people', account.owner_id as string)
-    if (owner?.google_sheet_url) {
-      const sheetUrl = owner.google_sheet_url.trim()
-      return { sheetUrl, sheetId: extractSheetId(sheetUrl) }
+  try {
+    const account = await pocketbaseGetById<Account>('accounts', pbId)
+    if (account?.owner_id) {
+      const owner = await pocketbaseGetById<Person>('people', account.owner_id as string)
+      if (owner?.google_sheet_url) {
+        const sheetUrl = owner.google_sheet_url.trim()
+        return { sheetUrl, sheetId: extractSheetId(sheetUrl) }
+      }
     }
+  } catch {
+    // Ignore account lookup failure for person ids.
   }
 
   return { sheetUrl: null, sheetId: null }
@@ -337,14 +358,22 @@ export async function syncTransactionToSheet(
 
     let resolvedBankInfo = manualBankInfo
     if (showBankAccount && linkedBankId) {
-      const acc = await pocketbaseGetById<Account>('accounts', linkedBankId)
-      if (acc) {
-        const parts = [
-          acc.name,
-          acc.account_number,
-          acc.receiver_name
-        ].filter(Boolean)
-        resolvedBankInfo = parts.join(' ') || manualBankInfo
+      try {
+        const acc = await pocketbaseGetById<Account>('accounts', linkedBankId)
+        if (acc) {
+          const parts = [
+            acc.name,
+            acc.account_number,
+            acc.receiver_name
+          ].filter(Boolean)
+          resolvedBankInfo = parts.join(' ') || manualBankInfo
+        }
+      } catch (error) {
+        console.warn('[syncTransactionToSheet] linked bank account lookup failed, fallback to manual bank info', {
+          personId,
+          linkedBankId,
+          error: (error as any)?.message,
+        })
       }
     }
 
@@ -356,8 +385,21 @@ export async function syncTransactionToSheet(
       qrImageUrl: qrImageUrl ? '(URL set)' : '(not set)'
     })
 
+    let resolvedShopName = txn.shop_name ?? ''
+    if (!resolvedShopName && txn.shop_id) {
+      try {
+        const shopRecord = await pocketbaseGetById<{ name?: string | null }>('shops', txn.shop_id)
+        resolvedShopName = shopRecord?.name ?? ''
+      } catch {
+        resolvedShopName = ''
+      }
+    }
+
     const payload = {
-      ...buildPayload(txn, action),
+      ...buildPayload({
+        ...txn,
+        shop_name: resolvedShopName,
+      }, action),
       person_id: personId,
       cycle_tag: resolveCycleTagForSheet(txn.tag, txn.occurred_at ?? txn.date ?? null),
       bank_account: showBankAccount ? resolvedBankInfo : '', // Send empty to clear if disabled
@@ -436,14 +478,22 @@ export async function syncAllTransactions(personId: string) {
 
     let resolvedBankInfo = manualBankInfo
     if (showBankAccount && linkedBankId) {
-      const acc = await pocketbaseGetById<Account>('accounts', linkedBankId)
-      if (acc) {
-        const parts = [
-          acc.name,
-          acc.account_number,
-          acc.receiver_name
-        ].filter(Boolean)
-        resolvedBankInfo = parts.join(' ') || manualBankInfo
+      try {
+        const acc = await pocketbaseGetById<Account>('accounts', linkedBankId)
+        if (acc) {
+          const parts = [
+            acc.name,
+            acc.account_number,
+            acc.receiver_name
+          ].filter(Boolean)
+          resolvedBankInfo = parts.join(' ') || manualBankInfo
+        }
+      } catch (error) {
+        console.warn('[syncAllTransactions] linked bank account lookup failed, fallback to manual bank info', {
+          personId,
+          linkedBankId,
+          error: (error as any)?.message,
+        })
       }
     }
 
@@ -782,14 +832,22 @@ export async function syncCycleTransactions(
 
     let resolvedBankInfo = manualBankInfo
     if (showBankAccount && linkedBankId) {
-      const acc = await pocketbaseGetById<Account>('accounts', linkedBankId)
-      if (acc) {
-        const parts = [
-          acc.name,
-          acc.account_number,
-          acc.receiver_name
-        ].filter(Boolean)
-        resolvedBankInfo = parts.join(' ') || manualBankInfo
+      try {
+        const acc = await pocketbaseGetById<Account>('accounts', linkedBankId)
+        if (acc) {
+          const parts = [
+            acc.name,
+            acc.account_number,
+            acc.receiver_name
+          ].filter(Boolean)
+          resolvedBankInfo = parts.join(' ') || manualBankInfo
+        }
+      } catch (error) {
+        console.warn('[syncCycleTransactions] linked bank account lookup failed, fallback to manual bank info', {
+          personId,
+          linkedBankId,
+          error: (error as any)?.message,
+        })
       }
     }
 
