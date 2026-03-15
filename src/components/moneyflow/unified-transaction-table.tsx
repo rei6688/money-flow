@@ -380,9 +380,6 @@ export const UnifiedTransactionTable = React.forwardRef<
       },
       [],
     );
-    const lastSheetHoverToastKeyRef = useRef<string | null>(null);
-    const sheetHoverToastTimerRef = useRef<number | null>(null);
-
     const handleQuickSyncCycle = useCallback(
       async (personId: string, cycleTag: string) => {
         const loadingId = toast.loading(`Syncing ${cycleTag} to Sheet...`);
@@ -391,47 +388,6 @@ export const UnifiedTransactionTable = React.forwardRef<
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ personId, cycleTag, action: "sync" }),
-          });
-
-          const payload = (await response.json().catch(() => null)) as
-            | {
-                error?: string;
-                requestId?: string;
-                stage?: string;
-                syncedCount?: number;
-              }
-            | null;
-
-          if (!response.ok) {
-            const details = [
-              payload?.requestId ? `Req ${payload.requestId}` : "",
-              payload?.stage ? `Stage ${payload.stage}` : "",
-            ]
-              .filter(Boolean)
-              .join(" | ");
-
-            toast.error(payload?.error || "Sheet sync failed", {
-              id: loadingId,
-              description: details || undefined,
-            });
-            return;
-          }
-
-          toast.success(`Synced cycle ${cycleTag}`, {
-            id: loadingId,
-            description:
-              typeof payload?.syncedCount === "number"
-                ? `${payload.syncedCount} rows synced`
-                : undefined,
-          });
-        } catch (error) {
-          const message =
-            error instanceof Error ? error.message : "Sheet sync failed";
-          toast.error(message, { id: loadingId });
-        }
-      },
-      [],
-    );
 
     const cancelQuickSheetSyncToast = useCallback(() => {
       if (sheetHoverToastTimerRef.current !== null) {
@@ -3799,7 +3755,27 @@ export const UnifiedTransactionTable = React.forwardRef<
                                 >
                                   {sheetUrl && (
                                     <CustomTooltip
-                                      content={`Open Tracking Sheet for ${personName} (${debtTag})`}
+                                      content={
+                                        <div className="flex min-w-[230px] items-center justify-between gap-2">
+                                          <span>
+                                            Open Tracking Sheet for {personName} ({debtTag})
+                                          </span>
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.preventDefault();
+                                              e.stopPropagation();
+                                              void handleQuickSyncCycle(
+                                                personId,
+                                                debtTag,
+                                              );
+                                            }}
+                                            className="inline-flex items-center rounded border border-emerald-300 bg-emerald-500 px-2 py-0.5 text-[10px] font-bold text-white hover:bg-emerald-600 transition-colors"
+                                          >
+                                            Sync
+                                          </button>
+                                        </div>
+                                      }
                                     >
                                       <button
                                         onClick={(e) => {
@@ -3810,13 +3786,6 @@ export const UnifiedTransactionTable = React.forwardRef<
                                             "noopener,noreferrer",
                                           );
                                         }}
-                                        onMouseEnter={() => {
-                                          showQuickSheetSyncToast(
-                                            personId,
-                                            debtTag,
-                                          );
-                                        }}
-                                        onMouseLeave={cancelQuickSheetSyncToast}
                                         className="inline-flex h-full w-7 items-center justify-center rounded-none bg-emerald-200 border-y border-l border-emerald-300 text-emerald-900 cursor-pointer hover:bg-emerald-300 transition-colors"
                                       >
                                         <FileSpreadsheet className="h-3 w-3" />
