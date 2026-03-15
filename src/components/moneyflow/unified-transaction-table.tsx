@@ -383,8 +383,8 @@ export const UnifiedTransactionTable = React.forwardRef<
     );
     const defaultColumns: ColumnConfig[] = [
       { key: "date", label: "Date", defaultWidth: 138, minWidth: 124 },
-      { key: "shop", label: "Notes Flow", defaultWidth: 420, minWidth: 320 },
-      { key: "account", label: "Flow", defaultWidth: 220, minWidth: 170 },
+      { key: "shop", label: "Notes Flow", defaultWidth: 340, minWidth: 240 },
+      { key: "account", label: "Money Flow", defaultWidth: 320, minWidth: 240 },
       { key: "amount", label: "BASE", defaultWidth: 120, minWidth: 100 },
       {
         key: "total_back",
@@ -398,7 +398,7 @@ export const UnifiedTransactionTable = React.forwardRef<
         defaultWidth: 120,
         minWidth: 100,
       },
-      { key: "category", label: "Category", defaultWidth: 180 },
+      { key: "category", label: "Category", defaultWidth: 150, minWidth: 120 },
       { key: "people", label: "People", defaultWidth: 150 },
       { key: "id", label: "ID", defaultWidth: 100 },
       {
@@ -4330,7 +4330,7 @@ export const UnifiedTransactionTable = React.forwardRef<
                                   )}
                                   <span
                                     className={cn(
-                                      "inline-flex items-center h-6 px-2 rounded-md border border-slate-200 bg-white font-black tabular-nums tracking-tight truncate",
+                                      "font-black tabular-nums tracking-tight truncate",
                                       amountClass,
                                     )}
                                     style={{ fontSize: `0.95em` }}
@@ -4368,22 +4368,14 @@ export const UnifiedTransactionTable = React.forwardRef<
                                 ? cashbackAmount
                                 : Math.max(0, baseAmount - finalDisp);
 
-                            const netDelta = finalDisp - baseAmount;
-                            const netDeltaClass =
-                              netDelta > 0
+                            const netBackAmount =
+                              cashbackAmount > 0
+                                ? cashbackAmount
+                                : Math.max(0, baseAmount - finalDisp);
+                            const netBackClass =
+                              netBackAmount > 0
                                 ? "text-emerald-700"
-                                : netDelta < 0
-                                  ? "text-rose-600"
-                                  : "text-slate-500";
-
-                            const formatSigned = (value: number) => {
-                              const absValue = numberFormatter.format(
-                                Math.abs(value),
-                              );
-                              if (value > 0) return `+${absValue}`;
-                              if (value < 0) return `-${absValue}`;
-                              return "0";
-                            };
+                                : "text-slate-500";
 
                             const hasCashback =
                               percentDisp > 0 ||
@@ -4392,15 +4384,12 @@ export const UnifiedTransactionTable = React.forwardRef<
 
                             if (!hasCashback) {
                               return (
-                                <div className="flex flex-col items-end gap-1 w-full">
+                                <div className="flex flex-col items-start gap-1 w-full">
                                   <span
-                                    className={cn(
-                                      "inline-flex items-center h-6 px-2 rounded-md border border-slate-200 bg-white font-black tabular-nums tracking-tight truncate opacity-80",
-                                      netDeltaClass,
-                                    )}
+                                    className="font-black tabular-nums tracking-tight truncate opacity-70 text-slate-500"
                                     style={{ fontSize: `0.95em` }}
                                   >
-                                    {formatSigned(netDelta)}
+                                    0
                                   </span>
                                 </div>
                               );
@@ -4429,13 +4418,13 @@ export const UnifiedTransactionTable = React.forwardRef<
                                         </span>
                                       </div>
                                       <div className="flex justify-between gap-4 font-bold border-t border-slate-200 pt-1 mt-1">
-                                        <span>Net Delta:</span>
+                                        <span>Back Amount:</span>
                                         <span className="font-bold">
-                                          {formatSigned(netDelta)}
+                                          {numberFormatter.format(netBackAmount)}
                                         </span>
                                       </div>
                                       <div className="text-[10px] text-slate-400 italic pt-1">
-                                        Formula: Final Amount - Base Amount
+                                        Formula: Base Amount - Final Amount
                                       </div>
                                     </div>
                                   }
@@ -4445,11 +4434,11 @@ export const UnifiedTransactionTable = React.forwardRef<
                                     <span
                                       className={cn(
                                         "inline-flex items-center h-6 px-2 rounded-md border border-slate-200 bg-white font-black tabular-nums tracking-tight truncate",
-                                        netDeltaClass,
+                                        netBackClass,
                                       )}
                                       style={{ fontSize: `0.95em` }}
                                     >
-                                      {formatSigned(netDelta)}
+                                      {numberFormatter.format(netBackAmount)}
                                     </span>
                                   </div>
                                 </CustomTooltip>
