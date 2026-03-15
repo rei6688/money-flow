@@ -127,7 +127,7 @@ function HistoryEntry({ entry, index }: { entry: TransactionHistoryWithDiff; ind
                 <div className="overflow-x-auto">
                     <table className="w-full min-w-[620px] text-sm border-collapse">
                         <thead>
-                            <tr className="bg-slate-50/70 border-b border-slate-200">
+                            <tr className="sticky top-0 z-10 bg-slate-100 border-b border-slate-200">
                                 <th className="text-left px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">Field</th>
                                 <th className="text-left px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">Before</th>
                                 <th className="text-left px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">After</th>

@@ -380,6 +380,86 @@ export const UnifiedTransactionTable = React.forwardRef<
       },
       [],
     );
+    const lastSheetHoverToastKeyRef = useRef<string | null>(null);
+
+    const handleQuickSyncCycle = useCallback(
+      async (personId: string, cycleTag: string) => {
+        const loadingId = toast.loading(`Syncing ${cycleTag} to Sheet...`);
+        try {
+          const response = await fetch("/api/sheets/manage", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ personId, cycleTag, action: "sync" }),
+          });
+
+          const payload = (await response.json().catch(() => null)) as
+            | {
+                error?: string;
+                requestId?: string;
+                stage?: string;
+                syncedCount?: number;
+              }
+            | null;
+
+          if (!response.ok) {
+            const details = [
+              payload?.requestId ? `Req ${payload.requestId}` : "",
+              payload?.stage ? `Stage ${payload.stage}` : "",
+            ]
+              .filter(Boolean)
+              .join(" | ");
+
+            toast.error(payload?.error || "Sheet sync failed", {
+              id: loadingId,
+              description: details || undefined,
+            });
+            return;
+          }
+
+          toast.success(`Synced cycle ${cycleTag}`, {
+            id: loadingId,
+            description:
+              typeof payload?.syncedCount === "number"
+                ? `${payload.syncedCount} rows synced`
+                : undefined,
+          });
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : "Sheet sync failed";
+          toast.error(message, { id: loadingId });
+        }
+      },
+      [],
+    );
+
+    const showQuickSheetSyncToast = useCallback(
+      (personId?: string | null, cycleTag?: string | null) => {
+        if (!personId || !cycleTag) return;
+
+        const toastKey = `${personId}:${cycleTag}`;
+        if (lastSheetHoverToastKeyRef.current === toastKey) return;
+
+        lastSheetHoverToastKeyRef.current = toastKey;
+        toast("Quick sync this cycle", {
+          description: `Cycle ${cycleTag}`,
+          duration: 4500,
+          action: {
+            label: "Sync",
+            onClick: () => {
+              void handleQuickSyncCycle(personId, cycleTag);
+            },
+          },
+        });
+
+        window.setTimeout(() => {
+          if (lastSheetHoverToastKeyRef.current === toastKey) {
+            lastSheetHoverToastKeyRef.current = null;
+          }
+        }, 5000);
+      },
+      [handleQuickSyncCycle],
+    );
+
     const defaultColumns: ColumnConfig[] = [
       { key: "date", label: "Date", defaultWidth: 138, minWidth: 124 },
       { key: "shop", label: "Notes Flow", defaultWidth: 300, minWidth: 220 },
@@ -3714,6 +3794,12 @@ export const UnifiedTransactionTable = React.forwardRef<
                                             sheetUrl,
                                             "_blank",
                                             "noopener,noreferrer",
+                                          );
+                                        }}
+                                        onMouseEnter={() => {
+                                          showQuickSheetSyncToast(
+                                            personId,
+                                            debtTag,
                                           );
                                         }}
                                         className="inline-flex h-full w-7 items-center justify-center rounded-none bg-emerald-200 border-y border-l border-emerald-300 text-emerald-900 cursor-pointer hover:bg-emerald-300 transition-colors"

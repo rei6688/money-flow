@@ -197,7 +197,8 @@ function flattenTransaction(txn: Record<string, unknown>): Record<string, unknow
         'amount', 'original_amount', 'occurred_at', 'note', 'status',
         'category_id', 'account_id', 'target_account_id', 'person_id',
         'shop_id', 'type', 'cashback_share_percent', 'cashback_share_fixed',
-        'tag', 'metadata'
+        'tag', 'metadata', 'debt_cycle_tag', 'persisted_cycle_tag',
+        'statement_cycle_tag', 'final_price', 'date'
     ]
 
     const result: Record<string, unknown> = {}
@@ -206,6 +207,16 @@ function flattenTransaction(txn: Record<string, unknown>): Record<string, unknow
             result[field] = txn[field]
         }
     }
+
+    // Normalise legacy/current transaction date keys for stable comparison.
+    if (!('occurred_at' in result) && 'date' in result) {
+        result.occurred_at = result.date
+    }
+
+    if (!('date' in result) && 'occurred_at' in result) {
+        result.date = result.occurred_at
+    }
+
     return result
 }
 
@@ -227,6 +238,7 @@ function computeDiffs(
         amount: 'Amount',
         original_amount: 'Original Amount',
         occurred_at: 'Date',
+        date: 'Date',
         note: 'Note',
         status: 'Status',
         category_id: 'Category',
@@ -238,6 +250,10 @@ function computeDiffs(
         cashback_share_percent: 'Cashback %',
         cashback_share_fixed: 'Cashback Fixed',
         tag: 'Tag',
+        debt_cycle_tag: 'Debt Cycle Tag',
+        persisted_cycle_tag: 'Persisted Cycle Tag',
+        statement_cycle_tag: 'Statement Cycle Tag',
+        final_price: 'Final Price',
     }
 
     for (const key of allKeys) {
