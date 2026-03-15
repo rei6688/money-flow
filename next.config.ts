@@ -4,6 +4,7 @@ const nextConfig: NextConfig = {
   typescript: {
     ignoreBuildErrors: true,
   },
+  distDir: process.env.NODE_ENV === 'development' ? '.next-dev' : '.next',
   turbopack: {
     root: process.cwd(),
   },

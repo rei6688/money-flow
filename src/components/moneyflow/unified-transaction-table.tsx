@@ -961,13 +961,106 @@ export const UnifiedTransactionTable = React.forwardRef<
       router.refresh();
     }, [router]);
 
+    const validateRefundVoidOrder = useCallback(
+      (target: TransactionWithDetails): { title: string; description: string } | null => {
+        const findTxnById = (id: string | null | undefined) => {
+          if (!id) return null;
+          return tableData.find((txn) => txn.id === id) ?? null;
+        };
+        const effectiveStatus = (txn: TransactionWithDetails | null) => {
+          if (!txn) return null;
+          return statusOverrides[txn.id] ?? txn.status;
+        };
+
+        const targetMeta = parseMetadata(target.metadata);
+        const isGD3 = targetMeta?.is_refund_confirmation === true;
+        const isGD2 =
+          typeof targetMeta?.original_transaction_id === 'string' && !isGD3;
+
+        if (isGD3) return null;
+
+        if (isGD2) {
+          const directGd3Id =
+            typeof targetMeta?.confirmation_transaction_id === 'string'
+              ? targetMeta.confirmation_transaction_id
+              : null;
+          const gd3FromDirectLink = findTxnById(directGd3Id);
+          const gd3Fallback =
+            tableData.find((txn) => {
+              const meta = parseMetadata(txn.metadata);
+              return (
+                meta?.is_refund_confirmation === true &&
+                meta?.refund_request_id === target.id
+              );
+            }) ?? null;
+          const gd3Txn = gd3FromDirectLink ?? gd3Fallback;
+          if (gd3Txn && effectiveStatus(gd3Txn) !== 'void') {
+            return {
+              title: 'Void blocked by refund order',
+              description: 'Please void GD3 (refund confirmation) before GD2.',
+            };
+          }
+          return null;
+        }
+
+        const isGD1 =
+          target.status === 'waiting_refund' ||
+          targetMeta?.has_refund_request === true ||
+          typeof targetMeta?.refund_request_id === 'string';
+        if (!isGD1) return null;
+
+        const gd2Id =
+          typeof targetMeta?.refund_request_id === 'string'
+            ? targetMeta.refund_request_id
+            : null;
+        const gd2Txn = findTxnById(gd2Id);
+        if (gd2Txn && effectiveStatus(gd2Txn) !== 'void') {
+          return {
+            title: 'Void blocked by refund order',
+            description: 'Please void GD2 (refund request) before GD1.',
+          };
+        }
+
+        const gd3IdFromOriginal =
+          typeof targetMeta?.refund_confirmation_id === 'string'
+            ? targetMeta.refund_confirmation_id
+            : null;
+        const gd2Meta = parseMetadata(gd2Txn?.metadata);
+        const gd3IdFromGd2 =
+          typeof gd2Meta?.confirmation_transaction_id === 'string'
+            ? gd2Meta.confirmation_transaction_id
+            : null;
+        const gd3Txn =
+          findTxnById(gd3IdFromOriginal) ?? findTxnById(gd3IdFromGd2) ?? null;
+        if (gd3Txn && effectiveStatus(gd3Txn) !== 'void') {
+          return {
+            title: 'Void blocked by refund order',
+            description: 'Please void GD3 (refund confirmation) before GD1.',
+          };
+        }
+
+        return null;
+      },
+      [tableData, statusOverrides],
+    );
+
     const handleVoidConfirm = async () => {
       if (!confirmVoidTarget) return;
       setVoidError(null);
+
+      const orderWarning = validateRefundVoidOrder(confirmVoidTarget);
+      if (orderWarning) {
+        toast.error(orderWarning.title, {
+          description: orderWarning.description,
+        });
+        return;
+      }
+
       setIsVoiding(true);
       if (setIsGlobalLoading) setIsGlobalLoading(true);
       if (setLoadingMessage) setLoadingMessage("Voiding transaction...");
       const targetId = confirmVoidTarget.id;
+      setConfirmVoidTarget(null);
       setUpdatingTxnIds((prev) => new Set(prev).add(targetId));
 
       try {
@@ -977,7 +1070,6 @@ export const UnifiedTransactionTable = React.forwardRef<
           return;
         }
         setStatusOverrides((prev) => ({ ...prev, [targetId]: "void" }));
-        closeVoidDialog();
         if (onSuccess) await onSuccess();
         window.dispatchEvent(new CustomEvent("refresh-account-data"));
         router.refresh();
@@ -1003,7 +1095,6 @@ export const UnifiedTransactionTable = React.forwardRef<
             </div>,
             { duration: 8000 },
           );
-          closeVoidDialog();
         } else if (
           err.message &&
           err.message.includes("void the confirmation transaction first")
@@ -1011,7 +1102,6 @@ export const UnifiedTransactionTable = React.forwardRef<
           toast.error("Please void the Confirmation Transaction (GD3) first.", {
             description: "Linked confirmation exists.",
           });
-          closeVoidDialog();
         } else {
           setVoidError(
             err.message || "Unable to void transaction. Please try again.",
@@ -1135,6 +1225,18 @@ export const UnifiedTransactionTable = React.forwardRef<
     // Duplicate feature temporarily removed - will rewrite from scratch later
 
     const handleEdit = (txn: TransactionWithDetails) => {
+      const metadata = parseMetadata((txn as any).metadata);
+      const isBatchTxn = Boolean((metadata as any)?.batch_id);
+      if (isBatchTxn) {
+        const explicitStep = String((metadata as any)?.batch_step || "").toLowerCase();
+        const isStep3 = explicitStep === "step3" || Boolean((metadata as any)?.batch_item_id) || String(txn.note || "").startsWith("[C] ");
+        toast.warning(
+          isStep3
+            ? "This is a Batch Step 3 confirmed transaction. Editing may desync checklist confirmation."
+            : "This is a Batch Step 1 funding transaction. Editing may desync batch funding totals.",
+          { duration: 5000 },
+        );
+      }
       if (externalOnEdit) {
         externalOnEdit(txn);
         return;
@@ -1635,6 +1737,21 @@ export const UnifiedTransactionTable = React.forwardRef<
       const hasRefundRequest =
         (txn.metadata as any)?.has_refund_request ||
         (txn.metadata as any)?.refund_request_id;
+      const resolvedCategory = txn.category_id
+        ? categories.find((category) => category.id === txn.category_id)
+        : null;
+      const categoryName = String(
+        txn.category_name || resolvedCategory?.name || "",
+      ).toLowerCase();
+      const hasShoppingSignal =
+        Boolean(txn.shop_id) ||
+        categoryName.includes("shopping") ||
+        categoryName.includes("mua s") ||
+        categoryName.includes("shop");
+      const canShowCancelActions =
+        !isPendingRefund &&
+        (txn.type === "expense" || txn.type === "debt") &&
+        hasShoppingSignal;
       const baseItemClass = isSheet
         ? "flex w-full items-center gap-3 px-4 py-3 text-sm font-semibold text-slate-700"
         : "flex w-full items-center gap-2 rounded px-3 py-1 text-left hover:bg-slate-50";
@@ -1723,7 +1840,7 @@ export const UnifiedTransactionTable = React.forwardRef<
           </button>
 
           {/* Refund & Cancel Actions - Restored */}
-          {!isPendingRefund && txn.type === "expense" && (
+          {canShowCancelActions && (
             <>
               <button
                 className={`${neutralItemClass} ${hasRefundRequest ? "opacity-50 cursor-not-allowed" : ""}`}
@@ -2003,7 +2120,7 @@ export const UnifiedTransactionTable = React.forwardRef<
               style={{ scrollbarGutter: "stable" }}
             >
               {/* Table Loading Overlay */}
-              {(isVoiding || isRestoring || isDeleting) && (
+              {(isRestoring || isDeleting) && (
                 <div className="absolute inset-0 bg-white/60 backdrop-blur-[2px] z-[100] flex items-center justify-center transition-all duration-300 animate-in fade-in">
                   <div className="flex flex-col items-center gap-3 p-6 rounded-2xl bg-white shadow-xl border border-slate-100 scale-in-95 animate-in">
                     <div className="relative">
@@ -2012,11 +2129,9 @@ export const UnifiedTransactionTable = React.forwardRef<
                     </div>
                     <div className="flex flex-col items-center gap-1">
                       <span className="text-sm font-black text-slate-800 uppercase tracking-tight">
-                        {isVoiding
-                          ? "Voiding Transaction..."
-                          : isRestoring
-                            ? "Restoring Transaction..."
-                            : "Deleting Permanently..."}
+                        {isRestoring
+                          ? "Restoring Transaction..."
+                          : "Deleting Permanently..."}
                       </span>
                       <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest animate-pulse">
                         Processing Database
@@ -2230,10 +2345,19 @@ export const UnifiedTransactionTable = React.forwardRef<
                       const sequenceNumber =
                         (currentPage - 1) * pageSize + rowIndex + 1;
                       const txnMetadata = parseMetadata(txn.metadata);
+                      const refundStatus =
+                        typeof txnMetadata?.refund_status === 'string'
+                          ? txnMetadata.refund_status
+                          : null;
+                      const hasActiveRefundRequest =
+                        (txnMetadata?.has_refund_request ||
+                          txnMetadata?.refund_request_id) &&
+                        refundStatus !== 'request_voided' &&
+                        refundStatus !== 'void';
                       // Refund SEQ Logic (Global for row)
                       let refundSeq = 0;
                       if (
-                        txnMetadata?.has_refund_request ||
+                        hasActiveRefundRequest ||
                         txn.status === "waiting_refund"
                       )
                         refundSeq = 1;
@@ -2760,9 +2884,16 @@ export const UnifiedTransactionTable = React.forwardRef<
                             // 2. VISUAL BADGES
                             // Hourglass (Tx 1): Shows on Original if refund is requested but not fully refunded
                             const refundStatus = originalMetadata.refund_status;
+                            const hasActiveRefundRequest =
+                              Boolean(
+                                originalMetadata.has_refund_request ||
+                                  originalMetadata.refund_request_id,
+                              ) &&
+                              refundStatus !== 'request_voided' &&
+                              refundStatus !== 'void';
                             // Show hourglass only if requested AND NOT completed
                             const showHourglass =
-                              Boolean(originalMetadata.has_refund_request) &&
+                              hasActiveRefundRequest &&
                               txn.status !== "refunded" &&
                               refundStatus !== "completed" &&
                               refundStatus !== "refunded";
@@ -2770,7 +2901,7 @@ export const UnifiedTransactionTable = React.forwardRef<
                             // Reversed/Refunded Icon (Tx 1): Shows if refund is COMPLETED
                             // This replaces the hourglass when the cycle is done (GD3 exists)
                             const showReversed =
-                              Boolean(originalMetadata.has_refund_request) &&
+                              hasActiveRefundRequest &&
                               (refundStatus === "completed" ||
                                 refundStatus === "refunded" ||
                                 txn.status === "refunded");
@@ -3072,6 +3203,8 @@ export const UnifiedTransactionTable = React.forwardRef<
 
                                     const batchId = metadata?.batch_id;
                                     const batchType = metadata?.type;
+                                    const batchStep = String(metadata?.batch_step || "").toLowerCase();
+                                    const isBatchStep3 = batchStep === "step3" || Boolean(metadata?.batch_item_id) || String(txn.note || "").startsWith("[C] ");
                                     let batchBadge = null;
                                     if (
                                       batchId ||
@@ -3091,7 +3224,7 @@ export const UnifiedTransactionTable = React.forwardRef<
                                             className="inline-flex items-center gap-1.5 px-2 h-[22px] min-w-[70px] justify-center rounded-full bg-indigo-50 text-indigo-600 border border-indigo-200 text-[10px] font-bold whitespace-nowrap transition-all duration-200 shadow-sm hover:bg-indigo-100"
                                           >
                                             <ShoppingBag className="h-3 w-3" />
-                                            BATCH
+                                            {isBatchStep3 ? "BATCH S3" : "BATCH S1"}
                                           </Link>
                                         </CustomTooltip>
                                       );
@@ -3111,6 +3244,46 @@ export const UnifiedTransactionTable = React.forwardRef<
                                       );
                                     }
 
+                                    const updatedAtRaw =
+                                      (txn as any).updated_at ||
+                                      (txn as any).updated ||
+                                      null;
+                                    const createdAtRaw =
+                                      (txn as any).created_at ||
+                                      (txn as any).created ||
+                                      null;
+                                    const editedFromMetadata = Boolean(
+                                      metadata?.is_edited ||
+                                        metadata?.edited ||
+                                        metadata?.edited_at,
+                                    );
+                                    const historyCount = Number(
+                                      (txn as any).history_count || 0,
+                                    );
+                                    const editedFromTimestamps =
+                                      Boolean(updatedAtRaw) &&
+                                      Boolean(createdAtRaw) &&
+                                      Math.abs(
+                                        new Date(String(updatedAtRaw)).getTime() -
+                                          new Date(String(createdAtRaw)).getTime(),
+                                      ) >
+                                        2000;
+                                    const isEdited =
+                                      historyCount > 0 ||
+                                      editedFromMetadata ||
+                                      editedFromTimestamps;
+                                    let editedBadge = null;
+                                    if (isEdited) {
+                                      editedBadge = (
+                                        <CustomTooltip content="Transaction was edited">
+                                          <span className="inline-flex items-center gap-1.5 px-2 h-[22px] min-w-[70px] justify-center rounded-full bg-cyan-50 text-cyan-700 border border-cyan-200 text-[10px] font-bold whitespace-nowrap transition-all duration-200 shadow-sm">
+                                            <Pencil className="h-3 w-3" />
+                                            EDITED
+                                          </span>
+                                        </CustomTooltip>
+                                      );
+                                    }
+
                                     const showBadges =
                                       currentInstallmentBadge ||
                                       refundBadge ||
@@ -3119,7 +3292,8 @@ export const UnifiedTransactionTable = React.forwardRef<
                                       duplicationBadge ||
                                       hasBulkDebts ||
                                       batchBadge ||
-                                      confirmedBadge;
+                                      confirmedBadge ||
+                                      editedBadge;
 
                                     if (!showBadges) return null;
 
@@ -3132,6 +3306,7 @@ export const UnifiedTransactionTable = React.forwardRef<
                                         {duplicationBadge}
                                         {batchBadge}
                                         {confirmedBadge}
+                                        {editedBadge}
                                         {hasBulkDebts &&
                                           (() => {
                                             const bulkAllocation =
@@ -3699,7 +3874,7 @@ export const UnifiedTransactionTable = React.forwardRef<
                                 <div className="flex items-center gap-1.5 w-full min-w-0 h-9">
                                   {borderedTypeIconWide}
 
-                                  <div className="flex-1 min-w-0 max-w-[42%] h-9 px-1.5 py-1 rounded-md bg-slate-50 border border-slate-200 flex items-center gap-2 cursor-pointer hover:bg-slate-100 transition-colors group/pill shadow-sm">
+                                  <div className="flex-1 min-w-0 h-9 px-1.5 py-1 rounded-md bg-slate-50 border border-slate-200 flex items-center gap-2 cursor-pointer hover:bg-slate-100 transition-colors group/pill shadow-sm">
                                     {/* Flow Badge */}
                                     {flowBadgeType && (
                                       <span
@@ -3718,75 +3893,77 @@ export const UnifiedTransactionTable = React.forwardRef<
                                       </span>
                                     )}
 
-                                    {/* Avatar + Name Area with its own tooltip */}
-                                    <CustomTooltip
-                                      content={`Open ${displayName} in new tab`}
-                                    >
-                                      <div
-                                        className="flex-1 min-w-0 flex items-center gap-2 h-full"
-                                        onClick={(e) => {
-                                          if (displayLink) {
-                                            e.stopPropagation();
-                                            window.open(
-                                              displayLink,
-                                              "_blank",
-                                              "noopener,noreferrer",
-                                            );
-                                          }
-                                        }}
+                                    <div className="flex-1 min-w-0 flex items-center justify-center gap-2">
+                                      {/* Avatar + Name Area with its own tooltip */}
+                                      <CustomTooltip
+                                        content={`Open ${displayName} in new tab`}
                                       >
-                                        <div className="shrink-0 h-7 w-7 flex items-center justify-center">
-                                          {displayImage ? (
-                                            <img
-                                              src={displayImage}
-                                              alt=""
-                                              className={cn(
-                                                "h-full w-full object-contain",
-                                                displayIsAccount
-                                                  ? "rounded-sm"
-                                                  : "rounded-none",
-                                              )}
-                                            />
-                                          ) : (
-                                            <div
-                                              className={cn(
-                                                "h-full w-full flex items-center justify-center border border-slate-100 bg-white",
-                                                displayIsAccount
-                                                  ? "rounded-sm"
-                                                  : "rounded-none",
-                                              )}
+                                        <div
+                                          className="min-w-0 flex items-center gap-2 h-full max-w-[65%]"
+                                          onClick={(e) => {
+                                            if (displayLink) {
+                                              e.stopPropagation();
+                                              window.open(
+                                                displayLink,
+                                                "_blank",
+                                                "noopener,noreferrer",
+                                              );
+                                            }
+                                          }}
+                                        >
+                                          <div className="shrink-0 h-7 w-7 flex items-center justify-center">
+                                            {displayImage ? (
+                                              <img
+                                                src={displayImage}
+                                                alt=""
+                                                className={cn(
+                                                  "h-full w-full object-contain",
+                                                  displayIsAccount
+                                                    ? "rounded-sm"
+                                                    : "rounded-none",
+                                                )}
+                                              />
+                                            ) : (
+                                              <div
+                                                className={cn(
+                                                  "h-full w-full flex items-center justify-center border border-slate-100 bg-white",
+                                                  displayIsAccount
+                                                    ? "rounded-sm"
+                                                    : "rounded-none",
+                                                )}
+                                              >
+                                                {displayIsAccount ? (
+                                                  <Wallet className="h-4 w-4 text-slate-400" />
+                                                ) : (
+                                                  <User className="h-4 w-4 text-slate-400" />
+                                                )}
+                                              </div>
+                                            )}
+                                          </div>
+                                          <div className="min-w-0 overflow-hidden">
+                                            <span className="block text-sm font-bold text-slate-700 truncate group-hover/pill:text-blue-600 transition-colors">
+                                              {displayName}
+                                            </span>
+                                          </div>
+                                        </div>
+                                      </CustomTooltip>
+
+                                      {/* Badge area */}
+                                      {badgeToDisplay && (
+                                        <div className="shrink-0">
+                                          {isCycleBadge ? (
+                                            <CustomTooltip
+                                              content={`Open details for ${displayName} in new tab filtered by cycle ${cycleTag || ""}`}
                                             >
-                                              {displayIsAccount ? (
-                                                <Wallet className="h-4 w-4 text-slate-400" />
-                                              ) : (
-                                                <User className="h-4 w-4 text-slate-400" />
-                                              )}
-                                            </div>
+                                              {badgeToDisplay}
+                                            </CustomTooltip>
+                                          ) : (
+                                            // If debt tag (it manages its own tooltip inside the component)
+                                            badgeToDisplay
                                           )}
                                         </div>
-                                        <div className="flex-1 min-w-0 overflow-hidden">
-                                          <span className="block text-sm font-bold text-slate-700 truncate group-hover/pill:text-blue-600 transition-colors">
-                                            {displayName}
-                                          </span>
-                                        </div>
-                                      </div>
-                                    </CustomTooltip>
-
-                                    {/* Badge area */}
-                                    {badgeToDisplay && (
-                                      <div className="shrink-0">
-                                        {isCycleBadge ? (
-                                          <CustomTooltip
-                                            content={`Open details for ${displayName} in new tab filtered by cycle ${cycleTag || ""}`}
-                                          >
-                                            {badgeToDisplay}
-                                          </CustomTooltip>
-                                        ) : (
-                                          // If debt tag (it manages its own tooltip inside the component)
-                                          badgeToDisplay
-                                        )}
-                                      </div>
-                                    )}
+                                      )}
+                                    </div>
                                   </div>
                                 </div>
                               );
@@ -3842,7 +4019,7 @@ export const UnifiedTransactionTable = React.forwardRef<
                               badges: React.ReactNode[],
                               isTarget: boolean,
                             ) => (
-                              <div className="flex-1 min-w-0 max-w-[42%] h-9 px-1.5 py-1 rounded-md bg-slate-50 border border-slate-200 flex items-center gap-2 cursor-pointer hover:bg-slate-100 transition-colors group/pill shadow-sm">
+                              <div className="flex-1 min-w-0 h-9 px-1.5 py-1 rounded-md bg-slate-50 border border-slate-200 flex items-center gap-2 cursor-pointer hover:bg-slate-100 transition-colors group/pill shadow-sm">
                                 {/* Avatar + Name area */}
                                 <CustomTooltip
                                   content={`Open ${entity.name} in new tab`}
@@ -4487,6 +4664,7 @@ export const UnifiedTransactionTable = React.forwardRef<
                                   `border-r border-slate-200 ${col.key === "amount" ? "text-right" : ""} ${
                                     col.key === "amount" ? "font-bold" : ""
                                   } ${col.key === "amount" ? amountClass : ""} ${voidedTextClass} truncate`,
+                                  col.key === "account" && "pr-1",
                                   col.key === "date" && "p-1",
                                   col.key === "date" &&
                                     "relative overflow-visible",

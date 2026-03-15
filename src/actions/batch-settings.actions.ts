@@ -1,7 +1,15 @@
 'use server'
 
-import { createClient } from '@/lib/supabase/server'
+import { pocketbaseCreate, pocketbaseList, pocketbaseUpdate, toPocketBaseId } from '@/services/pocketbase/server'
 import { revalidatePath } from 'next/cache'
+
+async function getBatchSettingsRecord(bankType: 'MBB' | 'VIB') {
+    const result = await pocketbaseList<any>('batch_settings', {
+        filter: `bank_type = "${bankType}"`,
+        perPage: 1,
+    })
+    return result.items[0] || null
+}
 
 export async function updateBatchSettingsAction(
     bankType: 'MBB' | 'VIB',
@@ -16,19 +24,19 @@ export async function updateBatchSettingsAction(
     }
 ) {
     try {
-        const supabase = await createClient()
+        const existing = await getBatchSettingsRecord(bankType)
+        const payload = {
+            ...settings,
+            bank_type: bankType,
+            updated_at: new Date().toISOString(),
+        }
 
-        const { data, error } = await supabase
-            .from('batch_settings')
-            .update({
-                ...settings,
-                updated_at: new Date().toISOString()
+        const data = existing
+            ? await pocketbaseUpdate<any>('batch_settings', existing.id, payload)
+            : await pocketbaseCreate<any>('batch_settings', {
+                id: toPocketBaseId(`batch-settings:${bankType}`, 'batchsettings'),
+                ...payload,
             })
-            .eq('bank_type', bankType)
-            .select()
-            .single()
-
-        if (error) throw error
 
         revalidatePath('/batch')
         revalidatePath('/batch/settings')
@@ -42,15 +50,10 @@ export async function updateBatchSettingsAction(
 
 export async function getBatchSettingsAction(bankType: 'MBB' | 'VIB') {
     try {
-        const supabase = await createClient()
-
-        const { data, error } = await supabase
-            .from('batch_settings')
-            .select('*')
-            .eq('bank_type', bankType)
-            .single()
-
-        if (error) throw error
+        const data = await getBatchSettingsRecord(bankType)
+        if (!data) {
+            return { success: false, error: `No batch settings found for ${bankType}` }
+        }
 
         return { success: true, data }
     } catch (error: any) {

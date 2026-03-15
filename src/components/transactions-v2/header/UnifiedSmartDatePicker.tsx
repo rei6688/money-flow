@@ -67,8 +67,12 @@ function parseSmartDateInput(input: string): { mode: 'date'; date: Date } | { mo
   const matches = trimmed.match(/\d{1,2}[\/-]\d{1,2}[\/-]\d{4}/g) || []
   if (matches.length < 2) return null
 
-  const first = parseStrictDate(matches[0])
-  const second = parseStrictDate(matches[1])
+  const firstRaw = matches[0]
+  const secondRaw = matches[1]
+  if (!firstRaw || !secondRaw) return null
+
+  const first = parseStrictDate(firstRaw)
+  const second = parseStrictDate(secondRaw)
   if (!first || !second) return null
 
   const from = first <= second ? first : second

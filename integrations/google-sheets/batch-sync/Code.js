@@ -1,5 +1,5 @@
 // MoneyFlow 3 - Google Apps Script (Batch Management)
-// VERSION: 1.6 (Auto-deploy enabled)
+// VERSION: 1.7 (Auto-deploy enabled)
 // Task: MBB data starts at A3, VIB data starts at A5. Remove MBB script header.
 
 function doPost(e) {
@@ -88,23 +88,28 @@ function doPost(e) {
                 var rows = [];
                 for (var i = 0; i < items.length; i++) {
                     var item = items[i];
+                    var accountNo = item.bank_number || item.account_number || item.account_no || "";
+                    var note = item.note || item.payment_detail || item.content || "";
+                    var bankName = item.bank_name || item.beneficiary_bank || "";
+                    var receiverName = item.receiver_name || item.beneficiary_name || "";
+
                     if (bankType === 'MBB') {
                         rows.push([
                             i + 1,
-                            "'" + (item.bank_number || ""),
-                            (item.receiver_name || ""),
-                            (item.bank_name || ""),
+                            "'" + accountNo,
+                            receiverName,
+                            bankName,
                             (item.amount || 0),
-                            (item.note || "")
+                            note
                         ]);
                     } else {
                         rows.push([
                             i + 1,
-                            (item.receiver_name || ""),
-                            "'" + (item.bank_number || ""),
+                            receiverName,
+                            "'" + accountNo,
                             (item.amount || 0),
-                            (item.note || ""),
-                            (item.bank_name || "")
+                            note,
+                            bankName
                         ]);
                     }
                 }
@@ -116,7 +121,7 @@ function doPost(e) {
                 "result": "success",
                 "bank_type": bankType,
                 "count": items.length,
-                "version": "1.6"
+                "version": "1.7"
             })).setMimeType(ContentService.MimeType.JSON);
 
         } finally {
@@ -126,7 +131,7 @@ function doPost(e) {
         return ContentService.createTextOutput(JSON.stringify({
             "result": "error",
             "error": e.toString(),
-            "version": "1.6"
+            "version": "1.7"
         })).setMimeType(ContentService.MimeType.JSON);
     }
 }

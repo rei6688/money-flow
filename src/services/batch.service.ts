@@ -332,7 +332,7 @@ export async function confirmBatchItem(itemId: string, targetAccountId?: string)
             type: 'transfer',
             is_installment: isInstallment,
             installment_plan_id: installmentPlanId,
-            metadata: { type: 'batch_funding', batch_id: item.batch_id, batch_item_id: item.id } as any
+            metadata: { type: 'batch_funding', batch_step: 'step3', batch_id: item.batch_id, batch_item_id: item.id } as any
         })
         .select()
         .single()
@@ -750,7 +750,7 @@ export async function fundBatch(batchId: string, overrideSourceAccountId?: strin
             }
         }
 
-        const metadata = { batch_id: batch.id, type: 'batch_funding_additional' }
+        const metadata = { batch_id: batch.id, type: 'batch_funding_additional', batch_step: 'step1' }
 
         const nameParts = batch.name.split(' ')
         const tag = nameParts[nameParts.length - 1]
@@ -804,7 +804,7 @@ export async function fundBatch(batchId: string, overrideSourceAccountId?: strin
     const nameParts = batch.name.split(' ')
     const rawTag = nameParts[nameParts.length - 1]
     const tag = normalizeMonthTag(rawTag) ?? rawTag
-    const metadata = { batch_id: batch.id, type: 'batch_funding' }
+    const metadata = { batch_id: batch.id, type: 'batch_funding', batch_step: 'step1' }
 
     // 4. Create Transaction [Single-Table Schema]
     const { data: txn, error: txnError } = await supabase

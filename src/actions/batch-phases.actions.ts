@@ -1,6 +1,6 @@
 'use server'
 
-import { createClient } from '@/lib/supabase/server'
+import { pocketbaseCreate, pocketbaseList, pocketbaseUpdate, toPocketBaseId } from '@/services/pocketbase/server'
 import { revalidatePath } from 'next/cache'
 
 export type BatchPhase = {
@@ -20,18 +20,13 @@ export type BatchPhase = {
  */
 export async function listBatchPhasesAction(bankType: 'MBB' | 'VIB') {
     try {
-        const supabase: any = await createClient()
+        const result = await pocketbaseList<any>('batch_phases', {
+            filter: `bank_type = "${bankType}" && is_active = true`,
+            sort: 'sort_order',
+            perPage: 100,
+        })
 
-        const { data, error } = await supabase
-            .from('batch_phases')
-            .select('*')
-            .eq('bank_type', bankType)
-            .eq('is_active', true)
-            .order('sort_order', { ascending: true })
-
-        if (error) throw error
-
-        return { success: true, data: data as BatchPhase[] }
+        return { success: true, data: result.items as BatchPhase[] }
     } catch (error: any) {
         console.error('Error listing batch phases:', error)
         return { success: false, error: error.message, data: [] as BatchPhase[] }
@@ -43,18 +38,13 @@ export async function listBatchPhasesAction(bankType: 'MBB' | 'VIB') {
  */
 export async function listAllBatchPhasesAction(bankType: 'MBB' | 'VIB') {
     try {
-        const supabase: any = await createClient()
+        const result = await pocketbaseList<any>('batch_phases', {
+            filter: `bank_type = "${bankType}" && is_active = true`,
+            sort: 'sort_order',
+            perPage: 100,
+        })
 
-        const { data, error } = await supabase
-            .from('batch_phases')
-            .select('*')
-            .eq('bank_type', bankType)
-            .eq('is_active', true)
-            .order('sort_order', { ascending: true })
-
-        if (error) throw error
-
-        return { success: true, data: data as BatchPhase[] }
+        return { success: true, data: result.items as BatchPhase[] }
     } catch (error: any) {
         console.error('Error listing all batch phases:', error)
         return { success: false, error: error.message, data: [] as BatchPhase[] }
@@ -72,34 +62,28 @@ export async function createBatchPhaseAction(params: {
     sortOrder?: number
 }) {
     try {
-        const supabase: any = await createClient()
-
         // Auto-assign sort_order if not provided
         let sortOrder = params.sortOrder
         if (sortOrder === undefined) {
-            const { data: existing } = await supabase
-                .from('batch_phases')
-                .select('sort_order')
-                .eq('bank_type', params.bankType)
-                .order('sort_order', { ascending: false })
-                .limit(1)
+            const existing = await pocketbaseList<any>('batch_phases', {
+                filter: `bank_type = "${params.bankType}"`,
+                sort: '-sort_order',
+                perPage: 1,
+            })
 
-            sortOrder = existing && existing.length > 0 ? existing[0].sort_order + 1 : 0
+            sortOrder = existing.items && existing.items.length > 0 ? Number(existing.items[0].sort_order || 0) + 1 : 0
         }
 
-        const { data, error } = await supabase
-            .from('batch_phases')
-            .insert({
-                bank_type: params.bankType,
-                label: params.label,
-                period_type: params.periodType,
-                cutoff_day: params.cutoffDay,
-                sort_order: sortOrder
-            })
-            .select()
-            .single()
-
-        if (error) throw error
+        const id = toPocketBaseId(`${params.bankType}:${params.label}:${Date.now()}`, 'batchph')
+        const data = await pocketbaseCreate<any>('batch_phases', {
+            id,
+            bank_type: params.bankType,
+            label: params.label,
+            period_type: params.periodType,
+            cutoff_day: params.cutoffDay,
+            sort_order: sortOrder,
+            is_active: true,
+        })
 
         revalidatePath('/batch')
         revalidatePath('/batch/settings')
@@ -125,8 +109,6 @@ export async function updateBatchPhaseAction(
     }
 ) {
     try {
-        const supabase: any = await createClient()
-
         const updateData: any = { updated_at: new Date().toISOString() }
         if (updates.label !== undefined) updateData.label = updates.label
         if (updates.periodType !== undefined) updateData.period_type = updates.periodType
@@ -134,14 +116,7 @@ export async function updateBatchPhaseAction(
         if (updates.sortOrder !== undefined) updateData.sort_order = updates.sortOrder
         if (updates.isActive !== undefined) updateData.is_active = updates.isActive
 
-        const { data, error } = await supabase
-            .from('batch_phases')
-            .update(updateData)
-            .eq('id', id)
-            .select()
-            .single()
-
-        if (error) throw error
+        const data = await pocketbaseUpdate<any>('batch_phases', toPocketBaseId(id, 'batchph'), updateData)
 
         revalidatePath('/batch')
         revalidatePath('/batch/settings')
@@ -158,16 +133,10 @@ export async function updateBatchPhaseAction(
  */
 export async function deleteBatchPhaseAction(id: string, options?: { revalidate?: boolean }) {
     try {
-        const supabase: any = await createClient()
-
-        const { data, error } = await supabase
-            .from('batch_phases')
-            .update({ is_active: false, updated_at: new Date().toISOString() })
-            .eq('id', id)
-            .select()
-            .single()
-
-        if (error) throw error
+        const data = await pocketbaseUpdate<any>('batch_phases', toPocketBaseId(id, 'batchph'), {
+            is_active: false,
+            updated_at: new Date().toISOString(),
+        })
 
         // Only revalidate if explicitly requested (default true for backward compatibility)
         if (options?.revalidate !== false) {
@@ -187,15 +156,11 @@ export async function deleteBatchPhaseAction(id: string, options?: { revalidate?
  */
 export async function reorderBatchPhasesAction(orderedIds: string[]) {
     try {
-        const supabase: any = await createClient()
-
         for (let i = 0; i < orderedIds.length; i++) {
-            const { error } = await supabase
-                .from('batch_phases')
-                .update({ sort_order: i, updated_at: new Date().toISOString() })
-                .eq('id', orderedIds[i])
-
-            if (error) throw error
+            await pocketbaseUpdate<any>('batch_phases', toPocketBaseId(orderedIds[i], 'batchph'), {
+                sort_order: i,
+                updated_at: new Date().toISOString(),
+            })
         }
 
         revalidatePath('/batch')

@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { RotateCcw, CheckCircle2, Circle, Loader2, Calendar, ArrowRight, Wallet, ShoppingBag, Edit2, XCircle, Info, ExternalLink, ThumbsUp, MapPin, RefreshCw, FileSpreadsheet, Search, ChevronDown, ChevronRight, Check, AlertCircle, Settings, Plus, List } from 'lucide-react'
+import { RotateCcw, CheckCircle2, Circle, Loader2, Calendar, ArrowRight, Wallet, ShoppingBag, Edit2, XCircle, Info, ExternalLink, ThumbsUp, MapPin, RefreshCw, FileSpreadsheet, Search, ChevronDown, ChevronRight, Check, AlertCircle, Settings, Plus, List, Copy, Database } from 'lucide-react'
 import { getChecklistDataAction } from '@/actions/batch-checklist.actions'
 import { upsertBatchItemAmountAction, bulkInitializeFromMasterAction, toggleBatchItemConfirmAction, bulkConfirmBatchItemsAction, bulkUnconfirmBatchItemsAction } from '@/actions/batch-speed.actions'
 import { fundBatchAction, sendBatchToSheetAction } from '@/actions/batch.actions'
@@ -18,15 +18,27 @@ import { formatShortVietnameseCurrency, formatVietnameseCurrencyText } from '@/l
 import { Combobox } from '@/components/ui/combobox'
 import Link from 'next/link'
 import { differenceInDays, format, startOfDay } from 'date-fns'
+import { BatchMasterItemSlide } from '@/components/batch/BatchMasterItemSlide'
 
 interface BatchMasterChecklistProps {
     bankType: 'MBB' | 'VIB'
     accounts: any[]
+    bankMappings?: any[]
     period?: 'before' | 'after'
     monthYear?: string
+    initialPhaseId?: string | null
+    onPhaseChange?: (phaseId: string) => void
 }
 
-export function BatchMasterChecklist({ bankType, accounts, period, monthYear }: BatchMasterChecklistProps) {
+export function BatchMasterChecklist({
+    bankType,
+    accounts,
+    bankMappings = [],
+    period,
+    monthYear,
+    initialPhaseId = null,
+    onPhaseChange,
+}: BatchMasterChecklistProps) {
     const currentYear = new Date().getFullYear()
     const currentMonth = new Date().getMonth() + 1 // 1-12
     const currentMonthStr = `${currentYear}-${String(currentMonth).padStart(2, '0')}`
@@ -37,11 +49,15 @@ export function BatchMasterChecklist({ bankType, accounts, period, monthYear }: 
     const [loading, setLoading] = useState(true)
     const [phases, setPhases] = useState<any[]>([])
     const [selectedPhaseId, setSelectedPhaseId] = useState<string | null>(null)
-    const [openPhaseId, setOpenPhaseId] = useState<string | null>(null)
     const [performingAction, setPerformingAction] = useState(false)
     const [confirmFundOpen, setConfirmFundOpen] = useState(false)
     const [confirmStep3Open, setConfirmStep3Open] = useState(false)
     const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set())
+    const [phaseDirtyMap, setPhaseDirtyMap] = useState<Record<string, boolean>>({})
+    const [phaseLatestFundTxnMap, setPhaseLatestFundTxnMap] = useState<Record<string, string>>({})
+    const [isMasterItemSlideOpen, setIsMasterItemSlideOpen] = useState(false)
+    const [editingMasterItem, setEditingMasterItem] = useState<any | null>(null)
+    const [focusedMasterItemId, setFocusedMasterItemId] = useState<string | null>(null)
 
     // Guard: skip focus-refresh during initial load
     const loadedOnce = React.useRef(false)
@@ -77,8 +93,8 @@ export function BatchMasterChecklist({ bankType, accounts, period, monthYear }: 
 
     // Effective phases: use phases from DB, or fall back to 2 synthetic phases if none configured
     const effectivePhases = phases.length > 0 ? phases : [
-        { id: 'before', bank_type: bankType, label: 'Phase 1: Before', period_type: 'before', cutoff_day: 15, sort_order: 0, is_active: true },
-        { id: 'after', bank_type: bankType, label: 'Phase 2: After', period_type: 'after', cutoff_day: 15, sort_order: 1, is_active: true }
+        { id: 'before', bank_type: bankType, label: 'Phase 1', period_type: 'before', cutoff_day: 15, sort_order: 0, is_active: true },
+        { id: 'after', bank_type: bankType, label: 'Phase 2', period_type: 'after', cutoff_day: 15, sort_order: 1, is_active: true }
     ]
     const monthNames = [
         "January", "February", "March", "April", "May", "June",
@@ -92,6 +108,23 @@ export function BatchMasterChecklist({ bankType, accounts, period, monthYear }: 
     useEffect(() => {
         if (monthYear) setSelectedMonth(monthYear)
     }, [monthYear])
+
+    useEffect(() => {
+        if (!initialPhaseId) return
+        setSelectedPhaseId(initialPhaseId)
+    }, [initialPhaseId])
+
+    useEffect(() => {
+        const visible = period
+            ? effectivePhases.filter((p: any) => p.period_type === period)
+            : effectivePhases
+        if (!visible.length) return
+        if (!selectedPhaseId || !visible.some((p: any) => p.id === selectedPhaseId)) {
+            const firstId = visible[0].id
+            setSelectedPhaseId(firstId)
+            onPhaseChange?.(firstId)
+        }
+    }, [period, phases, selectedPhaseId, onPhaseChange, bankType])
 
     useEffect(() => {
         refreshChecklist()
@@ -109,7 +142,6 @@ export function BatchMasterChecklist({ bankType, accounts, period, monthYear }: 
                 if (!selectedPhaseId) {
                     const firstId = loadedPhases.length > 0 ? loadedPhases[0].id : 'before'
                     setSelectedPhaseId(firstId)
-                    setOpenPhaseId(firstId)
                 }
             }
         } catch (error) {
@@ -138,8 +170,8 @@ export function BatchMasterChecklist({ bankType, accounts, period, monthYear }: 
 
         // Use DB phases or fall back to synthetic Phase 1/2
         const activePhases = phases.length > 0 ? phases : [
-            { id: 'before', bank_type: bankType, label: 'Phase 1: Before', period_type: 'before', cutoff_day: 15, sort_order: 0 },
-            { id: 'after', bank_type: bankType, label: 'Phase 2: After', period_type: 'after', cutoff_day: 15, sort_order: 1 }
+            { id: 'before', bank_type: bankType, label: 'Phase 1', period_type: 'before', cutoff_day: 15, sort_order: 0 },
+            { id: 'after', bank_type: bankType, label: 'Phase 2', period_type: 'after', cutoff_day: 15, sort_order: 1 }
         ]
 
         const byPhase: Record<string, any[]> = {}
@@ -148,6 +180,8 @@ export function BatchMasterChecklist({ bankType, accounts, period, monthYear }: 
         activePhases.forEach((phase: any) => {
             byPhase[phase.id] = []
         })
+
+        const usedBatchItemIds = new Set<string>()
 
         masterItems.forEach(master => {
             // Determine which phase this master item belongs to
@@ -163,19 +197,75 @@ export function BatchMasterChecklist({ bankType, accounts, period, monthYear }: 
 
             // Find matching batch for this phase + month
             const phase = activePhases.find((p: any) => p.id === phaseId)
-            const periodBatches = batches.filter(b =>
+            const monthBatches = batches.filter(b =>
                 b.month_year === selectedMonth &&
-                b.bank_type === bankType &&
+                b.bank_type === bankType
+            )
+
+            const phasePreferredBatches = monthBatches.filter(b =>
                 (b.phase_id === phaseId || b.period === phase?.period_type ||
                     b.name?.toLowerCase().includes(phase?.period_type === 'before' ? 'early' : 'late'))
             )
 
-            const targetBatch = periodBatches[0]
-            const existingItem = targetBatch?.batch_items?.find((bi: any) => bi.master_item_id === master.id)
+            const isSameMaster = (bi: any) => {
+                if (bi.master_item_id === master.id) return true
+
+                // Fallback for migrated rows where master_item_id may be missing/legacy.
+                const norm = (v: any) => String(v || '').trim().toLowerCase()
+                const digits = (v: any) => String(v || '').replace(/\D/g, '')
+
+                const sameReceiver = norm(bi.receiver_name) === norm(master.receiver_name)
+                const biBankNo = digits(bi.bank_number)
+                const masterBankNo = digits(master.bank_number)
+                const sameBankNo = biBankNo && masterBankNo ? biBankNo === masterBankNo : false
+                const biTarget = String(bi.target_account_id || '')
+                const masterTarget = String(master.target_account_id || '')
+                const sameTarget = biTarget && masterTarget ? biTarget === masterTarget : false
+                const sameBankName = norm(bi.bank_name) && norm(master.bank_name)
+                    ? norm(bi.bank_name) === norm(master.bank_name)
+                    : true
+
+                // Prefer exact receiver + bank number/target; bank name is soft match.
+                return sameReceiver && (sameBankNo || sameTarget) && sameBankName
+            }
+
+            const findMatchInBatches = (candidateBatches: any[]) => {
+                for (const b of candidateBatches) {
+                    const match = (b.batch_items || []).find((bi: any) => {
+                        if (!bi?.id) return false
+                        if (usedBatchItemIds.has(String(bi.id))) return false
+                        return isSameMaster(bi)
+                    })
+                    if (match) return { batch: b, item: match }
+                }
+                return null
+            }
+
+            // Prefer batches for current phase/period, but fall back to any batch in month.
+            const matched = findMatchInBatches(phasePreferredBatches) || findMatchInBatches(monthBatches)
+            const phaseKeyword = phase?.period_type === 'before' ? 'early' : 'late'
+            const scoreBatch = (b: any) => {
+                let score = 0
+                if (b.phase_id === phaseId) score += 100
+                if (b.period === phase?.period_type) score += 80
+                if (String(b.name || '').toLowerCase().includes(phaseKeyword)) score += 50
+                if (b.funding_transaction_id) score += 20
+                score += Math.min(20, Number((b.batch_items || []).length || 0))
+                return score
+            }
+            const candidateBatches = phasePreferredBatches.length > 0 ? phasePreferredBatches : monthBatches
+            const bestPhaseBatch = [...candidateBatches].sort((a: any, b: any) => {
+                const diff = scoreBatch(b) - scoreBatch(a)
+                if (diff !== 0) return diff
+                return String(b.updated_at || b.created || '').localeCompare(String(a.updated_at || a.created || ''))
+            })[0] || null
+            const targetBatch = matched?.batch || bestPhaseBatch || null
+            const existingItem = matched?.item || null
+            if (existingItem?.id) usedBatchItemIds.add(String(existingItem.id))
 
             byPhase[phaseId].push({
                 ...master,
-                amount: existingItem?.amount || 0,
+                amount: Number(existingItem?.amount || 0),
                 status: existingItem?.status || 'none',
                 batch_item_id: existingItem?.id,
                 batch_id: targetBatch?.id,
@@ -205,10 +295,102 @@ export function BatchMasterChecklist({ bankType, accounts, period, monthYear }: 
         }
     }
 
+    function selectPhase(phaseId: string) {
+        setSelectedPhaseId(phaseId)
+        onPhaseChange?.(phaseId)
+    }
+
+    const handlePhaseDirtyChange = React.useCallback((phaseId: string, dirty: boolean) => {
+        setPhaseDirtyMap(prev => {
+            if (prev[phaseId] === dirty) return prev
+            return { ...prev, [phaseId]: dirty }
+        })
+    }, [])
+
+    function logPhaseDebug(action: 'step1-request' | 'step1-run' | 'step2-run') {
+        const currentPhase = effectivePhases.find((p: any) => p.id === selectedPhaseId)
+        const phaseItems = selectedPhaseId ? (itemsByPhase[selectedPhaseId] || []) : []
+        const totalAmount = phaseItems.reduce((sum: number, i: any) => sum + Math.abs(Number(i.amount || 0)), 0)
+        const batchIds = Array.from(new Set(phaseItems.map((i: any) => i.batch_id).filter(Boolean)))
+
+        console.log('[BatchDebug]', {
+            action,
+            bankType,
+            selectedMonth,
+            selectedPhaseId,
+            selectedPhaseLabel: currentPhase?.label || null,
+            selectedPhasePeriod: currentPhase?.period_type || null,
+            itemsCount: phaseItems.length,
+            itemsWithBatch: phaseItems.filter((i: any) => Boolean(i.batch_id)).length,
+            itemsWithTxn: phaseItems.filter((i: any) => Boolean(i.transaction_id)).length,
+            amountsPreview: phaseItems.slice(0, 8).map((i: any) => ({
+                id: i.id,
+                receiver: i.receiver_name,
+                amount: i.amount,
+                amountNumber: Number(i.amount || 0),
+                batch_id: i.batch_id || null,
+                batch_item_id: i.batch_item_id || null,
+            })),
+            totalAmount,
+            batchIds,
+            fundSourceAccountId,
+        })
+    }
+
+    function resolvePhaseBatch(phaseId: string | null | undefined) {
+        if (!phaseId) return null
+        const phase = effectivePhases.find((p: any) => p.id === phaseId)
+        if (!phase) return null
+
+        const monthBatches = batches.filter((b: any) =>
+            b.month_year === selectedMonth &&
+            b.bank_type === bankType
+        )
+
+        const phaseKeyword = phase.period_type === 'before' ? 'early' : 'late'
+        const scoreBatch = (b: any) => {
+            let score = 0
+            if (b.phase_id === phaseId) score += 100
+            if (b.period === phase.period_type) score += 80
+            if (String(b.name || '').toLowerCase().includes(phaseKeyword)) score += 50
+            if (b.funding_transaction_id) score += 20
+            score += Math.min(20, Number((b.batch_items || []).length || 0))
+            return score
+        }
+
+        const sorted = [...monthBatches].sort((a: any, b: any) => {
+            const diff = scoreBatch(b) - scoreBatch(a)
+            if (diff !== 0) return diff
+            return String(b.updated_at || b.created || '').localeCompare(String(a.updated_at || a.created || ''))
+        })
+
+        return sorted[0] || null
+    }
+
+    function openMasterItemEditor(item: any) {
+        setEditingMasterItem(item)
+        setFocusedMasterItemId(item?.id || null)
+        setIsMasterItemSlideOpen(true)
+    }
+
     function requestGlobalFund() {
+        if (selectedPhaseId && phaseDirtyMap[selectedPhaseId]) {
+            toast.error('Please save this phase amounts first before Fund')
+            return
+        }
+        logPhaseDebug('step1-request')
         const items = selectedPhaseId ? (itemsByPhase[selectedPhaseId] || []) : []
         const bId = items.find((i: any) => i.batch_id)?.batch_id
-        const totalAmount = items.reduce((sum: number, i: any) => sum + Math.abs(i.amount || 0), 0)
+        const uiTotalAmount = items.reduce((sum: number, i: any) => sum + Math.abs(Number(i.amount || 0)), 0)
+        const batchTotalAmount = bId
+            ? Math.abs(
+                (batches.find((b: any) => b.id === bId)?.batch_items || []).reduce(
+                    (sum: number, bi: any) => sum + Math.abs(Number(bi.amount || 0)),
+                    0
+                )
+            )
+            : 0
+        const totalAmount = Math.max(uiTotalAmount, batchTotalAmount)
         const currentPhase = effectivePhases.find((p: any) => p.id === selectedPhaseId)
 
         if (!bId) {
@@ -223,16 +405,21 @@ export function BatchMasterChecklist({ bankType, accounts, period, monthYear }: 
     }
 
     async function handleGlobalFund() {
+        logPhaseDebug('step1-run')
         setConfirmFundOpen(false)
         setPerformingAction(true)
         const currentPhase = effectivePhases.find((p: any) => p.id === selectedPhaseId)
         toast.info(`Process: Starting Fund Allocation...`, { id: 'fund-process' })
         try {
             const items = selectedPhaseId ? (itemsByPhase[selectedPhaseId] || []) : []
-            const bId = items.find((i: any) => i.batch_id)?.batch_id
+            const resolvedBatch = resolvePhaseBatch(selectedPhaseId)
+            const bId = items.find((i: any) => i.batch_id)?.batch_id || resolvedBatch?.id
 
             const result = await fundBatchAction(bId, fundSourceAccountId)
             if (result.transactionId) {
+                if (selectedPhaseId) {
+                    setPhaseLatestFundTxnMap(prev => ({ ...prev, [selectedPhaseId]: result.transactionId }))
+                }
                 toast.success(`${currentPhase?.label || 'Phase'} funded successfully`, { id: 'fund-process', duration: 4000 })
                 toast.message('Next recommended step:', {
                     description: 'Wait a moment, then click Step 2: To Sheet.'
@@ -251,12 +438,26 @@ export function BatchMasterChecklist({ bankType, accounts, period, monthYear }: 
     }
 
     async function handleGlobalToSheet() {
+        if (selectedPhaseId && phaseDirtyMap[selectedPhaseId]) {
+            toast.error('Please save this phase amounts first before Send to Sheet')
+            return
+        }
+        logPhaseDebug('step2-run')
         setPerformingAction(true)
         try {
             const items = selectedPhaseId ? (itemsByPhase[selectedPhaseId] || []) : []
             const currentPhase = effectivePhases.find((p: any) => p.id === selectedPhaseId)
             const bId = items.find((i: any) => i.batch_id)?.batch_id
-            const totalAmount = items.reduce((sum: number, i: any) => sum + Math.abs(i.amount || 0), 0)
+            const uiTotalAmount = items.reduce((sum: number, i: any) => sum + Math.abs(Number(i.amount || 0)), 0)
+            const batchTotalAmount = bId
+                ? Math.abs(
+                    (batches.find((b: any) => b.id === bId)?.batch_items || []).reduce(
+                        (sum: number, bi: any) => sum + Math.abs(Number(bi.amount || 0)),
+                        0
+                    )
+                )
+                : 0
+            const totalAmount = Math.max(uiTotalAmount, batchTotalAmount)
 
             if (!bId) {
                 toast.error(`Sync Master for ${currentPhase?.label || 'this phase'} first`)
@@ -268,8 +469,29 @@ export function BatchMasterChecklist({ bankType, accounts, period, monthYear }: 
                 setPerformingAction(false)
                 return
             }
+            const unresolvedPositiveRows = items.filter((i: any) => Number(i.amount || 0) > 0 && !i.batch_item_id)
+            if (unresolvedPositiveRows.length > 0) {
+                toast.error(`Cannot send: ${unresolvedPositiveRows.length} row(s) missing batch item link. Please Sync Master + Save phase amount first.`)
+                setPerformingAction(false)
+                return
+            }
+            if (items.length > 0 && currentPhaseBatchItemIds.length === 0) {
+                toast.error('Cannot resolve phase item IDs. Please save/sync this phase, then try Step 2 again.')
+                setPerformingAction(false)
+                return
+            }
 
-            toast.promise(sendBatchToSheetAction(bId), {
+            toast.promise(sendBatchToSheetAction(bId, {
+                batchItemIds: currentPhaseBatchItemIds,
+                batchItemMasterMap: items.reduce((acc: Record<string, string>, row: any) => {
+                    const batchItemId = String(row.batch_item_id || '').trim()
+                    const masterId = String(row.id || '').trim()
+                    if (batchItemId && masterId) acc[batchItemId] = masterId
+                    return acc
+                }, {}),
+                phaseLabel: currentPhase?.label || phaseNameText,
+                phasePeriod: currentPhase?.period_type,
+            }), {
                 loading: `Sending ${currentPhase?.label || 'phase'} to Google Sheets...`,
                 success: (data) => {
                     if (data.success) return `Successfully sent ${(data as any).count} items to sheet!`
@@ -393,8 +615,34 @@ export function BatchMasterChecklist({ bankType, accounts, period, monthYear }: 
     const currentPhaseItems = selectedPhaseId ? (itemsByPhase[selectedPhaseId] || []) : []
     const totalItems = currentPhaseItems.length;
     const confirmedCount = currentPhaseItems.filter((i: any) => i.status === 'confirmed').length;
-    const bId = currentPhaseItems.find((i: any) => i.batch_id)?.batch_id;
-    const currentBatch = batches?.find((b: any) => b.id === bId);
+    const resolvedPhaseBatch = resolvePhaseBatch(selectedPhaseId)
+    const bId = currentPhaseItems.find((i: any) => i.batch_id)?.batch_id || resolvedPhaseBatch?.id;
+    const currentBatch = batches?.find((b: any) => b.id === bId) || resolvedPhaseBatch;
+    const currentPhaseBatchItemIds: string[] = Array.from(new Set(
+        currentPhaseItems
+            .map((item: any) => {
+                const directId = String(item.batch_item_id || '').trim()
+                if (directId) return directId
+
+                const masterId = String(item.id || '').trim()
+                if (!masterId) return ''
+
+                const fallback = (currentBatch?.batch_items || []).find(
+                    (bi: any) => String(bi.master_item_id || '') === masterId
+                )
+                return String(fallback?.id || '').trim()
+            })
+            .filter((id: string) => id.length > 0)
+    ))
+    const latestFundTxnId = selectedPhaseId ? phaseLatestFundTxnMap[selectedPhaseId] : null
+    const step1TxnId = currentBatch?.funding_transaction?.id || latestFundTxnId || null
+    const step3TxnLines = currentPhaseItems
+        .filter((item: any) => Boolean(item.transaction_id))
+        .map((item: any) => ({
+            id: item.transaction_id,
+            label: item.receiver_name || 'Confirmed Item',
+            amount: Number(item.amount || 0),
+        }))
     let phaseStatusLabel = 'Active';
     let PhaseStatusIcon = Circle;
     let phaseStatusColor = 'text-slate-500 bg-slate-100';
@@ -524,48 +772,105 @@ export function BatchMasterChecklist({ bankType, accounts, period, monthYear }: 
                 </div>
             </div>
 
-            {/* Checklist View */}
-            {/* Summary Overview Strip */}
-            {!period && (
-                <PhaseSummaryStrip
-                    phases={effectivePhases}
-                    itemsByPhase={itemsByPhase}
-                    batches={batches}
-                    openPhaseId={openPhaseId}
-                    selectedPhaseId={selectedPhaseId}
-                    onToggle={(phaseId: string) => {
-                        setOpenPhaseId(prev => prev === phaseId ? null : phaseId)
-                        setSelectedPhaseId(phaseId)
-                    }}
-                />
-            )}
+            <div className="rounded-2xl border border-indigo-100 bg-indigo-50/30 p-3 space-y-2">
+                <div className="text-[10px] font-black uppercase tracking-widest text-indigo-700">Phase Transaction Steps</div>
 
-            {/* Accordion Sections */}
-            <div className="space-y-4">
-                {effectivePhases.map((phase: any) => (
-                    <PeriodSection
-                        key={phase.id}
-                        title={phase.label}
-                        subtitle={phase.period_type === 'before' ? `Targets due 1st - ${phase.cutoff_day}` : `Targets due ${phase.cutoff_day + 1} - End`}
-                        phase={phase}
-                        items={itemsByPhase[phase.id] || []}
-                        monthYear={selectedMonth}
-                        period={phase.period_type}
-                        bankType={bankType}
-                        onUpdate={handleFastRefresh}
-                        isStandalone={!!period}
-                        isSelected={selectedPhaseId === phase.id}
-                        isOpen={openPhaseId === phase.id}
-                        onToggleOpen={() => {
-                            setOpenPhaseId(prev => prev === phase.id ? null : phase.id)
-                            setSelectedPhaseId(phase.id)
-                        }}
-                        currentBatch={batches?.find((b: any) => b.id === (itemsByPhase[phase.id] || []).find((i: any) => i.batch_id)?.batch_id)}
-                        selectedItemIds={selectedItemIds}
-                        setSelectedItemIds={setSelectedItemIds}
-                    />
-                ))}
+                <div className="rounded-xl border border-indigo-100 bg-white px-3 py-2 flex items-center gap-2">
+                    <span className="rounded-md px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-700">Step 1</span>
+                    {step1TxnId ? (
+                        <Link
+                            href={`/transactions?search=${step1TxnId}&highlight=${step1TxnId}`}
+                            target="_blank"
+                            className="inline-flex items-center gap-1.5 text-[11px] text-indigo-700 hover:text-indigo-900"
+                        >
+                            <span className="font-semibold">Funded transaction</span>
+                            <span className="text-slate-400">#{String(step1TxnId).slice(0, 8)}</span>
+                        </Link>
+                    ) : (
+                        <span className="text-[11px] text-slate-500">Run Step 1 to display funded transaction link.</span>
+                    )}
+                </div>
+
+                <div className="rounded-xl border border-emerald-100 bg-white px-3 py-2 space-y-1">
+                    <div className="flex items-center gap-2">
+                        <span className="rounded-md px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-700">Step 3</span>
+                        <span className="text-[11px] text-slate-600">{step3TxnLines.length} confirmed transaction(s)</span>
+                    </div>
+                    {step3TxnLines.length > 0 ? (
+                        <div className="flex flex-wrap gap-1.5">
+                            {step3TxnLines.slice(0, 6).map((line: any) => (
+                                <Link
+                                    key={`s3-${line.id}`}
+                                    href={`/transactions?search=${line.id}&highlight=${line.id}`}
+                                    target="_blank"
+                                    className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] text-emerald-700 hover:bg-emerald-100"
+                                >
+                                    <span className="font-semibold truncate max-w-[170px]">{line.label}</span>
+                                    <span className="text-emerald-500">#{String(line.id).slice(0, 6)}</span>
+                                </Link>
+                            ))}
+                        </div>
+                    ) : (
+                        <div className="text-[11px] text-slate-500">Run Step 3 Confirm to display generated transaction links.</div>
+                    )}
+                </div>
             </div>
+
+            {/* Checklist View: phase tabs */}
+            <Tabs
+                value={selectedPhaseId || undefined}
+                onValueChange={selectPhase}
+                className="space-y-4"
+            >
+                <div className="overflow-x-auto pb-1">
+                    <TabsList className="h-12 p-1 rounded-2xl bg-slate-100 border border-slate-200 w-max min-w-full justify-start shadow-inner">
+                        {(period ? effectivePhases.filter((p: any) => p.period_type === period) : effectivePhases).map((phase: any) => {
+                            const phaseItems = itemsByPhase[phase.id] || []
+                            const done = phaseItems.length > 0 && phaseItems.every((i: any) => i.status === 'confirmed')
+                            return (
+                                <TabsTrigger
+                                    key={phase.id}
+                                    value={phase.id}
+                                    className="h-10 px-4 rounded-xl text-[11px] font-black uppercase tracking-wider border border-transparent data-[state=active]:bg-indigo-600 data-[state=active]:text-white data-[state=active]:border-indigo-700 data-[state=active]:shadow-md"
+                                >
+                                    {phase.label}
+                                    <span className={cn(
+                                        "ml-2 inline-flex items-center rounded-md px-1.5 py-0.5 text-[9px] border transition-colors",
+                                        done
+                                            ? "bg-emerald-50 text-emerald-600 border-emerald-200"
+                                            : "bg-slate-50 text-slate-500 border-slate-200"
+                                    )}>
+                                        {phaseItems.filter((i: any) => i.status === 'confirmed').length}/{phaseItems.length}
+                                    </span>
+                                </TabsTrigger>
+                            )
+                        })}
+                    </TabsList>
+                </div>
+
+                {(period ? effectivePhases.filter((p: any) => p.period_type === period) : effectivePhases).map((phase: any) => (
+                    <TabsContent key={phase.id} value={phase.id} className="mt-0">
+                        <PeriodSection
+                            title={phase.label}
+                            subtitle={phase.period_type === 'before' ? `Targets due 1st - ${phase.cutoff_day}` : `Targets due ${phase.cutoff_day + 1} - End`}
+                            phase={phase}
+                            items={itemsByPhase[phase.id] || []}
+                            monthYear={selectedMonth}
+                            period={phase.period_type}
+                            bankType={bankType}
+                            onUpdate={handleFastRefresh}
+                            isStandalone={!!period}
+                            isSelected
+                            currentBatch={batches?.find((b: any) => b.id === (itemsByPhase[phase.id] || []).find((i: any) => i.batch_id)?.batch_id)}
+                            selectedItemIds={selectedItemIds}
+                            setSelectedItemIds={setSelectedItemIds}
+                            onPhaseDirtyChange={handlePhaseDirtyChange}
+                            onEditMasterItem={openMasterItemEditor}
+                            focusedMasterItemId={focusedMasterItemId}
+                        />
+                    </TabsContent>
+                ))}
+            </Tabs>
 
             <AlertDialog open={confirmFundOpen} onOpenChange={setConfirmFundOpen}>
                 <AlertDialogContent className="rounded-2xl max-w-sm">
@@ -613,6 +918,25 @@ export function BatchMasterChecklist({ bankType, accounts, period, monthYear }: 
 
             {/* Guide Hint Area */}
             <BatchFlowGuide currentPhaseItems={currentPhaseItems} batches={batches} selectedMonth={selectedMonth} selectedPhase={selectedPhase?.period_type || 'before'} />
+
+            <BatchMasterItemSlide
+                isOpen={isMasterItemSlideOpen}
+                onOpenChange={(open) => {
+                    setIsMasterItemSlideOpen(open)
+                    if (!open) {
+                        setFocusedMasterItemId(null)
+                        setEditingMasterItem(null)
+                    }
+                }}
+                bankType={bankType}
+                accounts={accounts}
+                bankMappings={bankMappings}
+                item={editingMasterItem}
+                onSuccess={() => {
+                    handleFastRefresh()
+                }}
+                phases={effectivePhases}
+            />
         </div>
     )
 }
@@ -715,34 +1039,93 @@ function PhaseSummaryStrip({ phases, itemsByPhase, batches, openPhaseId, selecte
     )
 }
 
-function PeriodSection({ title, subtitle, phase, items, monthYear, period, bankType, onUpdate, isStandalone, isSelected, isOpen, onToggleOpen, currentBatch, selectedItemIds, setSelectedItemIds }: any) {
+function PeriodSection({ title, subtitle, phase, items, monthYear, period, bankType, onUpdate, isStandalone, isSelected, currentBatch, selectedItemIds, setSelectedItemIds, onPhaseDirtyChange, onEditMasterItem, focusedMasterItemId }: any) {
     const [searchQuery, setSearchQuery] = useState('')
+    const [isPhaseEditing, setIsPhaseEditing] = useState(false)
+    const [draftAmounts, setDraftAmounts] = useState<Record<string, string>>({})
+    const [savingPhaseAmounts, setSavingPhaseAmounts] = useState(false)
+    const lastDirtyRef = React.useRef<boolean | null>(null)
     const totalConfirmed = items.filter((i: any) => i.status === 'confirmed').length
+    const createdTransactions = items.filter((i: any) => Boolean(i.transaction_id))
     const progress = items.length > 0 ? (totalConfirmed / items.length) * 100 : 0
     const totalAmount = items.reduce((sum: number, i: any) => sum + Math.abs(i.amount || 0), 0)
     const allDone = items.length > 0 && totalConfirmed === items.length
     const remaining = items.length - totalConfirmed
+
+    useEffect(() => {
+        const nextDraft: Record<string, string> = {}
+        items.forEach((item: any) => {
+            const n = Number(item.amount || 0)
+            nextDraft[item.id] = n > 0 ? String(n) : ''
+        })
+        setDraftAmounts(nextDraft)
+        lastDirtyRef.current = false
+        onPhaseDirtyChange?.(phase.id, false)
+    }, [items, phase.id])
+
+    const hasDirtyAmounts = items.some((item: any) => {
+        const current = Number(item.amount || 0)
+        const draft = Number((draftAmounts[item.id] || '').replace(/\D/g, '') || 0)
+        return current !== draft
+    })
+
+    useEffect(() => {
+        if (lastDirtyRef.current === hasDirtyAmounts) return
+        lastDirtyRef.current = hasDirtyAmounts
+        onPhaseDirtyChange?.(phase.id, hasDirtyAmounts)
+    }, [hasDirtyAmounts, phase.id])
+
+    function updateDraftAmount(itemId: string, rawValue: string) {
+        setDraftAmounts(prev => ({
+            ...prev,
+            [itemId]: rawValue.replace(/\D/g, ''),
+        }))
+    }
+
+    async function handleSavePhaseAmounts() {
+        setSavingPhaseAmounts(true)
+        try {
+            const changed = items.filter((item: any) => {
+                const current = Number(item.amount || 0)
+                const draft = Number((draftAmounts[item.id] || '').replace(/\D/g, '') || 0)
+                return current !== draft
+            })
+
+            for (const item of changed) {
+                const nextAmount = Number((draftAmounts[item.id] || '').replace(/\D/g, '') || 0)
+                const result = await upsertBatchItemAmountAction({
+                    monthYear,
+                    period,
+                    bankType,
+                    masterItemId: item.id,
+                    amount: nextAmount,
+                    receiverName: item.receiver_name,
+                    bankNumber: item.bank_number,
+                    bankName: item.bank_name,
+                    targetAccountId: item.target_account_id,
+                })
+                if (!result?.success) {
+                    throw new Error(result?.error || `Save failed for ${item.receiver_name || item.id}`)
+                }
+            }
+
+            toast.success(`Saved ${changed.length} item(s) in ${title}`)
+            setIsPhaseEditing(false)
+            await onUpdate?.()
+        } catch {
+            toast.error('Failed to save phase amounts')
+        } finally {
+            setSavingPhaseAmounts(false)
+        }
+    }
 
     return (
         <div className={cn(
             "border rounded-2xl bg-white overflow-hidden shadow-sm transition-all",
             isSelected ? "border-indigo-300 shadow-indigo-100/60" : "border-slate-200"
         )}>
-            {/* Accordion Header — always visible */}
-            <div
-                role="button"
-                tabIndex={0}
-                onClick={onToggleOpen}
-                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggleOpen(); } }}
-                className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-slate-50/80 transition-colors text-left cursor-pointer"
-            >
-                {/* Chevron indicator */}
-                <div className={cn(
-                    "shrink-0 h-6 w-6 rounded-lg flex items-center justify-center transition-colors",
-                    isSelected ? "bg-indigo-100 text-indigo-600" : "bg-slate-100 text-slate-400"
-                )}>
-                    {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                </div>
+            {/* Header */}
+            <div className="w-full flex items-center gap-3 px-4 py-3.5 bg-slate-50/50 border-b border-slate-100">
 
                 {/* Title + subtitle */}
                 <div className="flex flex-col min-w-0 shrink-0">
@@ -765,10 +1148,10 @@ function PeriodSection({ title, subtitle, phase, items, monthYear, period, bankT
                 {/* Amount pill — center of bar */}
                 {totalAmount > 0 && (
                     <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-indigo-50 border border-indigo-100 shrink-0 ml-1">
-                        <span className="text-sm font-black text-indigo-700 tracking-tight">
+                        <span className="text-sm font-medium text-indigo-700 tracking-tight">
                             {totalAmount.toLocaleString()}
                         </span>
-                        <span className="flex items-center gap-0.5 text-[9px] font-bold tracking-tight">
+                        <span className="flex items-center gap-0.5 text-[11px] font-semibold tracking-tight">
                             {formatVietnameseCurrencyText(totalAmount).filter(p => p.unit !== 'đồng').map((p, i) => (
                                 <React.Fragment key={i}>
                                     <span className="text-rose-500 font-black">{p.value}</span>
@@ -818,17 +1201,47 @@ function PeriodSection({ title, subtitle, phase, items, monthYear, period, bankT
                 <Button
                     variant="ghost"
                     size="sm"
-                    onClick={(e) => { e.stopPropagation(); onUpdate(); }}
+                    onClick={onUpdate}
                     className="h-8 w-8 p-0 rounded-full hover:bg-slate-200 text-slate-300 hover:text-indigo-600 transition-all hover:rotate-180 duration-500 shrink-0"
                     title="Force Refresh"
                 >
                     <RefreshCw className="h-3.5 w-3.5" />
                 </Button>
+
+                <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                        if (isPhaseEditing) {
+                            setIsPhaseEditing(false)
+                            return
+                        }
+                        setIsPhaseEditing(true)
+                    }}
+                    className={cn(
+                        "h-8 px-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest",
+                        isPhaseEditing ? "border-amber-300 text-amber-700 bg-amber-50" : "border-slate-200 text-slate-600"
+                    )}
+                >
+                    <Edit2 className="h-3.5 w-3.5 mr-1" />
+                    {isPhaseEditing ? 'Editing' : 'Edit'}
+                </Button>
+
+                {isPhaseEditing && (
+                    <Button
+                        size="sm"
+                        onClick={handleSavePhaseAmounts}
+                        disabled={savingPhaseAmounts || !hasDirtyAmounts}
+                        className="h-8 px-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest bg-indigo-600 hover:bg-indigo-700"
+                    >
+                        {savingPhaseAmounts ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Check className="h-3.5 w-3.5 mr-1" />}
+                        Save
+                    </Button>
+                )}
             </div>
 
-            {/* Collapsible Body */}
-            {isOpen && (
-                <div className="border-t border-slate-100 px-4 pb-4 pt-3 space-y-3">
+            {/* Body */}
+            <div className="px-4 pb-4 pt-3 space-y-3">
                     {/* Controls row: select-all + search */}
                     {items.length > 0 && (
                         <div className="flex items-center gap-3">
@@ -907,6 +1320,32 @@ function PeriodSection({ title, subtitle, phase, items, monthYear, period, bankT
                         </Link>
                     )}
 
+                    {createdTransactions.length > 0 && (
+                        <div className="bg-emerald-50/40 border border-emerald-100 rounded-xl p-3 space-y-2">
+                            <div className="flex items-center gap-2 text-[10px] font-black text-emerald-700 uppercase tracking-widest">
+                                <List className="h-3.5 w-3.5" />
+                                Created Transactions In This Phase
+                                <span className="ml-auto inline-flex items-center rounded-md border border-emerald-200 bg-white px-1.5 py-0.5 text-[9px]">
+                                    {createdTransactions.length}
+                                </span>
+                            </div>
+                            <div className="grid gap-1.5">
+                                {createdTransactions.map((item: any) => (
+                                    <Link
+                                        key={`${item.id}-${item.transaction_id}`}
+                                        href={`/transactions?highlight=${item.transaction_id}`}
+                                        target="_blank"
+                                        className="inline-flex items-center gap-2 rounded-lg border border-emerald-100 bg-white px-2.5 py-1.5 text-[11px] text-slate-700 hover:bg-emerald-50 transition-colors"
+                                    >
+                                        <ExternalLink className="h-3 w-3 text-emerald-500" />
+                                        <span className="font-black uppercase tracking-tight truncate max-w-[240px]">{item.receiver_name}</span>
+                                        <span className="text-slate-400 ml-auto truncate max-w-[180px]">{item.transaction_id}</span>
+                                    </Link>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
                     {/* Items list */}
                     {items.length === 0 ? (
                         <div className="py-10 flex flex-col items-center justify-center border border-dashed border-slate-200 rounded-2xl text-slate-400">
@@ -952,68 +1391,36 @@ function PeriodSection({ title, subtitle, phase, items, monthYear, period, bankT
                                         onUpdate={onUpdate}
                                         isHighlighted={isHighlighted}
                                         isSearchActive={!!searchQuery}
+                                        isPhaseEditing={isPhaseEditing}
+                                        draftAmount={draftAmounts[item.id] ?? ''}
+                                        onDraftAmountChange={(value: string) => updateDraftAmount(item.id, value)}
                                         isSelected={item.batch_item_id ? selectedItemIds.has(item.batch_item_id) : false}
+                                        isMasterFocused={focusedMasterItemId === item.id}
                                         onSelect={(id: string, checked: boolean) => {
                                             const next = new Set(selectedItemIds)
                                             if (checked) next.add(id)
                                             else next.delete(id)
                                             setSelectedItemIds(next)
                                         }}
+                                        onEditMasterItem={onEditMasterItem}
                                     />
                                 )
                             })}
                         </div>
                     )}
-                </div>
-            )}
+            </div>
         </div>
     )
 }
 
-function ChecklistItemRow({ item, phase, monthYear, period, bankType, onUpdate, isHighlighted, isSearchActive, isSelected, onSelect }: any) {
-    const [amount, setAmount] = useState(item.amount > 0 ? item.amount.toString() : '')
+function ChecklistItemRow({ item, phase, onUpdate, isHighlighted, isSearchActive, isPhaseEditing, draftAmount, onDraftAmountChange, isSelected, onSelect, onEditMasterItem, isMasterFocused }: any) {
     const [saving, setSaving] = useState(false)
-    const [isEditing, setIsEditing] = useState(false)
+    const rowRef = React.useRef<HTMLDivElement | null>(null)
 
-    // Update local state when item changes from props
     useEffect(() => {
-        setAmount(item.amount > 0 ? item.amount.toString() : '')
-    }, [item.amount, item.id])
-
-    async function handleUpdate(val: string) {
-        const numVal = parseInt(val.replace(/\D/g, '')) || 0
-        setSaving(true)
-        try {
-            await upsertBatchItemAmountAction({
-                monthYear,
-                period,
-                bankType,
-                masterItemId: item.id,
-                amount: numVal,
-                receiverName: item.receiver_name,
-                bankNumber: item.bank_number,
-                bankName: item.bank_name,
-                targetAccountId: item.target_account_id
-            })
-            toast.success(`Updated ${item.receiver_name}`, { duration: 1000 })
-
-            // Nếu item đã confirmed → re-fund để cập nhật funding transaction
-            if (item.status === 'confirmed' && item.batch_id) {
-                try {
-                    await fundBatchAction(item.batch_id)
-                    toast.info('Funding đã được cập nhật. Nhớ re-send lên Sheet nhé!', { duration: 5000 })
-                } catch {
-                    toast.warning('Amount đã lưu. Vui lòng bấm Re-Fund và Re-Send Sheet.', { duration: 5000 })
-                }
-            }
-
-            if (onUpdate) onUpdate()
-        } catch (e) {
-            toast.error('Update failed')
-        } finally {
-            setSaving(false)
-        }
-    }
+        if (!isMasterFocused || !rowRef.current) return
+        rowRef.current.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' })
+    }, [isMasterFocused])
 
     async function handleToggleConfirm() {
         if (!item.batch_item_id) {
@@ -1041,6 +1448,24 @@ function ChecklistItemRow({ item, phase, monthYear, period, bankType, onUpdate, 
         return parseInt(val).toLocaleString()
     }
 
+    async function handleCopyBatchItemId(e: React.MouseEvent) {
+        e.stopPropagation()
+        if (!item.batch_item_id) return
+        try {
+            await navigator.clipboard.writeText(item.batch_item_id)
+            toast.success(`Copied item ID ${String(item.batch_item_id).slice(0, 8)}`)
+        } catch {
+            toast.error('Failed to copy item ID')
+        }
+    }
+
+    function handleOpenBatchItemInDb(e: React.MouseEvent) {
+        e.stopPropagation()
+        if (!item.batch_item_id) return
+        const url = `https://api-db.reiwarden.io.vn/_/#/collections?collection=pvl_bai_001&filter=${encodeURIComponent(item.batch_item_id)}&sort=-%40rowid`
+        window.open(url, '_blank', 'noopener,noreferrer')
+    }
+
     const dueDay = item.accounts?.due_date as number | undefined
     let dueBadge: { label: string; daysLeft: number } | null = null
     let isDueMismatch = false
@@ -1062,8 +1487,9 @@ function ChecklistItemRow({ item, phase, monthYear, period, bankType, onUpdate, 
     }
 
     return (
-        <div className={cn(
+        <div ref={rowRef} className={cn(
             "group relative flex items-center gap-3 p-3 border rounded-2xl transition-all",
+            isMasterFocused && "bg-amber-50/80 border-amber-300 shadow-amber-100 shadow-md ring-1 ring-amber-200",
             isHighlighted ? "bg-yellow-50 border-yellow-300 shadow-sm" :
                 item.status === 'confirmed' ? "bg-indigo-50/10 border-indigo-200 shadow-indigo-100/20 shadow-md" :
                     dueBadge && dueBadge.daysLeft <= 3 ? "bg-white border-rose-200 shadow-rose-100/40 shadow-md ring-1 ring-rose-100" :
@@ -1200,43 +1626,26 @@ function ChecklistItemRow({ item, phase, monthYear, period, bankType, onUpdate, 
             <div className="relative shrink-0 flex flex-col items-end gap-1">
                 <div className="flex items-center gap-1.5">
                     <div className="relative w-36">
-                        {isEditing ? (
+                        {isPhaseEditing ? (
                             <Input
-                                autoFocus
-                                value={amount === '' ? '' : formatCurrency(amount)}
-                                onChange={(e) => setAmount(e.target.value.replace(/\D/g, ''))}
-                                onBlur={() => {
-                                    if (parseInt(amount || '0') !== item.amount) {
-                                        handleUpdate(amount)
-                                    }
-                                    setIsEditing(false)
-                                }}
-                                onKeyDown={(e) => {
-                                    if (e.key === 'Enter') {
-                                        if (parseInt(amount || '0') !== item.amount) handleUpdate(amount)
-                                        setIsEditing(false)
-                                    }
-                                    if (e.key === 'Escape') {
-                                        setAmount(item.amount > 0 ? item.amount.toString() : '')
-                                        setIsEditing(false)
-                                    }
-                                }}
+                                value={draftAmount === '' ? '' : formatCurrency(draftAmount)}
+                                onChange={(e) => onDraftAmountChange(e.target.value)}
                                 placeholder="0"
                                 className={cn(
                                     "w-full h-10 text-right font-black text-slate-900 border-slate-200 focus:ring-indigo-500 rounded-xl",
-                                    amount && parseInt(amount) > 0 ? "bg-indigo-50/30 text-indigo-700" : "",
+                                    draftAmount && parseInt(draftAmount || '0') > 0 ? "bg-indigo-50/30 text-indigo-700" : "",
                                     item.status === 'confirmed' ? "border-amber-300 focus:ring-amber-400" : ""
                                 )}
                             />
                         ) : (
                             <div className={cn(
                                 "w-full h-10 flex items-center justify-end pr-3 rounded-xl font-black border",
-                                amount && parseInt(amount) > 0
+                                draftAmount && parseInt(draftAmount || '0') > 0
                                     ? "text-indigo-700 border-indigo-100 bg-indigo-50/20"
                                     : "text-slate-300 border-slate-100 bg-slate-50/30",
                                 item.status === 'confirmed' && "opacity-70"
                             )}>
-                                {amount && parseInt(amount) > 0 ? formatCurrency(amount) : <span className="text-slate-300 font-medium text-sm">—</span>}
+                                {draftAmount && parseInt(draftAmount || '0') > 0 ? formatCurrency(draftAmount) : <span className="text-slate-300 font-medium text-sm">—</span>}
                             </div>
                         )}
                         {saving && (
@@ -1245,45 +1654,44 @@ function ChecklistItemRow({ item, phase, monthYear, period, bankType, onUpdate, 
                             </div>
                         )}
                     </div>
-                    {/* Search icon — always visible, active only when confirmed + has txn */}
-                    {item.status === 'confirmed' && item.transaction_id ? (
-                        <Link
-                            href={`/transactions?highlight=${item.transaction_id}`}
-                            target="_blank"
-                            className="shrink-0 h-8 w-8 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-center text-slate-400 hover:text-indigo-600 hover:border-indigo-200 hover:bg-white transition-all shadow-sm group/search"
-                            title="View Transaction"
-                        >
-                            <Search className="h-3.5 w-3.5 group-hover/search:scale-110 transition-transform" />
-                        </Link>
-                    ) : (
-                        <div className="shrink-0 h-8 w-8 rounded-xl bg-slate-50 border border-slate-100 flex items-center justify-center text-slate-200 cursor-not-allowed">
-                            <Search className="h-3.5 w-3.5" />
-                        </div>
-                    )}
-                    {/* Edit icon */}
                     {!saving && (
                         <button
-                            onClick={() => {
-                                if (isEditing && parseInt(amount || '0') !== item.amount) {
-                                    handleUpdate(amount)
-                                }
-                                setIsEditing(v => !v)
-                            }}
-                            className={cn(
-                                "h-8 w-8 rounded-xl flex items-center justify-center transition-all border border-transparent",
-                                item.status === 'confirmed'
-                                    ? "text-amber-400 hover:text-amber-600 hover:bg-amber-50 hover:border-amber-200"
-                                    : "text-slate-300 hover:text-indigo-600 hover:bg-indigo-50 hover:border-indigo-100"
-                            )}
-                            title={isEditing ? 'Save amount' : item.status === 'confirmed' ? 'Sửa amount (đã confirm — fund & sheet sẽ được cập nhật)' : 'Edit amount'}
+                            onClick={handleCopyBatchItemId}
+                            disabled={!item.batch_item_id}
+                            className="h-8 w-8 rounded-xl flex items-center justify-center transition-all border border-slate-100 text-slate-300 hover:text-indigo-600 hover:bg-indigo-50 hover:border-indigo-100 disabled:opacity-40"
+                            title="Copy Batch Item ID"
                         >
-                            {isEditing ? <Check className="h-3.5 w-3.5" /> : <Edit2 className="h-3.5 w-3.5" />}
+                            <Copy className="h-3.5 w-3.5" />
+                        </button>
+                    )}
+                    {!saving && (
+                        <button
+                            onClick={handleOpenBatchItemInDb}
+                            disabled={!item.batch_item_id}
+                            className="h-8 w-8 rounded-xl flex items-center justify-center transition-all border border-slate-100 text-slate-300 hover:text-indigo-600 hover:bg-indigo-50 hover:border-indigo-100 disabled:opacity-40"
+                            title="Open Batch Item in DB"
+                        >
+                            <Database className="h-3.5 w-3.5" />
+                        </button>
+                    )}
+                    {!saving && (
+                        <button
+                            onClick={() => onEditMasterItem?.(item)}
+                            className={cn(
+                                "h-8 w-8 rounded-xl flex items-center justify-center transition-all border",
+                                isMasterFocused
+                                    ? "text-amber-700 bg-amber-100 border-amber-300"
+                                    : "text-slate-300 border-slate-100 hover:text-indigo-600 hover:bg-indigo-50 hover:border-indigo-100"
+                            )}
+                            title="Edit target/phase"
+                        >
+                            <Edit2 className="h-3.5 w-3.5" />
                         </button>
                     )}
                 </div>
-                {amount && parseInt(amount) > 0 ? (
+                {draftAmount && parseInt(draftAmount || '0') > 0 ? (
                     <div className="text-[10px] text-slate-400 font-bold pr-1 uppercase tracking-widest">
-                        {formatShortVietnameseCurrency(parseInt(amount))}
+                        {formatShortVietnameseCurrency(parseInt(draftAmount || '0'))}
                     </div>
                 ) : null}
             </div>
@@ -1379,7 +1787,7 @@ function BatchFlowGuide({ currentPhaseItems, batches, selectedMonth, selectedPha
                 </div>
             </div>
             <div className="mt-4 pt-4 border-t border-indigo-100 text-xs text-indigo-600/70 font-bold relative z-10">
-                * Note tự động đã được cấu hình: Tên + Before/After + Tháng/Năm + Bank (Vd: "Vcb Signature Before Feb2026 by Mbb").
+                * Note tự động đã được cấu hình: Tên + Phase Label + Tháng/Năm + Bank (Vd: "Vcb Signature Phase 1 Feb2026 by Mbb").
             </div>
         </div>
     )
