@@ -14,9 +14,14 @@ import { VietnameseCurrency } from "@/components/ui/vietnamese-currency"
 interface AccountQuickStatsProps {
     accounts: Account[];
     lastTxnAccountId?: string; // Added for intelligence sync if needed
+    pendingSummaryMap?: Record<string, {
+        count: number
+        totalAmount: number
+        accountName?: string | null
+    }>;
 }
 
-export function AccountQuickStats({ accounts, lastTxnAccountId }: AccountQuickStatsProps) {
+export function AccountQuickStats({ accounts, lastTxnAccountId, pendingSummaryMap = {} }: AccountQuickStatsProps) {
     const stats = useMemo(() => {
         // Exclude closed/inactive accounts explicitly (!== false includes true and undefined)
         const activeAccounts = accounts.filter(a => a.is_active !== false);
@@ -91,6 +96,20 @@ export function AccountQuickStats({ accounts, lastTxnAccountId }: AccountQuickSt
             return remB - remA;
         });
 
+        const pendingConfirmList = activeAccounts
+            .map((account) => {
+                const pending = pendingSummaryMap[account.id]
+                return {
+                    ...account,
+                    pendingCount: Number(pending?.count || 0),
+                    pendingTotalAmount: Number(pending?.totalAmount || 0),
+                }
+            })
+            .filter((account) => account.pendingCount > 0)
+            .sort((a, b) => b.pendingCount - a.pendingCount)
+
+        const pendingConfirmTotalCount = pendingConfirmList.reduce((sum, account) => sum + account.pendingCount, 0)
+
         return {
             totalCash, totalWealth, totalDebt, totalLimit,
             topLiquidAccounts, topWealthAccounts,
@@ -100,8 +119,10 @@ export function AccountQuickStats({ accounts, lastTxnAccountId }: AccountQuickSt
             dueSoonList,
             needsSpendList,
             needsWaiverList,
+            pendingConfirmList,
+            pendingConfirmTotalCount,
         };
-    }, [accounts]);
+    }, [accounts, pendingSummaryMap]);
 
     const utilization = stats.totalLimit > 0 ? (stats.totalDebt / stats.totalLimit) * 100 : 0;
     const myUtilization = stats.myLimit > 0 ? (stats.myDebt / stats.myLimit) * 100 : 0;
@@ -378,6 +399,10 @@ export function AccountQuickStats({ accounts, lastTxnAccountId }: AccountQuickSt
                                         <span className="text-[10px] font-black text-amber-600 leading-none tabular-nums">{stats.needsSpendList.length}</span>
                                         <span className="text-[7px] font-bold text-slate-400 uppercase tracking-tighter">Tasks</span>
                                     </div>
+                                    <div className="flex items-center gap-1 border-l border-slate-200 pl-2">
+                                        <span className="text-[10px] font-black text-indigo-600 leading-none tabular-nums">{stats.pendingConfirmTotalCount}</span>
+                                        <span className="text-[7px] font-bold text-slate-400 uppercase tracking-tighter">Pending</span>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -454,6 +479,35 @@ export function AccountQuickStats({ accounts, lastTxnAccountId }: AccountQuickSt
                                                 </div>
                                             );
                                         })
+                                    )}
+                                </div>
+                            </div>
+
+                            <div className="space-y-3 pt-2 border-t border-slate-100">
+                                <div className="flex items-center gap-2 pb-1 border-b border-indigo-100">
+                                    <Coins className="h-3.5 w-3.5 text-indigo-500" />
+                                    <span className="text-[10px] font-black uppercase text-indigo-600 tracking-wider">Pending Confirm Queue</span>
+                                </div>
+                                <div className="space-y-2.5">
+                                    {stats.pendingConfirmList.length === 0 ? (
+                                        <p className="text-[11px] text-slate-400 italic py-2">No pending confirmations detected.</p>
+                                    ) : (
+                                        stats.pendingConfirmList.slice(0, 8).map((a: any) => (
+                                            <a
+                                                key={a.id}
+                                                href={`/accounts/${a.id}?pending=1`}
+                                                className="flex items-center justify-between p-2.5 rounded-xl bg-indigo-50/30 border border-indigo-100/50 hover:bg-indigo-50 transition-colors"
+                                            >
+                                                <div className="flex items-center gap-2 min-w-0">
+                                                    {a.image_url ? <img src={a.image_url} className="h-6 w-6 object-contain rounded-none shrink-0" /> : <Landmark className="h-4 w-4 text-slate-300" />}
+                                                    <span className="text-[10px] font-black text-slate-700 truncate">{a.name}</span>
+                                                </div>
+                                                <div className="flex flex-col items-end shrink-0">
+                                                    <span className="text-[10px] font-black text-indigo-600">{a.pendingCount} item(s)</span>
+                                                    <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider">{formatMoneyVND(a.pendingTotalAmount || 0)}</span>
+                                                </div>
+                                            </a>
+                                        ))
                                     )}
                                 </div>
                             </div>

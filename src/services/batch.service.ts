@@ -3,6 +3,7 @@ import { Database } from '@/types/database.types'
 import { addMonths } from 'date-fns'
 import { SYSTEM_ACCOUNTS, SYSTEM_CATEGORIES } from '@/lib/constants'
 import { isLegacyMMMYY, isYYYYMM, normalizeMonthTag, toLegacyMMMYYFromDate, toYYYYMMFromDate } from '@/lib/month-tag'
+import { pocketbaseList, toPocketBaseId } from '@/services/pocketbase/server'
 
 export type Batch = Database['public']['Tables']['batches']['Row']
 export type BatchItem = Database['public']['Tables']['batch_items']['Row']
@@ -407,10 +408,24 @@ export async function revertBatchItem(transactionId: string) {
  * Used for "Confirm Money Received" feature on Account Cards
  */
 export async function getPendingBatchItemsByAccount(accountId: string) {
-    // Guard: PB accounts don't have batch items (Supabase-only feature)
     const isPB = accountId && accountId.length === 15
     if (isPB) {
-        return []
+        const normalizedAccountId = toPocketBaseId(accountId, 'accounts')
+        const pbResult = await pocketbaseList<any>('batch_items', {
+            filter: `target_account_id = "${normalizedAccountId}" && status = "pending"`,
+            perPage: 5000,
+            sort: '-created',
+            expand: 'batch_id',
+        })
+
+        return (pbResult.items || []).map((item: any) => ({
+            id: item.id,
+            amount: Number(item.amount || 0),
+            receiver_name: item.receiver_name || null,
+            note: item.note || null,
+            batch_id: item.batch_id,
+            batch: item?.expand?.batch_id ? { name: item.expand.batch_id.name || '' } : null,
+        }))
     }
 
     const supabase: any = createClient()
@@ -423,6 +438,69 @@ export async function getPendingBatchItemsByAccount(accountId: string) {
 
     if (error) throw error
     return data as any[]
+}
+
+export async function getPendingBatchItemsSummary(): Promise<Array<{
+    accountId: string
+    accountName: string | null
+    count: number
+    totalAmount: number
+}>> {
+    try {
+        const pbResult = await pocketbaseList<any>('batch_items', {
+            filter: 'status = "pending" && amount > 0',
+            perPage: 5000,
+            expand: 'target_account_id',
+        })
+
+        const summary = new Map<string, { accountId: string; accountName: string | null; count: number; totalAmount: number }>()
+        for (const item of pbResult.items || []) {
+            const accountId = String(item?.target_account_id || '').trim()
+            if (!accountId) continue
+
+            const prev = summary.get(accountId) || {
+                accountId,
+                accountName: item?.expand?.target_account_id?.name || null,
+                count: 0,
+                totalAmount: 0,
+            }
+            prev.count += 1
+            prev.totalAmount += Math.abs(Number(item?.amount || 0))
+            summary.set(accountId, prev)
+        }
+
+        return Array.from(summary.values())
+            .filter((row) => row.count > 0)
+            .sort((a, b) => b.count - a.count)
+    } catch {
+        const supabase: any = createClient()
+        const { data, error } = await supabase
+            .from('batch_items')
+            .select('target_account_id, amount, target_account:accounts(name)')
+            .eq('status', 'pending')
+
+        if (error) throw error
+
+        const summary = new Map<string, { accountId: string; accountName: string | null; count: number; totalAmount: number }>()
+        for (const item of data || []) {
+            const accountId = String(item?.target_account_id || '').trim()
+            if (!accountId) continue
+
+            const prev = summary.get(accountId) || {
+                accountId,
+                accountName: item?.target_account?.name || null,
+                count: 0,
+                totalAmount: 0,
+            }
+            prev.count += 1
+            prev.totalAmount += Math.abs(Number(item?.amount || 0))
+            summary.set(accountId, prev)
+        }
+
+        return Array.from(summary.values())
+            .filter((row) => row.count > 0)
+            .sort((a, b) => b.count - a.count)
+    }
 }
 
 /**

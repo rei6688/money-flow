@@ -22,6 +22,11 @@ interface AccountTableV2Props {
     onTransfer: (account: Account) => void;
     categories?: Category[];
     people?: Person[];
+    pendingSummaryMap?: Record<string, {
+        count: number
+        totalAmount: number
+        accountName?: string | null
+    }>;
 }
 
 export function AccountTableV2({
@@ -34,6 +39,7 @@ export function AccountTableV2({
     onTransfer,
     categories,
     people,
+    pendingSummaryMap,
 }: AccountTableV2Props) {
     const {
         getVisibleColumns,
@@ -370,6 +376,7 @@ export function AccountTableV2({
                                                             onTransfer={onTransfer}
                                                             categories={categories}
                                                             people={people}
+                                                            pendingSummaryMap={pendingSummaryMap}
                                                         />
                                                     );
                                                 })}

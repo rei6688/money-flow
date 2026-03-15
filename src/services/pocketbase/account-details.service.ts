@@ -1318,13 +1318,18 @@ export async function getPocketBaseAccountSpendingStatsSnapshot(
   }
 
   const minSpend = cycle?.min_spend_target ?? account.cb_min_spend ?? null;
-  const maxCashback = cycle?.max_budget ?? account.cb_max_budget ?? null;
+  const rawMaxCashback = cycle?.max_budget ?? account.cb_max_budget ?? null;
+  const isUnlimitedBudget =
+    Boolean(account.cb_is_unlimited) ||
+    rawMaxCashback === null ||
+    Number(rawMaxCashback) <= 0;
+  const maxCashback = isUnlimitedBudget ? null : Number(rawMaxCashback);
   const earnedSoFar = estimatedCashback;
   const netProfit = earnedSoFar - sharedAmount;
   const remainingBudget =
     maxCashback === null
       ? null
-      : Math.max(0, Number(maxCashback) - earnedSoFar);
+      : Math.max(0, maxCashback - earnedSoFar);
   const isMinSpendMet =
     minSpend === null ? true : currentSpend >= Number(minSpend);
   const activeRules = Array.from(activeRuleMap.values()).sort(
@@ -1341,7 +1346,7 @@ export async function getPocketBaseAccountSpendingStatsSnapshot(
   return {
     currentSpend,
     minSpend: minSpend === null ? null : Number(minSpend),
-    maxCashback: maxCashback === null ? null : Number(maxCashback),
+    maxCashback,
     actualClaimed,
     rate: Number(account.cb_base_rate || 0) / 100,
     earnedSoFar,

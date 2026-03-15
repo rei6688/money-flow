@@ -27,6 +27,7 @@ import { cn } from "@/lib/utils";
 import { SmartAmountInput } from "@/components/ui/smart-amount-input";
 import { Account, Category } from "@/types/moneyflow.types";
 import { resolveCashbackPolicy } from "@/services/cashback/policy-resolver";
+import { normalizeCashbackConfig } from "@/lib/cashback";
 import {
   Tooltip,
   TooltipContent,
@@ -180,8 +181,10 @@ export function CashbackSection({
       return Math.min(cappedByRule, remains);
     };
 
-    const rawRemains =
-      cycleStats?.remainingBudget ?? activeAccount?.stats?.remains_cap;
+    const isUnlimitedBudget = Boolean(activeAccount?.cb_is_unlimited);
+    const rawRemains = isUnlimitedBudget
+      ? null
+      : (cycleStats?.remainingBudget ?? activeAccount?.stats?.remains_cap);
     const remains =
       rawRemains === null || rawRemains === undefined ? Infinity : rawRemains;
 
@@ -195,6 +198,52 @@ export function CashbackSection({
   const isSharing = ["real_percent", "real_fixed", "voluntary"].includes(
     cashbackMode,
   );
+
+  const cycleSpendInsight = useMemo(() => {
+    if (!activeAccount) return null;
+
+    try {
+      const program = normalizeCashbackConfig(activeAccount.cashback_config, activeAccount);
+      const levels = Array.isArray(program.levels) ? [...program.levels] : [];
+      const cycleSpend = Number(cycleStats?.currentSpend || 0);
+
+      if (levels.length === 0) {
+        return {
+          cycleSpend,
+          matchedLevelName: null as string | null,
+          matchedThreshold: null as number | null,
+          nextThreshold: null as number | null,
+          hasRules: false,
+        };
+      }
+
+      const sortedLevels = levels
+        .map((lvl) => ({
+          name: lvl.name || `Level ≥ ${lvl.minTotalSpend}`,
+          minTotalSpend: Number(lvl.minTotalSpend || 0),
+        }))
+        .sort((a, b) => a.minTotalSpend - b.minTotalSpend);
+
+      const matched = [...sortedLevels].reverse().find((lvl) => cycleSpend >= lvl.minTotalSpend) || null;
+      const next = sortedLevels.find((lvl) => cycleSpend < lvl.minTotalSpend) || null;
+
+      return {
+        cycleSpend,
+        matchedLevelName: matched?.name || null,
+        matchedThreshold: matched?.minTotalSpend ?? null,
+        nextThreshold: next?.minTotalSpend ?? null,
+        hasRules: true,
+      };
+    } catch {
+      return {
+        cycleSpend: Number(cycleStats?.currentSpend || 0),
+        matchedLevelName: null as string | null,
+        matchedThreshold: null as number | null,
+        nextThreshold: null as number | null,
+        hasRules: false,
+      };
+    }
+  }, [activeAccount, cycleStats]);
 
   const totalSharedVal = useMemo(() => {
     if (!isSharing) return 0;
@@ -743,6 +792,39 @@ export function CashbackSection({
                       {cycleStats?.cycle?.label || "Current"}
                     </span>
                   </div>
+
+                  <div className="mb-3 rounded-lg border border-indigo-100 bg-indigo-50/40 p-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[8px] font-black text-indigo-500 uppercase tracking-widest">Cycle</span>
+                      <span className="text-[10px] font-black text-indigo-700 tabular-nums">
+                        {cycleStats?.cycle?.label || "Current"}
+                      </span>
+                    </div>
+                    <div className="mt-1 flex items-center justify-between">
+                      <span className="text-[8px] font-black text-slate-400 uppercase tracking-wider">Total Spend This Cycle</span>
+                      <span className="text-[10px] font-black text-slate-700 tabular-nums">
+                        {formatVN(cycleSpendInsight?.cycleSpend || 0)}
+                      </span>
+                    </div>
+                    <div className="mt-1.5 border-t border-indigo-100 pt-1.5 text-[9px] font-bold text-slate-500">
+                      {cycleSpendInsight?.hasRules ? (
+                        <>
+                          <span className="text-indigo-600">Matched:</span>{" "}
+                          {cycleSpendInsight?.matchedLevelName
+                            ? `${cycleSpendInsight.matchedLevelName} (>= ${formatVN(cycleSpendInsight.matchedThreshold || 0)})`
+                            : "No level matched yet"}
+                          {cycleSpendInsight?.nextThreshold !== null && cycleSpendInsight?.nextThreshold !== undefined && (
+                            <span className="ml-1 text-slate-400">
+                              | Next: {formatVN(cycleSpendInsight.nextThreshold)}
+                            </span>
+                          )}
+                        </>
+                      ) : (
+                        <span className="text-slate-400">No Total Spend rules</span>
+                      )}
+                    </div>
+                  </div>
+
                   <div className="grid grid-cols-2 gap-3 mb-3">
                     <div className="bg-slate-50 border border-slate-100 rounded-lg p-2">
                       <span className="text-[8px] font-black text-slate-400 uppercase tracking-tighter block mb-0.5">
